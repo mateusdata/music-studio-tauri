@@ -453,9 +453,9 @@ fn build_instrument(spec: AcousticSpec) -> InstrumentModel {
     }
 }
 
-/// Builds the complete 56-model factory library spanning all 8 instrument categories
+/// Builds the complete 62-model factory library spanning all 8 instrument categories
 /// and Pianoteq 9.3.1 instrument families (modern grands, uprights, electric pianos,
-/// KIViR historical keyboards, chromatic percussion/idiophones, plucked strings,
+/// KIViR historical keyboards & bells, chromatic percussion/idiophones, plucked strings,
 /// prepared grand, and hybrid physical synthesizer).
 pub fn build_factory_instruments() -> Vec<InstrumentModel> {
     let specs = vec![
@@ -2466,6 +2466,218 @@ pub fn build_factory_instruments() -> Vec<InstrumentModel> {
             note_fx: NoteFxSpec::expressive(4.8, 140.0, 9.5, 2.5, 1.8, 0.62, 0.38),
             ..DEFAULT_SPEC
         },
+
+        // =====================================================================
+        // 8. KIViR Instruments & Bells (6)
+        // =====================================================================
+        AcousticSpec {
+            id: "kivir-clavichord",
+            name: "Clavichord",
+            category: InstrumentCategory::Historical,
+            exciter: ExciterType::PluckPlectrum,
+            description: "Intimate 18th-century fretted clavichord with brass tangent strike, subtle expressive pitch sensitivity, and Well-Tempered tuning at A=415 Hz.",
+            inharmonicity_base: 0.00017,
+            decay_scale: 0.50,
+            string_length_m: 1.18,
+            soundboard_impedance: 0.68,
+            sympathetic_resonance: 0.20,
+            duplex_scale_resonance: 0.04,
+            blooming_energy: 0.07,
+            quadratic_effect: 0.14,
+            hammer_hardness: [0.30, 0.46, 0.64],
+            hammer_noise: 0.34,
+            hammer_tone: 0.52,
+            strike_point: 0.145,
+            spectrum_profile: [1.06, 0.88, 0.72, 0.54, 0.38, 0.25, 0.15, 0.08],
+            diapason_hz: 415.0,
+            temperament: TemperamentId::WellTempered,
+            unison_width_cents: 1.40,
+            octave_stretching: 0.86,
+            dynamics_db: 24.0,
+            condition: 0.16,
+            damper_noise: 0.22,
+            key_release_noise: 0.28,
+            damping_duration: 0.34,
+            lid_position: 0.85,
+            stereo_width: 0.48,
+            eq_gains_db: [-0.2, 0.6, 0.9],
+            reverb: ReverbSpec::new("KIViR Clavichord Study", 0.19, 1.25, 10.0, 8.0, 0.54, 0.50, 120.0),
+            ..DEFAULT_SPEC
+        },
+        AcousticSpec {
+            id: "kivir-cymbalum",
+            name: "Cymbalum",
+            category: InstrumentCategory::Mallet,
+            exciter: ExciterType::MalletHard,
+            description: "Hungarian concert cimbalom hammered dulcimer with bright multi-course steel string overtones, mallet bounce flutter, and shimmering open resonance.",
+            inharmonicity_base: 0.00024,
+            decay_scale: 1.06,
+            string_length_m: 1.35,
+            soundboard_impedance: 0.46,
+            sympathetic_resonance: 0.66,
+            duplex_scale_resonance: 0.34,
+            blooming_energy: 0.24,
+            quadratic_effect: 0.25,
+            hammer_hardness: [0.56, 0.76, 0.94],
+            hammer_noise: 0.44,
+            hammer_tone: 0.72,
+            strike_point: 0.110,
+            spectrum_profile: [0.94, 0.96, 1.02, 0.88, 0.74, 0.62, 0.48, 0.36],
+            diapason_hz: 440.0,
+            temperament: TemperamentId::Equal,
+            unison_width_cents: 2.40,
+            octave_stretching: 0.94,
+            dynamics_db: 38.0,
+            condition: 0.08,
+            damper_noise: 0.18,
+            key_release_noise: 0.14,
+            damping_duration: 0.56,
+            stereo_width: 0.72,
+            eq_gains_db: [0.2, 0.5, 1.6],
+            reverb: ReverbSpec::new("Budapest Salon Hall", 0.26, 1.95, 18.0, 14.0, 0.48, 0.56, 105.0),
+            bounce: BounceSpec::active(92.0, 0.45, 0.14, 0.44, 0.14, 3),
+            ..DEFAULT_SPEC
+        },
+        AcousticSpec {
+            id: "kivir-harpsichord",
+            name: "Harpsichord (KIViR)",
+            category: InstrumentCategory::Historical,
+            exciter: ExciterType::PluckPlectrum,
+            description: "KIViR French-Italian plucked harpsichord (Blanchet/Grimaldi character) tuned to A=415 Hz Werckmeister III with crisp quill bite.",
+            inharmonicity_base: 0.00012,
+            decay_scale: 0.64,
+            string_length_m: 2.12,
+            soundboard_impedance: 0.69,
+            sympathetic_resonance: 0.30,
+            duplex_scale_resonance: 0.14,
+            blooming_energy: 0.11,
+            quadratic_effect: 0.17,
+            hammer_hardness: [0.60, 0.65, 0.71],
+            hammer_noise: 0.43,
+            hammer_tone: 0.72,
+            strike_point: 0.086,
+            spectrum_profile: [0.90, 0.97, 1.02, 0.90, 0.79, 0.66, 0.52, 0.40],
+            diapason_hz: 415.0,
+            temperament: TemperamentId::WerckmeisterIII,
+            unison_width_cents: 1.50,
+            octave_stretching: 0.84,
+            dynamics_db: 20.0,
+            condition: 0.13,
+            damper_noise: 0.34,
+            key_release_noise: 0.50,
+            damping_duration: 0.32,
+            stereo_width: 0.60,
+            eq_gains_db: [-0.5, 0.5, 1.5],
+            reverb: ReverbSpec::new("KIViR Blanchet Gallery", 0.25, 2.05, 18.0, 15.0, 0.50, 0.57, 118.0),
+            ..DEFAULT_SPEC
+        },
+        AcousticSpec {
+            id: "kivir-walter-pianoforte",
+            name: "Pianoforte: Walter",
+            category: InstrumentCategory::Historical,
+            exciter: ExciterType::FeltHammer,
+            description: "Anton Walter Viennese fortepiano (Mozart's concert instrument) at A=430 Hz Vallotti with crisp buckskin hammers and clear singing bass.",
+            inharmonicity_base: 0.00029,
+            decay_scale: 0.66,
+            string_length_m: 2.02,
+            soundboard_impedance: 0.65,
+            sympathetic_resonance: 0.35,
+            duplex_scale_resonance: 0.07,
+            blooming_energy: 0.17,
+            quadratic_effect: 0.16,
+            hammer_hardness: [0.45, 0.65, 0.85],
+            hammer_noise: 0.43,
+            hammer_tone: 0.61,
+            strike_point: 0.104,
+            spectrum_profile: [0.96, 0.99, 0.88, 0.74, 0.56, 0.40, 0.27, 0.18],
+            diapason_hz: 430.0,
+            temperament: TemperamentId::Vallotti,
+            unison_width_cents: 1.75,
+            octave_stretching: 0.89,
+            dynamics_db: 31.0,
+            condition: 0.18,
+            damper_noise: 0.37,
+            key_release_noise: 0.29,
+            damping_duration: 0.37,
+            lid_position: 0.92,
+            stereo_width: 0.56,
+            eq_gains_db: [-0.1, 0.5, 0.9],
+            reverb: ReverbSpec::new("Mozart Saal Vienna", 0.21, 1.50, 13.5, 11.0, 0.52, 0.53, 116.0),
+            ..DEFAULT_SPEC
+        },
+        AcousticSpec {
+            id: "kivir-cp80",
+            name: "Electro-acoustic piano: CP-80",
+            category: InstrumentCategory::ElectricPiano,
+            exciter: ExciterType::FeltHammer,
+            description: "80s electric grand piano combining real struck harp strings and piezo pickups with stereo chorus, tremolo shimmer, and stage amp.",
+            inharmonicity_base: 0.00028,
+            decay_scale: 0.88,
+            string_length_m: 1.56,
+            soundboard_impedance: 0.56,
+            sympathetic_resonance: 0.32,
+            duplex_scale_resonance: 0.24,
+            blooming_energy: 0.20,
+            quadratic_effect: 0.26,
+            hammer_hardness: [0.42, 0.64, 0.90],
+            hammer_noise: 0.36,
+            hammer_tone: 0.62,
+            strike_point: 0.118,
+            spectrum_profile: [1.04, 0.92, 0.84, 0.68, 0.52, 0.42, 0.30, 0.20],
+            diapason_hz: 440.0,
+            temperament: TemperamentId::Equal,
+            unison_width_cents: 0.85,
+            octave_stretching: 1.04,
+            dynamics_db: 34.0,
+            condition: 0.07,
+            damper_noise: 0.28,
+            key_release_noise: 0.22,
+            damping_duration: 0.46,
+            pickup_symmetry: 0.56,
+            pickup_distance: 0.40,
+            stereo_width: 0.76,
+            eq_gains_db: [0.9, 0.2, 1.4],
+            reverb: ReverbSpec::new("80s Arena Stage", 0.22, 1.85, 20.0, 16.0, 0.46, 0.58, 120.0),
+            fx: FxSpec::custom(
+                FxSlotSpec::on(EffectType::Chorus, 0.28, 0.34, 0.48),
+                FxSlotSpec::on(EffectType::Tremolo, 0.20, 0.42, 0.45),
+                FxSlotSpec::on(EffectType::Amp, 0.38, 0.34, 0.56),
+            ),
+            ..DEFAULT_SPEC
+        },
+        AcousticSpec {
+            id: "kivir-tubular-bells",
+            name: "Tubular Bells",
+            category: InstrumentCategory::Mallet,
+            exciter: ExciterType::MalletHard,
+            description: "Orchestral cathedral chime tubes struck by rawhide mallets with majestic inharmonic bell overtones and sweeping cathedral decay.",
+            inharmonicity_base: 0.00088,
+            decay_scale: 1.48,
+            string_length_m: 1.90,
+            soundboard_impedance: 0.24,
+            sympathetic_resonance: 0.22,
+            duplex_scale_resonance: 0.14,
+            blooming_energy: 0.16,
+            quadratic_effect: 0.20,
+            hammer_hardness: [0.60, 0.80, 0.98],
+            hammer_noise: 0.45,
+            hammer_tone: 0.76,
+            strike_point: 0.185,
+            spectrum_profile: [0.90, 1.08, 0.78, 1.12, 0.62, 0.48, 0.32, 0.22],
+            diapason_hz: 440.0,
+            temperament: TemperamentId::Equal,
+            unison_width_cents: 1.80,
+            octave_stretching: 0.92,
+            dynamics_db: 38.0,
+            condition: 0.04,
+            damper_noise: 0.12,
+            key_release_noise: 0.08,
+            damping_duration: 0.64,
+            stereo_width: 0.74,
+            eq_gains_db: [0.6, 0.3, 1.2],
+            reverb: ReverbSpec::new("Cathedral Bell Tower", 0.38, 4.20, 38.0, 28.0, 0.42, 0.55, 80.0),
+            ..DEFAULT_SPEC
+        },
     ];
 
     specs.into_iter().map(build_instrument).collect()
@@ -2480,8 +2692,8 @@ mod tests {
     fn factory_instrument_count_and_unique_metadata() {
         let instruments = build_factory_instruments();
         assert!(
-            instruments.len() >= 56,
-            "Expected at least 56 factory instruments, found {}",
+            instruments.len() >= 62,
+            "Expected at least 62 factory instruments, found {}",
             instruments.len()
         );
 
@@ -2504,7 +2716,7 @@ mod tests {
             // Uprights (2)
             "upright-u4",
             "upright-u4-honky",
-            // Electric Pianos (8)
+            // Electric Pianos (9)
             "vintage-tines-mk2",
             "vintage-tines-mk1",
             "vintage-reeds-200",
@@ -2513,7 +2725,8 @@ mod tests {
             "pianet-n",
             "pianet-t",
             "electra-piano",
-            // Historical & KIViR Collection (14)
+            "kivir-cp80",
+            // Historical & KIViR Collection (17)
             "ruckers-harpsichord",
             "salodiensis-virginal-1600",
             "giusti-harpsichord-1680",
@@ -2528,7 +2741,10 @@ mod tests {
             "streicher-1852",
             "ny-steinway-square-1858",
             "bechstein-1899",
-            // Mallets & Idiophones (12)
+            "kivir-clavichord",
+            "kivir-harpsichord",
+            "kivir-walter-pianoforte",
+            // Mallets & Idiophones (14)
             "vibraphone-vb",
             "vibraphone-vm",
             "celesta-orchestral",
@@ -2541,6 +2757,8 @@ mod tests {
             "spacedrum",
             "hand-pan",
             "tank-drum",
+            "kivir-cymbalum",
+            "kivir-tubular-bells",
             // Plucked (4)
             "classical-guitar",
             "concert-harp",
@@ -2551,7 +2769,7 @@ mod tests {
             "syngular-hybrid",
         ];
 
-        assert_eq!(expected_ids.len(), 56);
+        assert_eq!(expected_ids.len(), 62);
 
         let mut seen_ids = HashSet::new();
         let mut seen_names = HashSet::new();
@@ -2605,9 +2823,9 @@ mod tests {
 
         assert_eq!(count_cat(InstrumentCategory::GrandPiano), 14);
         assert_eq!(count_cat(InstrumentCategory::UprightPiano), 2);
-        assert_eq!(count_cat(InstrumentCategory::ElectricPiano), 8);
-        assert_eq!(count_cat(InstrumentCategory::Historical), 14);
-        assert_eq!(count_cat(InstrumentCategory::Mallet), 12);
+        assert_eq!(count_cat(InstrumentCategory::ElectricPiano), 9);
+        assert_eq!(count_cat(InstrumentCategory::Historical), 17);
+        assert_eq!(count_cat(InstrumentCategory::Mallet), 14);
         assert_eq!(count_cat(InstrumentCategory::Plucked), 4);
         assert_eq!(count_cat(InstrumentCategory::Prepared), 1);
         assert_eq!(count_cat(InstrumentCategory::Synthesizer), 1);
@@ -2815,5 +3033,20 @@ mod tests {
         assert!(clav.default_params.fx[0].enabled && clav.default_params.fx[0].effect_type == EffectType::Wah);
         assert!(clav.default_params.fx[1].enabled && clav.default_params.fx[1].effect_type == EffectType::Amp);
         assert!(clav.default_params.fx[2].enabled && clav.default_params.fx[2].effect_type == EffectType::Compressor);
+
+        // KIViR Pack Instruments & Bells checks
+        let cp80 = by_id("kivir-cp80");
+        assert!(cp80.default_params.fx[0].enabled && cp80.default_params.fx[0].effect_type == EffectType::Chorus);
+        assert!(cp80.default_params.fx[1].enabled && cp80.default_params.fx[1].effect_type == EffectType::Tremolo);
+        assert!(cp80.default_params.fx[2].enabled && cp80.default_params.fx[2].effect_type == EffectType::Amp);
+
+        let cymb = by_id("kivir-cymbalum");
+        assert!(cymb.default_params.bounce.enabled);
+        assert!(cymb.default_params.design.sympathetic_resonance >= 0.60);
+
+        let bells = by_id("kivir-tubular-bells");
+        assert!(bells.inharmonicity_base > 0.0005);
+        assert!(bells.decay_scale >= 1.40);
+        assert!(bells.default_params.reverb.duration_s >= 3.5);
     }
 }
