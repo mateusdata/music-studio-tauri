@@ -14,6 +14,7 @@ import {
   DEFAULT_PLAY_MODE_PARAMS,
 } from "./components/BounceAndNoteFxPanel";
 import { MidiTransportBar } from "./components/MidiTransportBar";
+import { InstrumentPackBrowser } from "./components/InstrumentPackBrowser";
 import type {
   EffectSlot,
   EffectType,
@@ -362,6 +363,14 @@ export function App() {
     buff_stop: false,
     rattle: false,
   });
+  const [recentPresetIds, setRecentPresetIds] = useState<string[]>(() =>
+    engineClient.isTauri() ? [] : ["grand-ny-d-default"],
+  );
+
+  const pushRecentPreset = useCallback((presetId: string) => {
+    if (!presetId) return;
+    setRecentPresetIds((prev) => [presetId, ...prev.filter((id) => id !== presetId)].slice(0, 6));
+  }, []);
 
   useEffect(() => {
     if (!engineClient.isTauri()) {
@@ -370,7 +379,12 @@ export function App() {
     }
     engineClient
       .getSnapshot()
-      .then(setSnapshot)
+      .then((snap) => {
+        setSnapshot(snap);
+        if (snap.active_preset_id) {
+          pushRecentPreset(snap.active_preset_id);
+        }
+      })
       .catch((err) => setStatusMsg(String(err)));
     engineClient.listMidiDevices().then(setMidiPorts).catch(() => {});
 
@@ -378,7 +392,7 @@ export function App() {
       engineClient.getTelemetry().then(setTelemetry).catch(() => {});
     }, 90);
     return () => clearInterval(timer);
-  }, []);
+  }, [pushRecentPreset]);
 
   const updateParams = useCallback(
     (mutator: (draft: EngineParams) => void) => {
@@ -420,6 +434,9 @@ export function App() {
     try {
       const next = await engineClient.selectInstrument(id);
       setSnapshot(next);
+      if (next.active_preset_id) {
+        pushRecentPreset(next.active_preset_id);
+      }
       setStatusMsg(`Loaded instrument: ${id}`);
     } catch (err) {
       setStatusMsg(String(err));
@@ -434,16 +451,19 @@ export function App() {
         if (!found) return prev;
         return {
           ...prev,
+          active_instrument_id: found.instrument_id,
           active_preset_id: found.id,
           params: JSON.parse(JSON.stringify(found.params)),
         };
       });
+      pushRecentPreset(id);
       setStatusMsg(`Preview preset: ${id}`);
       return;
     }
     try {
       const next = await engineClient.selectPreset(id);
       setSnapshot(next);
+      pushRecentPreset(next.active_preset_id || id);
       setStatusMsg(`Loaded preset: ${id}`);
     } catch (err) {
       setStatusMsg(String(err));
@@ -487,29 +507,46 @@ export function App() {
         presets: [...remaining, saved],
       };
     });
+    pushRecentPreset(saved.id);
     setStatusMsg(`Saved preset: ${saved.name} (${saved.category})`);
   };
 
-  const handleMorphChange = async (t: number) => {
+  const handleMorphWithTargets = async (presetAId: string, presetBId: string, t: number) => {
     if (!snapshot) return;
     if (!engineClient.isTauri()) {
-      updateParams((d) => {
-        d.morphing = t;
+      setSnapshot((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          active_preset_id: presetAId,
+          preset_b_id: presetBId,
+          params: { ...prev.params, morphing: t },
+        };
       });
       return;
     }
     try {
-      const bId =
-        snapshot.preset_b_id ?? snapshot.presets[1]?.id ?? snapshot.active_preset_id;
-      const nextParams = await engineClient.morphPresets(
-        snapshot.active_preset_id,
-        bId,
-        t,
+      const nextParams = await engineClient.morphPresets(presetAId, presetBId, t);
+      setSnapshot((prev) =>
+        prev
+          ? {
+              ...prev,
+              active_preset_id: presetAId,
+              preset_b_id: presetBId,
+              params: nextParams,
+            }
+          : prev,
       );
-      setSnapshot((prev) => (prev ? { ...prev, params: nextParams } : prev));
     } catch (err) {
       setStatusMsg(String(err));
     }
+  };
+
+  const handleMorphChange = async (t: number) => {
+    if (!snapshot) return;
+    const bId =
+      snapshot.preset_b_id ?? snapshot.presets[1]?.id ?? snapshot.active_preset_id;
+    await handleMorphWithTargets(snapshot.active_preset_id, bId, t);
   };
 
   const togglePedal = (name: PedalId) => {
@@ -622,6 +659,19 @@ export function App() {
               </option>
             ))}
           </select>
+
+          <InstrumentPackBrowser
+            instruments={snapshot?.instruments ?? []}
+            presets={snapshot?.presets ?? []}
+            activeInstrumentId={snapshot?.active_instrument_id ?? ""}
+            activePresetId={snapshot?.active_preset_id ?? ""}
+            presetBId={snapshot?.preset_b_id ?? null}
+            morphing={params?.morphing ?? 0}
+            recentPresetIds={recentPresetIds}
+            onSelectInstrument={handleInstrumentChange}
+            onSelectPreset={handlePresetChange}
+            onMorphPresets={handleMorphWithTargets}
+          />
 
           <SavePresetPopover
             defaultName={activePreset ? `${activePreset.name} Custom` : ""}
