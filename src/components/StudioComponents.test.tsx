@@ -13,6 +13,7 @@ import { NoteEditPanel } from "./NoteEditPanel";
 import { SavePresetPopover } from "./SavePresetPopover";
 import { BounceAndNoteFxPanel } from "./BounceAndNoteFxPanel";
 import { MidiTransportBar } from "./MidiTransportBar";
+import { InstrumentPackBrowser, PIANOTEQ_PACKS } from "./InstrumentPackBrowser";
 import type {
   EngineParams,
   EngineSnapshot,
@@ -876,5 +877,132 @@ describe("Studio UI components", () => {
     expect(within(slot0).getByText("Tone Stack")).toBeInTheDocument();
     expect(within(slot0).getByText("Cabinet")).toBeInTheDocument();
     expect(within(slot0).getByText("Presence")).toBeInTheDocument();
+  });
+
+  it("opens All Packs & Presets 3-column mega-menu, filters packs, selects instrument/preset, and closes", async () => {
+    const snap = makeSnapshot();
+    snap.instruments = [
+      ...snap.instruments,
+      {
+        id: "upright-u4",
+        name: "Studio Upright U4",
+        category: "UprightPiano",
+        exciter: "FeltHammer",
+        description: "Studio upright",
+        inharmonicity_base: 0.00042,
+        decay_scale: 0.78,
+        default_params: snap.params,
+      },
+      {
+        id: "prepared-grand",
+        name: "Prepared Experimental Grand",
+        category: "Prepared",
+        exciter: "PreparedBolt",
+        description: "Prepared piano",
+        inharmonicity_base: 0.0003,
+        decay_scale: 0.9,
+        default_params: snap.params,
+      },
+    ];
+    snap.presets = [
+      ...snap.presets,
+      {
+        id: "upright-u4-default",
+        name: "Studio Upright U4 Studio",
+        instrument_id: "upright-u4",
+        category: "Studio",
+        description: "Upright studio preset",
+        params: snap.params,
+        is_factory: true,
+      },
+      {
+        id: "upright-u4-felt",
+        name: "Studio Upright U4 Intimate Felt",
+        instrument_id: "upright-u4",
+        category: "Intimate",
+        description: "Felt upright preset",
+        params: snap.params,
+        is_factory: true,
+      },
+    ];
+
+    const onSelectInstrument = vi.fn();
+    const onSelectPreset = vi.fn();
+    const onMorphPresets = vi.fn();
+
+    render(
+      <InstrumentPackBrowser
+        instruments={snap.instruments}
+        presets={snap.presets}
+        activeInstrumentId={snap.active_instrument_id}
+        activePresetId={snap.active_preset_id}
+        presetBId="upright-u4-felt"
+        morphing={0.25}
+        recentPresetIds={["grand-ny-d-default"]}
+        onSelectInstrument={onSelectInstrument}
+        onSelectPreset={onSelectPreset}
+        onMorphPresets={onMorphPresets}
+      />,
+    );
+
+    // Open mega-menu
+    fireEvent.click(screen.getByRole("button", { name: "All Packs & Presets" }));
+    const dialog = screen.getByRole("dialog", { name: "Instrument Packs Browser" });
+    expect(dialog).toBeInTheDocument();
+
+    // All 28 Pianoteq pack headers rendered across 3 columns
+    expect(PIANOTEQ_PACKS).toHaveLength(28);
+    expect(within(dialog).getByTestId("packs-col-1")).toBeInTheDocument();
+    expect(within(dialog).getByTestId("packs-col-2")).toBeInTheDocument();
+    expect(within(dialog).getByTestId("packs-col-3")).toBeInTheDocument();
+
+    for (const expectedHeader of [
+      "Steinway D Instrument Pack",
+      "U4 Instrument Pack",
+      "Electric Instrument Pack",
+      "Hohner Instrument Pack",
+      "Syngular Instrument Pack",
+      "Morphing/Layers",
+      "KIViR Instruments & Bells",
+    ]) {
+      expect(within(dialog).getByText(expectedHeader)).toBeInTheDocument();
+    }
+
+    // Recent presets strip visible
+    const recentStrip = within(dialog).getByTestId("recent-presets-strip");
+    expect(within(recentStrip).getByRole("button", { name: "Grand Concert NY D Studio" })).toBeInTheDocument();
+
+    // Morphing/Layers A/B controls work
+    fireEvent.change(within(dialog).getByLabelText(/Morph A ↔ B/i), { target: { value: "0.7" } });
+    expect(onMorphPresets).toHaveBeenCalledWith("grand-ny-d-default", "upright-u4-felt", 0.7);
+
+    // Inspect U4 presets via ▸ submenu button & select a preset
+    fireEvent.click(within(dialog).getByLabelText("Presets for Studio Upright U4"));
+    const submenu = within(dialog).getByTestId("pack-presets-submenu");
+    fireEvent.click(within(submenu).getByRole("button", { name: /Studio Upright U4 Intimate Felt/i }));
+    await waitFor(() => expect(onSelectPreset).toHaveBeenCalledWith("upright-u4-felt"));
+    expect(screen.queryByRole("dialog", { name: "Instrument Packs Browser" })).not.toBeInTheDocument();
+
+    // Reopen, filter via search input, click instrument directly, and verify Escape/backdrop close
+    fireEvent.click(screen.getByRole("button", { name: "All Packs & Presets" }));
+    const reopened = screen.getByRole("dialog", { name: "Instrument Packs Browser" });
+    fireEvent.change(within(reopened).getByLabelText("Search Instruments and Presets"), {
+      target: { value: "Prepared" },
+    });
+    expect(within(reopened).getByText("Prepared Experimental Grand")).toBeInTheDocument();
+    fireEvent.click(within(reopened).getByRole("button", { name: "Prepared Experimental Grand" }));
+    await waitFor(() => expect(onSelectInstrument).toHaveBeenCalledWith("prepared-grand"));
+    expect(screen.queryByRole("dialog", { name: "Instrument Packs Browser" })).not.toBeInTheDocument();
+
+    // Reopen and close via Escape
+    fireEvent.click(screen.getByRole("button", { name: "All Packs & Presets" }));
+    expect(screen.getByRole("dialog", { name: "Instrument Packs Browser" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Instrument Packs Browser" })).not.toBeInTheDocument();
+
+    // Reopen and close via backdrop click
+    fireEvent.click(screen.getByRole("button", { name: "All Packs & Presets" }));
+    fireEvent.click(screen.getByTestId("pack-browser-backdrop"));
+    expect(screen.queryByRole("dialog", { name: "Instrument Packs Browser" })).not.toBeInTheDocument();
   });
 });
