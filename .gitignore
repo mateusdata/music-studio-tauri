@@ -1,0 +1,20 @@
+# Dependencies & Build Artifacts
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# Local non-root Linux dev sysroot
+.sysroot/
+
+# Multi-agent isolated git worktrees
+.worktrees/
+
+# Logs & temp audio exports
+*.log
+*.wav
+.DS_Store
