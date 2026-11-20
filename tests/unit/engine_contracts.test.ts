@@ -1,14 +1,19 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { engineClient } from "../../src/services/engineClient";
 import type {
+  BounceParams,
   EffectSlot,
   EngineParams,
   EngineSnapshot,
   EngineTelemetry,
   InstrumentCategory,
   MidiConfig,
+  MidiTransportState,
   NoteEditOffset,
+  NoteFxParams,
   PedalState,
+  PlayMode,
+  PlayModeParams,
   TemperamentId,
   TuningParams,
 } from "../../src/types/engine";
@@ -48,6 +53,22 @@ const KEY_RANGE_MODES = [
   "Compact61",
   "Extended105",
 ] as const satisfies readonly MidiConfig["key_range_mode"][];
+
+const PLAY_MODES = [
+  "Standard",
+  "DiatonicHarp",
+  "Guitar",
+] as const satisfies readonly PlayMode[];
+
+const DIATONIC_PITCH_CLASS_TO_PEDAL_INDEX: Record<number, number> = {
+  0: 0, // C
+  2: 1, // D
+  4: 2, // E
+  5: 3, // F
+  7: 4, // G
+  9: 5, // A
+  11: 6, // B
+};
 
 const KEYBOARD_RANGES: Record<
   MidiConfig["key_range_mode"],
@@ -276,6 +297,118 @@ function applyTransposeAndRange(
   return shifted >= 0 && shifted <= 127 ? shifted : null;
 }
 
+/**
+ * 7-pedal diatonic harp pitch mapping:
+ * `harpPedals` has 7 entries `[C, D, E, F, G, A, B]` where `-1` = flat, `0` = natural, `+1` = sharp.
+ * Returns mapped MIDI note for diatonic keys in `[0..127]`, or `null` for non-diatonic keys / out-of-range notes.
+ */
+function mapDiatonicHarpPitch(midiNote: number, harpPedals: readonly number[]): number | null {
+  if (harpPedals.length !== 7) {
+    throw new Error(`Expected 7 harp pedals, got ${harpPedals.length}`);
+  }
+  const pc = ((midiNote % 12) + 12) % 12;
+  const pedalIdx = DIATONIC_PITCH_CLASS_TO_PEDAL_INDEX[pc];
+  if (pedalIdx === undefined) {
+    return null;
+  }
+  const rawShift = Math.trunc(harpPedals[pedalIdx]);
+  const clampedShift = Math.max(-1, Math.min(1, rawShift));
+  const mapped = midiNote + clampedShift;
+  return mapped >= 0 && mapped <= 127 ? mapped : null;
+}
+
+interface BounceHit {
+  index: number;
+  stepDelayMs: number;
+  cumulativeTimeMs: number;
+  velocity: number;
+}
+
+/**
+ * Reference Mallet Bounce geometric decay scheduler:
+ * - Inter-bounce delay decays geometrically by `(1 - delay_loss)^(k - 1)` from `delay_ms`
+ *   (scaled by `velocity_sensitivity` around midpoint velocity 64).
+ * - Bounce velocity decays geometrically by `(1 - velocity_loss)^k` from `initialVelocity`.
+ */
+function computeBounceSequence(initialVelocity: number, bounce: BounceParams): BounceHit[] {
+  if (!bounce.enabled || initialVelocity <= 0 || bounce.max_bounces <= 0) {
+    return [];
+  }
+  const delayLoss = Math.max(0, Math.min(0.95, bounce.delay_loss));
+  const velLoss = Math.max(0, Math.min(0.99, bounce.velocity_loss));
+  const velSens = Math.max(0, Math.min(1, bounce.velocity_sensitivity));
+  const velNorm = Math.max(0, Math.min(1, initialVelocity / 127));
+  const baseDelayMs = Math.max(1, bounce.delay_ms * (1 + velSens * (velNorm - 0.5)));
+
+  const hits: BounceHit[] = [];
+  let cumulativeTimeMs = 0;
+
+  for (let k = 1; k <= bounce.max_bounces; k++) {
+    const velocity = initialVelocity * Math.pow(1 - velLoss, k);
+    if (velocity < 1.0) {
+      break;
+    }
+    const stepDelayMs = baseDelayMs * Math.pow(1 - delayLoss, k - 1);
+    cumulativeTimeMs += stepDelayMs;
+    hits.push({
+      index: k,
+      stepDelayMs,
+      cumulativeTimeMs,
+      velocity,
+    });
+  }
+  return hits;
+}
+
+function createDefaultBounceParams(): BounceParams {
+  return {
+    enabled: false,
+    delay_ms: 120.0,
+    sync_tempo: false,
+    velocity_sensitivity: 0.5,
+    delay_loss: 0.15,
+    velocity_loss: 0.35,
+    humanization: 0.1,
+    max_bounces: 6,
+  };
+}
+
+function createDefaultNoteFxParams(): NoteFxParams {
+  return {
+    lfo_shape: 0.5,
+    lfo_skew: 0.5,
+    lfo_rate_hz: 5.2,
+    lfo_phase_locked: false,
+    onset_duration_ms: 80.0,
+    vibrato_cents: 0.0,
+    vibrato_offset_cents: 0.0,
+    tremolo_depth_db: 0.0,
+    tremolo_phase: 0.0,
+    attack_envelope: 0.5,
+    smear: 0.0,
+  };
+}
+
+function createDefaultPlayModeParams(): PlayModeParams {
+  return {
+    mode: "Standard",
+    harp_pedals: [0, 0, 0, 0, 0, 0, 0],
+    guitar_fret: 0,
+    guitar_legato: false,
+    guitar_body: 0.5,
+  };
+}
+
+function createDefaultMidiTransportState(): MidiTransportState {
+  return {
+    is_playing: false,
+    is_recording: false,
+    playback_speed: 1.0,
+    recorded_events_count: 0,
+    current_track_name: null,
+  };
+}
+
 function createDefaultTuning(): TuningParams {
   return {
     diapason_hz: 440.0,
@@ -419,6 +552,9 @@ function createDefaultEngineParams(): EngineParams {
       gain_db: 0.0,
     },
     note_edit: {},
+    bounce: createDefaultBounceParams(),
+    note_fx: createDefaultNoteFxParams(),
+    play_mode: createDefaultPlayModeParams(),
   };
 }
 
@@ -427,11 +563,12 @@ afterEach(() => {
 });
 
 describe("Engine Type & Contract Structures", () => {
-  it("matches Rust enum variants for temperaments, categories, effects, and key ranges", () => {
+  it("matches Rust enum variants for temperaments, categories, effects, key ranges, and play modes", () => {
     expect(TEMPERAMENT_IDS).toHaveLength(8);
     expect(INSTRUMENT_CATEGORIES).toHaveLength(8);
     expect(EFFECT_TYPES).toHaveLength(5);
     expect(KEY_RANGE_MODES).toEqual(["Full88", "Compact61", "Extended105"]);
+    expect(PLAY_MODES).toEqual(["Standard", "DiatonicHarp", "Guitar"]);
   });
 
   it("validates EngineParams, EngineTelemetry, and EngineSnapshot structure parity", () => {
@@ -475,6 +612,8 @@ describe("Engine Type & Contract Structures", () => {
       last_midi_velocity: null,
       active_notes: [],
       pedals,
+      midi_transport: createDefaultMidiTransportState(),
+      midi_learn_target: null,
     };
 
     const snapshot: EngineSnapshot = {
@@ -512,11 +651,46 @@ describe("Engine Type & Contract Structures", () => {
     expect(snapshot.params.output.mics).toHaveLength(3);
     expect(snapshot.params.eq_bands).toHaveLength(3);
     expect(snapshot.params.fx).toHaveLength(3);
+    expect(snapshot.params.bounce).toEqual(createDefaultBounceParams());
+    expect(snapshot.params.note_fx).toEqual(createDefaultNoteFxParams());
+    expect(snapshot.params.play_mode?.harp_pedals).toHaveLength(7);
+    expect(snapshot.params.play_mode?.mode).toBe("Standard");
     expect(telemetry.max_polyphony).toBe(128);
     expect(Object.keys(telemetry.pedals)).toHaveLength(9);
+    expect(telemetry.midi_transport).toEqual(createDefaultMidiTransportState());
+    expect(telemetry.midi_learn_target).toBeNull();
   });
 
-  it("exposes expected engineClient IPC facade and detects Tauri internals", () => {
+  it("validates Cycle 2 BounceParams, NoteFxParams, PlayModeParams, and MidiTransportState defaults", () => {
+    const bounce = createDefaultBounceParams();
+    expect(bounce.enabled).toBe(false);
+    expect(bounce.delay_ms).toBe(120.0);
+    expect(bounce.delay_loss).toBe(0.15);
+    expect(bounce.velocity_loss).toBe(0.35);
+    expect(bounce.max_bounces).toBe(6);
+
+    const noteFx = createDefaultNoteFxParams();
+    expect(noteFx.lfo_rate_hz).toBe(5.2);
+    expect(noteFx.onset_duration_ms).toBe(80.0);
+    expect(noteFx.vibrato_cents).toBe(0.0);
+    expect(noteFx.tremolo_depth_db).toBe(0.0);
+
+    const playMode = createDefaultPlayModeParams();
+    expect(playMode.mode).toBe("Standard");
+    expect(playMode.harp_pedals).toEqual([0, 0, 0, 0, 0, 0, 0]);
+    expect(playMode.guitar_fret).toBe(0);
+    expect(playMode.guitar_legato).toBe(false);
+    expect(playMode.guitar_body).toBe(0.5);
+
+    const transport = createDefaultMidiTransportState();
+    expect(transport.is_playing).toBe(false);
+    expect(transport.is_recording).toBe(false);
+    expect(transport.playback_speed).toBe(1.0);
+    expect(transport.recorded_events_count).toBe(0);
+    expect(transport.current_track_name).toBeNull();
+  });
+
+  it("exposes expected engineClient IPC facade including Cycle 2 transport and CC learn methods", () => {
     const expectedMethods = [
       "isTauri",
       "getSnapshot",
@@ -535,6 +709,12 @@ describe("Engine Type & Contract Structures", () => {
       "updateMidiConfig",
       "playTestChord",
       "exportDemoWav",
+      "playDemoMidi",
+      "stopMidiTransport",
+      "toggleMidiRecord",
+      "playRecordedMidi",
+      "setMidiPlaybackSpeed",
+      "armMidiCcLearn",
     ] as const;
 
     for (const method of expectedMethods) {
@@ -697,5 +877,135 @@ describe("Keyboard MIDI Note Ranges", () => {
     expect(applyTransposeAndRange(21, 0, "Compact61")).toBe(36);
     expect(applyTransposeAndRange(108, 0, "Compact61")).toBe(96);
     expect(applyTransposeAndRange(60, -30, "Compact61")).toBe(36);
+  });
+});
+
+describe("7-Pedal Diatonic Harp Pitch Mapping Math", () => {
+  it("maps natural C-D-E-F-G-A-B notes across -1, 0, +1 pedal states and gates black keys", () => {
+    const cOctave4 = [60, 62, 64, 65, 67, 69, 71]; // C4, D4, E4, F4, G4, A4, B4
+
+    // Natural [0,0,0,0,0,0,0]: identity mapping for all 7 white keys
+    expect(cOctave4.map((n) => mapDiatonicHarpPitch(n, [0, 0, 0, 0, 0, 0, 0]))).toEqual(cOctave4);
+
+    // All flat [-1,-1,-1,-1,-1,-1,-1] (Cb major): -1 semitone per string
+    expect(
+      cOctave4.map((n) => mapDiatonicHarpPitch(n, [-1, -1, -1, -1, -1, -1, -1])),
+    ).toEqual([59, 61, 63, 64, 66, 68, 70]);
+
+    // All sharp [+1,+1,+1,+1,+1,+1,+1] (C# major): +1 semitone per string
+    expect(
+      cOctave4.map((n) => mapDiatonicHarpPitch(n, [1, 1, 1, 1, 1, 1, 1])),
+    ).toEqual([61, 63, 65, 66, 68, 70, 72]);
+
+    // G major [C=0, D=0, E=0, F=+1, G=0, A=0, B=0] raises only F strings (F4 65 -> F#4 66)
+    const gMajor = [0, 0, 0, 1, 0, 0, 0];
+    expect(mapDiatonicHarpPitch(65, gMajor)).toBe(66);
+    expect(mapDiatonicHarpPitch(53, gMajor)).toBe(54); // F3 -> F#3
+    expect(mapDiatonicHarpPitch(60, gMajor)).toBe(60); // C4 unchanged
+
+    // Enharmonic equivalence: C# (C=+1) == Db (D=-1) == MIDI 61
+    expect(mapDiatonicHarpPitch(60, [1, 0, 0, 0, 0, 0, 0])).toBe(
+      mapDiatonicHarpPitch(62, [0, -1, 0, 0, 0, 0, 0]),
+    );
+
+    // Non-diatonic chromatic black keys return null in diatonic harp mapping
+    for (const blackKey of [61, 63, 66, 68, 70]) {
+      expect(mapDiatonicHarpPitch(blackKey, [0, 0, 0, 0, 0, 0, 0])).toBeNull();
+    }
+  });
+
+  it("clamps out-of-range pedal values, guards MIDI [0..127], and shifts frequency by 1 semitone", () => {
+    // Out-of-range pedal offsets clamp to [-1, +1]
+    expect(mapDiatonicHarpPitch(60, [-4, 0, 0, 0, 0, 0, 5])).toBe(59);
+    expect(mapDiatonicHarpPitch(71, [-4, 0, 0, 0, 0, 0, 5])).toBe(72);
+
+    // MIDI lower/upper boundary guard (C-1 = MIDI 0 flattened -> out of range -> null)
+    expect(mapDiatonicHarpPitch(0, [-1, 0, 0, 0, 0, 0, 0])).toBeNull();
+    expect(mapDiatonicHarpPitch(0, [1, 0, 0, 0, 0, 0, 0])).toBe(1);
+
+    // Frequency ratio checks for A4 under flat / natural / sharp
+    const tuning = createDefaultTuning();
+    const aFlatMidi = mapDiatonicHarpPitch(69, [0, 0, 0, 0, 0, -1, 0])!;
+    const aNatMidi = mapDiatonicHarpPitch(69, [0, 0, 0, 0, 0, 0, 0])!;
+    const aSharpMidi = mapDiatonicHarpPitch(69, [0, 0, 0, 0, 0, 1, 0])!;
+
+    expect(computeNoteFrequency(aFlatMidi, tuning)).toBeCloseTo(440 * Math.pow(2, -1 / 12), 4);
+    expect(computeNoteFrequency(aNatMidi, tuning)).toBeCloseTo(440.0, 6);
+    expect(computeNoteFrequency(aSharpMidi, tuning)).toBeCloseTo(440 * Math.pow(2, 1 / 12), 4);
+  });
+});
+
+describe("Mallet Bounce Geometric Decay Formula", () => {
+  it("returns no bounces when disabled, max_bounces is 0, or velocity is 0", () => {
+    const disabled = createDefaultBounceParams();
+    expect(computeBounceSequence(100, disabled)).toEqual([]);
+
+    expect(computeBounceSequence(0, { ...disabled, enabled: true })).toEqual([]);
+    expect(computeBounceSequence(100, { ...disabled, enabled: true, max_bounces: 0 })).toEqual([]);
+  });
+
+  it("computes geometric delay and velocity decay matching BounceParams closed-form series", () => {
+    const bounce: BounceParams = {
+      ...createDefaultBounceParams(),
+      enabled: true,
+      delay_ms: 120.0,
+      velocity_sensitivity: 0.0,
+      delay_loss: 0.15,
+      velocity_loss: 0.35,
+      max_bounces: 6,
+    };
+
+    const initialVel = 100;
+    const hits = computeBounceSequence(initialVel, bounce);
+    expect(hits).toHaveLength(6);
+
+    for (let i = 0; i < hits.length; i++) {
+      const k = i + 1;
+      expect(hits[i].stepDelayMs).toBeCloseTo(120.0 * Math.pow(0.85, k - 1), 6);
+      expect(hits[i].velocity).toBeCloseTo(initialVel * Math.pow(0.65, k), 6);
+      if (i > 0) {
+        expect(hits[i].stepDelayMs / hits[i - 1].stepDelayMs).toBeCloseTo(0.85, 6);
+        expect(hits[i].velocity / hits[i - 1].velocity).toBeCloseTo(0.65, 6);
+      }
+    }
+
+    // Closed-form finite geometric series sum: d0 * (1 - r^n) / (1 - r)
+    const expectedTotalTime = 120.0 * ((1 - Math.pow(0.85, 6)) / 0.15);
+    expect(hits[hits.length - 1].cumulativeTimeMs).toBeCloseTo(expectedTotalTime, 5);
+  });
+
+  it("handles velocity sensitivity, zero-loss edge cases, and sub-threshold termination", () => {
+    const sensitive: BounceParams = {
+      ...createDefaultBounceParams(),
+      enabled: true,
+      delay_ms: 100.0,
+      velocity_sensitivity: 0.5,
+      delay_loss: 0.0,
+      velocity_loss: 0.0,
+      max_bounces: 4,
+    };
+
+    // High velocity increases initial bounce interval vs low velocity when velocity_sensitivity > 0
+    const hardHits = computeBounceSequence(127, sensitive);
+    const softHits = computeBounceSequence(1, sensitive);
+    expect(hardHits).toHaveLength(4);
+    expect(softHits).toHaveLength(4);
+    expect(hardHits[0].stepDelayMs).toBeGreaterThan(softHits[0].stepDelayMs);
+
+    // Zero loss preserves constant delay and velocity
+    expect(hardHits[3].stepDelayMs).toBeCloseTo(hardHits[0].stepDelayMs, 6);
+    expect(hardHits[3].velocity).toBeCloseTo(127, 6);
+
+    // Steep velocity_loss terminates early once bounced velocity drops below 1.0
+    const steepDecay: BounceParams = {
+      ...createDefaultBounceParams(),
+      enabled: true,
+      velocity_loss: 0.8,
+      max_bounces: 10,
+    };
+    const shortHits = computeBounceSequence(10, steepDecay);
+    // k=1 -> 2.0 (>=1), k=2 -> 0.4 (<1, stops)
+    expect(shortHits).toHaveLength(1);
+    expect(shortHits[0].velocity).toBeCloseTo(2.0, 6);
   });
 });
