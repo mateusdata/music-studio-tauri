@@ -826,3 +826,145 @@ input[type="range"].studio-range::-webkit-slider-thumb {
   font-size: 11px;
   color: var(--accent-emerald);
 }
+
+/* MIDI Transport & CC Learn Ribbon */
+.midi-transport-ribbon {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 6px 16px;
+  background: #121720;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.transport-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.transport-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: var(--accent-cyan);
+  margin-right: 4px;
+}
+
+.btn-rec-active {
+  background: rgba(229, 83, 75, 0.22);
+  border-color: #e5534b;
+  color: #ff8e88;
+}
+
+.transport-speed-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin-left: 4px;
+}
+
+.transport-speed-range {
+  width: 82px !important;
+}
+
+.transport-status-pill {
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
+/* Mallet Bounce, NoteFX & Play Mode Panel */
+.bounce-notefx-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.play-mode-card {
+  grid-column: 1 / -1;
+}
+
+.mode-segmented {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.play-mode-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
+.harp-controls-wrap,
+.guitar-controls-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.harp-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.harp-pedals-row {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(46px, 1fr));
+  gap: 8px;
+}
+
+.harp-pedal-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 8px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.harp-pedal-btn:hover {
+  border-color: var(--accent-amber);
+}
+
+.harp-pedal-btn.flat {
+  border-color: var(--accent-cyan);
+  background: rgba(72, 184, 208, 0.14);
+}
+
+.harp-pedal-btn.sharp {
+  border-color: var(--accent-amber);
+  background: var(--accent-amber-soft);
+}
+
+.harp-note-letter {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.harp-pedal-symbol {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.harp-pedal-num {
+  font-size: 10px;
+  color: var(--text-secondary);
+}

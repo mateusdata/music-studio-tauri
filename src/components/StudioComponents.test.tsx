@@ -11,7 +11,16 @@ import {
 import { MicStageEditor } from "./MicStageEditor";
 import { NoteEditPanel } from "./NoteEditPanel";
 import { SavePresetPopover } from "./SavePresetPopover";
-import type { EngineSnapshot, MidiConfig, OutputStageParams, PresetData } from "../types/engine";
+import { BounceAndNoteFxPanel } from "./BounceAndNoteFxPanel";
+import { MidiTransportBar } from "./MidiTransportBar";
+import type {
+  EngineParams,
+  EngineSnapshot,
+  MidiConfig,
+  MidiTransportState,
+  OutputStageParams,
+  PresetData,
+} from "../types/engine";
 
 function makeSnapshot(): EngineSnapshot {
   const output: OutputStageParams = {
@@ -551,9 +560,149 @@ describe("Studio UI components", () => {
     render(<App />);
     expect(screen.getByText("Piano Tect Tauri")).toBeInTheDocument();
     expect(screen.getByTestId("virtual-keyboard")).toBeInTheDocument();
+    expect(screen.getByTestId("midi-transport-bar")).toBeInTheDocument();
+
+    const nav = screen.getByRole("navigation", { name: "Parameter Sections" });
+    expect(within(nav).getAllByRole("button")).toHaveLength(7);
+
+    fireEvent.click(screen.getByRole("button", { name: "Acoustic Design" }));
+    expect(screen.getByTestId("bounce-notefx-panel")).toBeInTheDocument();
+
     fireEvent.click(screen.getByRole("button", { name: "Mics & Binaural Stage" }));
     expect(screen.getByTestId("mic-stage-editor")).toBeInTheDocument();
+
     fireEvent.click(screen.getByRole("button", { name: "MIDI & Action" }));
     expect(screen.getByTestId("velocity-curve-editor")).toBeInTheDocument();
+  });
+
+  it("controls Mallet Bounce, NoteFX sliders, DiatonicHarp 7 pedals, and Guitar mode in BounceAndNoteFxPanel", () => {
+    let currentParams: EngineParams = JSON.parse(JSON.stringify(makeSnapshot().params));
+    const applyMutator = (mutator: (draft: EngineParams) => void) => {
+      const cloned: EngineParams = JSON.parse(JSON.stringify(currentParams));
+      mutator(cloned);
+      currentParams = cloned;
+    };
+
+    const { rerender } = render(
+      <BounceAndNoteFxPanel params={currentParams} onUpdateParams={applyMutator} />,
+    );
+
+    // Toggle Mallet Bounce & adjust bounce sliders
+    fireEvent.click(screen.getByLabelText("Enable Mallet Bounce"));
+    expect(currentParams.bounce?.enabled).toBe(true);
+    fireEvent.change(screen.getByLabelText(/Bounce Delay/i), { target: { value: "240" } });
+    expect(currentParams.bounce?.delay_ms).toBe(240);
+    fireEvent.change(screen.getByLabelText(/Max Bounces/i), { target: { value: "9" } });
+    expect(currentParams.bounce?.max_bounces).toBe(9);
+
+    // Adjust Per-Note FX sliders
+    fireEvent.change(screen.getByLabelText(/Vibrato Depth/i), { target: { value: "35" } });
+    expect(currentParams.note_fx?.vibrato_cents).toBe(35);
+    fireEvent.change(screen.getByLabelText(/LFO Rate/i), { target: { value: "7.5" } });
+    expect(currentParams.note_fx?.lfo_rate_hz).toBe(7.5);
+    fireEvent.change(screen.getByLabelText(/Tremolo Depth/i), { target: { value: "6" } });
+    expect(currentParams.note_fx?.tremolo_depth_db).toBe(6);
+    fireEvent.change(screen.getByLabelText(/Onset Duration/i), { target: { value: "150" } });
+    expect(currentParams.note_fx?.onset_duration_ms).toBe(150);
+    fireEvent.change(screen.getByLabelText(/Attack Envelope/i), { target: { value: "0.75" } });
+    expect(currentParams.note_fx?.attack_envelope).toBe(0.75);
+    fireEvent.change(screen.getByLabelText(/Smear/i), { target: { value: "0.42" } });
+    expect(currentParams.note_fx?.smear).toBe(0.42);
+
+    // Switch to DiatonicHarp and verify 7 pedals cycle 0 -> +1 -> -1 -> 0
+    fireEvent.click(screen.getByRole("button", { name: "DiatonicHarp" }));
+    expect(currentParams.play_mode?.mode).toBe("DiatonicHarp");
+
+    rerender(
+      <BounceAndNoteFxPanel params={currentParams} onUpdateParams={applyMutator} />,
+    );
+    const harpGroup = screen.getByRole("group", { name: "Harp Pedals" });
+    expect(within(harpGroup).getAllByRole("button")).toHaveLength(7);
+
+    // Cycle C pedal: 0 -> +1 -> -1 -> 0
+    fireEvent.click(screen.getByLabelText(/Harp Pedal C:/i));
+    expect(currentParams.play_mode?.harp_pedals[0]).toBe(1);
+    rerender(
+      <BounceAndNoteFxPanel params={currentParams} onUpdateParams={applyMutator} />,
+    );
+    fireEvent.click(screen.getByLabelText(/Harp Pedal C:/i));
+    expect(currentParams.play_mode?.harp_pedals[0]).toBe(-1);
+    rerender(
+      <BounceAndNoteFxPanel params={currentParams} onUpdateParams={applyMutator} />,
+    );
+    fireEvent.click(screen.getByLabelText(/Harp Pedal C:/i));
+    expect(currentParams.play_mode?.harp_pedals[0]).toBe(0);
+
+    // Switch to Guitar mode
+    fireEvent.click(screen.getByRole("button", { name: "Guitar" }));
+    expect(currentParams.play_mode?.mode).toBe("Guitar");
+    rerender(
+      <BounceAndNoteFxPanel params={currentParams} onUpdateParams={applyMutator} />,
+    );
+    fireEvent.change(screen.getByLabelText(/Guitar Fret/i), { target: { value: "5" } });
+    expect(currentParams.play_mode?.guitar_fret).toBe(5);
+    fireEvent.click(screen.getByLabelText(/Guitar Legato/i));
+    expect(currentParams.play_mode?.guitar_legato).toBe(true);
+    fireEvent.change(screen.getByLabelText(/Guitar Body/i), { target: { value: "0.8" } });
+    expect(currentParams.play_mode?.guitar_body).toBe(0.8);
+  });
+
+  it("wires MidiTransportBar buttons, playback speed, and MIDI CC Learn to engineClient", async () => {
+    const baseState: MidiTransportState = {
+      is_playing: false,
+      is_recording: false,
+      playback_speed: 1.0,
+      recorded_events_count: 0,
+      current_track_name: null,
+    };
+
+    const playDemoSpy = vi
+      .spyOn(engineClient, "playDemoMidi")
+      .mockResolvedValue({ ...baseState, is_playing: true, current_track_name: "Demo Prelude" });
+    const stopSpy = vi
+      .spyOn(engineClient, "stopMidiTransport")
+      .mockResolvedValue({ ...baseState, is_playing: false });
+    const recSpy = vi
+      .spyOn(engineClient, "toggleMidiRecord")
+      .mockResolvedValue({ ...baseState, is_recording: true });
+    const playRecSpy = vi
+      .spyOn(engineClient, "playRecordedMidi")
+      .mockResolvedValue({ ...baseState, is_playing: true, recorded_events_count: 12 });
+    const speedSpy = vi
+      .spyOn(engineClient, "setMidiPlaybackSpeed")
+      .mockResolvedValue({ ...baseState, playback_speed: 1.5 });
+    const learnSpy = vi
+      .spyOn(engineClient, "armMidiCcLearn")
+      .mockResolvedValueOnce("morphing")
+      .mockResolvedValueOnce(null);
+
+    const onStatus = vi.fn();
+    render(<MidiTransportBar onStatusMessage={onStatus} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Play Demo/i }));
+    await waitFor(() => expect(playDemoSpy).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: /Stop/i }));
+    await waitFor(() => expect(stopSpy).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: /Record/i }));
+    await waitFor(() => expect(recSpy).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: /Play Rec/i }));
+    await waitFor(() => expect(playRecSpy).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(screen.getByLabelText("MIDI Playback Speed"), {
+      target: { value: "1.5" },
+    });
+    await waitFor(() => expect(speedSpy).toHaveBeenCalledWith(1.5));
+
+    fireEvent.change(screen.getByLabelText("MIDI CC Learn Target"), {
+      target: { value: "morphing" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /MIDI CC Learn/i }));
+    await waitFor(() => expect(learnSpy).toHaveBeenCalledWith("morphing"));
+
+    fireEvent.click(screen.getByRole("button", { name: /MIDI CC Learn/i }));
+    await waitFor(() => expect(learnSpy).toHaveBeenLastCalledWith(null));
   });
 });

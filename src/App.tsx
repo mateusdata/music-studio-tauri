@@ -7,6 +7,13 @@ import { VelocityCurveEditor } from "./components/VelocityCurveEditor";
 import { MicStageEditor } from "./components/MicStageEditor";
 import { NoteEditPanel } from "./components/NoteEditPanel";
 import { SavePresetPopover } from "./components/SavePresetPopover";
+import {
+  BounceAndNoteFxPanel,
+  DEFAULT_BOUNCE_PARAMS,
+  DEFAULT_NOTE_FX_PARAMS,
+  DEFAULT_PLAY_MODE_PARAMS,
+} from "./components/BounceAndNoteFxPanel";
+import { MidiTransportBar } from "./components/MidiTransportBar";
 import type {
   EffectSlot,
   EngineParams,
@@ -209,6 +216,12 @@ function createDefaultParams(): EngineParams {
       gain_db: 0.0,
     },
     note_edit: {},
+    bounce: { ...DEFAULT_BOUNCE_PARAMS },
+    note_fx: { ...DEFAULT_NOTE_FX_PARAMS },
+    play_mode: {
+      ...DEFAULT_PLAY_MODE_PARAMS,
+      harp_pedals: [...DEFAULT_PLAY_MODE_PARAMS.harp_pedals],
+    },
   };
 }
 
@@ -572,6 +585,8 @@ export function App() {
         </div>
       </header>
 
+      <MidiTransportBar telemetry={telemetry} onStatusMessage={setStatusMsg} />
+
       <main className="workspace-body">
         <nav className="tabs-nav" aria-label="Parameter Sections">
           {(
@@ -863,6 +878,11 @@ export function App() {
                     onChange={(v) => updateParams((d) => { d.design.quadratic_effect = v; })}
                   />
                 </section>
+
+                <BounceAndNoteFxPanel
+                  params={params}
+                  onUpdateParams={updateParams}
+                />
               </>
             )}
 
