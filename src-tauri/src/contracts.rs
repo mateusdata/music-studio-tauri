@@ -275,10 +275,15 @@ pub struct EqBand {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EffectType {
     Delay,
-    ParametricEq,
     Chorus,
+    Flanger,
+    Phaser,
     Tremolo,
+    Wah,
+    Fuzz,
+    Amp,
     Compressor,
+    ParametricEq,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

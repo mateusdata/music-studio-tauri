@@ -107,9 +107,21 @@ export interface EqBand {
   q: number;
 }
 
+export type EffectType =
+  | "Delay"
+  | "Chorus"
+  | "Flanger"
+  | "Phaser"
+  | "Tremolo"
+  | "Wah"
+  | "Fuzz"
+  | "Amp"
+  | "Compressor"
+  | "ParametricEq";
+
 export interface EffectSlot {
   enabled: boolean;
-  effect_type: "Delay" | "ParametricEq" | "Chorus" | "Tremolo" | "Compressor";
+  effect_type: EffectType;
   mix: number;
   param_1: number;
   param_2: number;

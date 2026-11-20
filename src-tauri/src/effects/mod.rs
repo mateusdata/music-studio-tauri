@@ -558,6 +558,7 @@ impl EffectsChain {
                         l = l * (1.0 - mix) + wet_l * mix;
                         r = r * (1.0 - mix) + wet_r * mix;
                     }
+                    _ => {}
                 }
             }
 
