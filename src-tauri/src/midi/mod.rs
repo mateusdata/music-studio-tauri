@@ -336,6 +336,323 @@ pub fn connect_midi_port(
     })
 }
 
+const DEFAULT_TEMPO_US_PER_QUARTER: u32 = 500_000;
+
+fn encode_vlq(value: u32, out: &mut Vec<u8>) {
+    let mut v = value.min(0x0FFF_FFFF);
+    let mut buf = [0_u8; 4];
+    let mut len = 0;
+    buf[len] = (v & 0x7F) as u8;
+    len += 1;
+    v >>= 7;
+    while v > 0 {
+        buf[len] = ((v & 0x7F) as u8) | 0x80;
+        len += 1;
+        v >>= 7;
+    }
+    for i in (0..len).rev() {
+        out.push(buf[i]);
+    }
+}
+
+fn read_vlq(data: &[u8], cursor: &mut usize) -> Result<u32, String> {
+    let mut value: u32 = 0;
+    for i in 0..4 {
+        if *cursor >= data.len() {
+            return Err("Unexpected EOF while reading MIDI VLQ".to_string());
+        }
+        let b = data[*cursor];
+        *cursor += 1;
+        value = (value << 7) | (b & 0x7F) as u32;
+        if (b & 0x80) == 0 {
+            return Ok(value);
+        }
+        if i == 3 {
+            return Err("MIDI VLQ exceeded 4 bytes".to_string());
+        }
+    }
+    unreachable!()
+}
+
+/// Encodes `(timestamp_ms, MidiEngineEvent)` pairs into a Standard MIDI File (`.mid` Format 0)
+/// assuming 120 BPM (500,000 us/quarter) when converting millisecond timestamps to ticks.
+pub fn write_smf_bytes(events: &[(u64, MidiEngineEvent)], ppqn: u16) -> Vec<u8> {
+    let ppqn = ppqn.clamp(1, 32_767);
+    let mut indexed: Vec<(u64, usize, &MidiEngineEvent)> = events
+        .iter()
+        .enumerate()
+        .map(|(idx, (ts_ms, ev))| (*ts_ms, idx, ev))
+        .collect();
+    indexed.sort_by_key(|&(ts_ms, idx, _)| (ts_ms, idx));
+
+    let mut track = Vec::with_capacity(indexed.len() * 6 + 16);
+    // Explicit 120 BPM Set Tempo meta event (500,000 us = 0x07A120) at tick 0
+    track.extend_from_slice(&[0x00, 0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20]);
+
+    let mut prev_tick: u64 = 0;
+    for (ts_ms, _, ev) in indexed {
+        let tick = ((ts_ms as u128 * ppqn as u128 + 250) / 500) as u64;
+        let delta_tick = tick.saturating_sub(prev_tick).min(0x0FFF_FFFF) as u32;
+        prev_tick = tick;
+
+        encode_vlq(delta_tick, &mut track);
+        match *ev {
+            MidiEngineEvent::NoteOn {
+                note,
+                velocity,
+                channel,
+            } => {
+                let ch = channel.saturating_sub(1).min(15);
+                track.extend_from_slice(&[0x90 | ch, note & 0x7F, velocity.min(127)]);
+            }
+            MidiEngineEvent::NoteOff { note, channel } => {
+                let ch = channel.saturating_sub(1).min(15);
+                track.extend_from_slice(&[0x80 | ch, note & 0x7F, 0x00]);
+            }
+            MidiEngineEvent::ControlChange { cc, value, channel } => {
+                let ch = channel.saturating_sub(1).min(15);
+                track.extend_from_slice(&[0xB0 | ch, cc & 0x7F, value & 0x7F]);
+            }
+            MidiEngineEvent::PitchBend {
+                value_14bit,
+                channel,
+            } => {
+                let ch = channel.saturating_sub(1).min(15);
+                let clamped = value_14bit.min(16_383);
+                let lsb = (clamped & 0x7F) as u8;
+                let msb = ((clamped >> 7) & 0x7F) as u8;
+                track.extend_from_slice(&[0xE0 | ch, lsb, msb]);
+            }
+            MidiEngineEvent::Aftertouch { pressure, channel } => {
+                let ch = channel.saturating_sub(1).min(15);
+                track.extend_from_slice(&[0xD0 | ch, pressure & 0x7F]);
+            }
+            MidiEngineEvent::ProgramChange { program, channel } => {
+                let ch = channel.saturating_sub(1).min(15);
+                track.extend_from_slice(&[0xC0 | ch, program & 0x7F]);
+            }
+        }
+    }
+
+    // End of Track meta event
+    track.extend_from_slice(&[0x00, 0xFF, 0x2F, 0x00]);
+
+    let mut out = Vec::with_capacity(14 + 8 + track.len());
+    out.extend_from_slice(b"MThd");
+    out.extend_from_slice(&6_u32.to_be_bytes());
+    out.extend_from_slice(&0_u16.to_be_bytes()); // Format 0
+    out.extend_from_slice(&1_u16.to_be_bytes()); // 1 track
+    out.extend_from_slice(&ppqn.to_be_bytes());
+
+    out.extend_from_slice(b"MTrk");
+    out.extend_from_slice(&(track.len() as u32).to_be_bytes());
+    out.extend_from_slice(&track);
+    out
+}
+
+fn parse_mtrk_chunk(
+    track: &[u8],
+    seq_counter: &mut usize,
+    tempo_changes: &mut Vec<(u64, u32)>,
+    raw_events: &mut Vec<(u64, usize, MidiEngineEvent)>,
+) -> Result<(), String> {
+    let mut cursor = 0_usize;
+    let mut abs_tick = 0_u64;
+    let mut running_status: Option<u8> = None;
+
+    while cursor < track.len() {
+        let delta = read_vlq(track, &mut cursor)?;
+        abs_tick = abs_tick.saturating_add(delta as u64);
+
+        if cursor >= track.len() {
+            return Err("Unexpected end of MTrk chunk after delta-time".to_string());
+        }
+
+        let byte = track[cursor];
+        if byte == 0xFF {
+            cursor += 1;
+            running_status = None;
+            if cursor >= track.len() {
+                return Err("Truncated meta event in MTrk".to_string());
+            }
+            let meta_type = track[cursor];
+            cursor += 1;
+            let meta_len = read_vlq(track, &mut cursor)? as usize;
+            let end = cursor
+                .checked_add(meta_len)
+                .ok_or_else(|| "Meta event length overflow".to_string())?;
+            if end > track.len() {
+                return Err("Truncated meta event payload in MTrk".to_string());
+            }
+            let payload = &track[cursor..end];
+            cursor = end;
+
+            if meta_type == 0x2F {
+                break;
+            }
+            if meta_type == 0x51 && meta_len == 3 {
+                let us_per_q = ((payload[0] as u32) << 16)
+                    | ((payload[1] as u32) << 8)
+                    | (payload[2] as u32);
+                if us_per_q > 0 {
+                    tempo_changes.push((abs_tick, us_per_q));
+                }
+            }
+            continue;
+        }
+
+        if byte == 0xF0 || byte == 0xF7 {
+            cursor += 1;
+            running_status = None;
+            let sysex_len = read_vlq(track, &mut cursor)? as usize;
+            let end = cursor
+                .checked_add(sysex_len)
+                .ok_or_else(|| "SysEx event length overflow".to_string())?;
+            if end > track.len() {
+                return Err("Truncated SysEx event payload in MTrk".to_string());
+            }
+            cursor = end;
+            continue;
+        }
+
+        let status = if byte >= 0x80 {
+            if byte >= 0xF0 {
+                return Err(format!("Unsupported MIDI system status byte: 0x{byte:02X}"));
+            }
+            cursor += 1;
+            running_status = Some(byte);
+            byte
+        } else {
+            running_status.ok_or_else(|| {
+                "MIDI data byte encountered without active running status".to_string()
+            })?
+        };
+
+        let msg_type = status & 0xF0;
+        let parsed = match msg_type {
+            0xC0 | 0xD0 => {
+                if cursor >= track.len() {
+                    return Err("Truncated 2-byte MIDI channel message".to_string());
+                }
+                let d1 = track[cursor];
+                cursor += 1;
+                parse_midi_message(&[status, d1])
+            }
+            0x80 | 0x90 | 0xA0 | 0xB0 | 0xE0 => {
+                if cursor + 1 >= track.len() {
+                    return Err("Truncated 3-byte MIDI channel message".to_string());
+                }
+                let d1 = track[cursor];
+                let d2 = track[cursor + 1];
+                cursor += 2;
+                parse_midi_message(&[status, d1, d2])
+            }
+            _ => None,
+        };
+
+        if let Some(ev) = parsed {
+            let order = *seq_counter;
+            *seq_counter += 1;
+            raw_events.push((abs_tick, order, ev));
+        }
+    }
+
+    Ok(())
+}
+
+/// Parses a Standard MIDI File (`.mid` Format 0 or Format 1) into timestamp-sorted
+/// `(timestamp_ms, MidiEngineEvent)` pairs, supporting running status, `FF 51 03` tempo meta
+/// events, and skipping meta/SysEx chunks.
+pub fn parse_smf_bytes(data: &[u8]) -> Result<Vec<(u64, MidiEngineEvent)>, String> {
+    if data.len() < 14 || &data[0..4] != b"MThd" {
+        return Err("Invalid SMF header: missing MThd".to_string());
+    }
+    let header_len = u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
+    let header_end = 8_usize
+        .checked_add(header_len)
+        .ok_or_else(|| "SMF header length overflow".to_string())?;
+    if header_len < 6 || header_end > data.len() {
+        return Err("Truncated or invalid MThd header length".to_string());
+    }
+
+    let format = u16::from_be_bytes([data[8], data[9]]);
+    if format > 1 {
+        return Err(format!("Unsupported SMF format: {format}"));
+    }
+    let num_tracks = u16::from_be_bytes([data[10], data[11]]) as usize;
+    let division = u16::from_be_bytes([data[12], data[13]]);
+    if division == 0 {
+        return Err("Invalid SMF division: 0".to_string());
+    }
+    if (division & 0x8000) != 0 {
+        return Err("SMPTE timecode SMF division is not supported".to_string());
+    }
+    let ppqn = division as u128;
+
+    let mut pos = header_end;
+    let mut tracks_parsed = 0_usize;
+    let mut seq_counter = 0_usize;
+    let mut tempo_changes: Vec<(u64, u32)> = Vec::new();
+    let mut raw_events: Vec<(u64, usize, MidiEngineEvent)> = Vec::new();
+
+    while pos + 8 <= data.len() && tracks_parsed < num_tracks {
+        let chunk_id = &data[pos..pos + 4];
+        let chunk_len =
+            u32::from_be_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]])
+                as usize;
+        let chunk_start = pos + 8;
+        let chunk_end = chunk_start
+            .checked_add(chunk_len)
+            .ok_or_else(|| "SMF chunk length overflow".to_string())?;
+        if chunk_end > data.len() {
+            return Err("Truncated SMF chunk".to_string());
+        }
+
+        if chunk_id == b"MTrk" {
+            parse_mtrk_chunk(
+                &data[chunk_start..chunk_end],
+                &mut seq_counter,
+                &mut tempo_changes,
+                &mut raw_events,
+            )?;
+            tracks_parsed += 1;
+        }
+        pos = chunk_end;
+    }
+
+    if tracks_parsed == 0 {
+        return Err("SMF contains no MTrk chunks".to_string());
+    }
+
+    tempo_changes.sort_by_key(|&(tick, _)| tick);
+    raw_events.sort_by_key(|&(tick, order, _)| (tick, order));
+
+    let mut tempo_idx = 0_usize;
+    let mut current_tick = 0_u64;
+    let mut current_tempo_us = DEFAULT_TEMPO_US_PER_QUARTER as u128;
+    let mut accum_tick_us = 0_u128;
+    let denom = ppqn * 1000;
+
+    let mut result = Vec::with_capacity(raw_events.len());
+    for (abs_tick, _, ev) in raw_events {
+        while tempo_idx < tempo_changes.len() && tempo_changes[tempo_idx].0 <= abs_tick {
+            let (t_tick, new_tempo) = tempo_changes[tempo_idx];
+            if t_tick > current_tick {
+                accum_tick_us += (t_tick - current_tick) as u128 * current_tempo_us;
+                current_tick = t_tick;
+            }
+            current_tempo_us = new_tempo as u128;
+            tempo_idx += 1;
+        }
+        let total_tick_us =
+            accum_tick_us + (abs_tick - current_tick) as u128 * current_tempo_us;
+        let ms = ((total_tick_us + denom / 2) / denom) as u64;
+        result.push((ms, ev));
+    }
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -703,5 +1020,289 @@ mod tests {
         let (tx, _rx) = std::sync::mpsc::channel();
         let res = connect_midi_port("__nonexistent_midi_port_9999__", tx);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_smf_midi_file_roundtrip() {
+        let demo = generate_demo_midi_sequence();
+        let smf_480 = write_smf_bytes(&demo, 480);
+
+        assert_eq!(&smf_480[0..4], b"MThd");
+        assert_eq!(&smf_480[14..18], b"MTrk");
+        assert!(smf_480.ends_with(&[0x00, 0xFF, 0x2F, 0x00]));
+
+        let parsed = parse_smf_bytes(&smf_480).expect("SMF roundtrip parse must succeed");
+        assert_eq!(parsed.len(), demo.len());
+
+        let mut prev_ms = 0_u64;
+        let mut saw_cc64_on = false;
+        let mut saw_cc64_off = false;
+        let mut demo_notes = Vec::new();
+        let mut parsed_notes = Vec::new();
+
+        for ((orig_ms, orig_ev), (got_ms, got_ev)) in demo.iter().zip(parsed.iter()) {
+            assert!(*got_ms >= prev_ms, "parsed SMF timestamps must be monotonic");
+            prev_ms = *got_ms;
+            assert!(
+                orig_ms.abs_diff(*got_ms) <= 1,
+                "timestamp drift >1ms at orig={orig_ms}, got={got_ms}"
+            );
+            assert_eq!(got_ev, orig_ev);
+
+            match *got_ev {
+                MidiEngineEvent::NoteOn { note, .. } => parsed_notes.push(note),
+                MidiEngineEvent::ControlChange { cc: 64, value, .. } => {
+                    if value > 0 {
+                        saw_cc64_on = true;
+                    } else {
+                        saw_cc64_off = true;
+                    }
+                }
+                _ => {}
+            }
+            if let MidiEngineEvent::NoteOn { note, .. } = *orig_ev {
+                demo_notes.push(note);
+            }
+        }
+        assert_eq!(parsed_notes, demo_notes);
+        assert!(saw_cc64_on && saw_cc64_off);
+
+        // Exact millisecond roundtrip across all 6 MidiEngineEvent variants at 500 PPQN (1 tick = 1 ms)
+        let all_variants = vec![
+            (
+                0,
+                MidiEngineEvent::ProgramChange {
+                    program: 12,
+                    channel: 2,
+                },
+            ),
+            (
+                50,
+                MidiEngineEvent::NoteOn {
+                    note: 60,
+                    velocity: 96,
+                    channel: 2,
+                },
+            ),
+            (
+                150,
+                MidiEngineEvent::Aftertouch {
+                    pressure: 77,
+                    channel: 2,
+                },
+            ),
+            (
+                225,
+                MidiEngineEvent::PitchBend {
+                    value_14bit: 12_345,
+                    channel: 2,
+                },
+            ),
+            (
+                400,
+                MidiEngineEvent::ControlChange {
+                    cc: 64,
+                    value: 127,
+                    channel: 16,
+                },
+            ),
+            (
+                800,
+                MidiEngineEvent::NoteOff {
+                    note: 60,
+                    channel: 2,
+                },
+            ),
+        ];
+        let smf_500 = write_smf_bytes(&all_variants, 500);
+        let parsed_500 = parse_smf_bytes(&smf_500).expect("500 PPQN SMF parse must succeed");
+        assert_eq!(parsed_500, all_variants);
+    }
+
+    #[test]
+    fn test_smf_format1_running_status_tempo_and_errors() {
+        // Format 1, 2 tracks, 480 PPQN
+        // Track 0: tempo 60 BPM (1_000_000 us = 0x0F4240) at tick 0,
+        //          then tempo 120 BPM (500_000 us = 0x07A120) at tick 480 (vlq 0x83 0x60)
+        let trk0: Vec<u8> = vec![
+            0x00, 0xFF, 0x51, 0x03, 0x0F, 0x42, 0x40, // tick 0: 60 BPM
+            0x00, 0xFF, 0x01, 0x04, b'T', b'e', b's', b't', // tick 0: text meta
+            0x83, 0x60, 0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20, // tick 480: 120 BPM
+            0x00, 0xFF, 0x2F, 0x00, // EOT
+        ];
+        // Track 1: SysEx + NoteOn + running status NoteOn + running status NoteOn(vel=0->NoteOff)
+        //          + PolyPressure (skipped) + CC64 at tick 480 (1000ms) + NoteOff at tick 960 (1500ms)
+        let trk1: Vec<u8> = vec![
+            0x00, 0xF0, 0x04, 0x7E, 0x7F, 0x09, 0x01, // SysEx (cancels running status)
+            0x00, 0x90, 60, 80, // tick 0: NoteOn 60, vel 80
+            0x00, 64, 90, // tick 0 (running status 0x90): NoteOn 64, vel 90
+            0x00, 60, 0, // tick 0 (running status 0x90, vel=0 -> NoteOff 60)
+            0x00, 0xA0, 64, 50, // tick 0: Poly Key Pressure (skipped cleanly)
+            0x83, 0x60, 0xB0, 64, 127, // tick 480 (= 1000 ms @ 60 BPM): CC64=127
+            0x83, 0x60, 0x80, 64, 0, // tick 960 (= 1000 + 500 = 1500 ms @ 120 BPM): NoteOff 64
+            0x00, 0xFF, 0x2F, 0x00, // EOT
+        ];
+
+        let mut smf = Vec::new();
+        smf.extend_from_slice(b"MThd");
+        smf.extend_from_slice(&6_u32.to_be_bytes());
+        smf.extend_from_slice(&1_u16.to_be_bytes()); // Format 1
+        smf.extend_from_slice(&2_u16.to_be_bytes()); // 2 tracks
+        smf.extend_from_slice(&480_u16.to_be_bytes());
+        smf.extend_from_slice(b"MTrk");
+        smf.extend_from_slice(&(trk0.len() as u32).to_be_bytes());
+        smf.extend_from_slice(&trk0);
+        smf.extend_from_slice(b"MTrk");
+        smf.extend_from_slice(&(trk1.len() as u32).to_be_bytes());
+        smf.extend_from_slice(&trk1);
+
+        let parsed = parse_smf_bytes(&smf).expect("Format 1 SMF parse must succeed");
+        assert_eq!(
+            parsed,
+            vec![
+                (
+                    0,
+                    MidiEngineEvent::NoteOn {
+                        note: 60,
+                        velocity: 80,
+                        channel: 1,
+                    }
+                ),
+                (
+                    0,
+                    MidiEngineEvent::NoteOn {
+                        note: 64,
+                        velocity: 90,
+                        channel: 1,
+                    }
+                ),
+                (
+                    0,
+                    MidiEngineEvent::NoteOff {
+                        note: 60,
+                        channel: 1,
+                    }
+                ),
+                (
+                    1000,
+                    MidiEngineEvent::ControlChange {
+                        cc: 64,
+                        value: 127,
+                        channel: 1,
+                    }
+                ),
+                (
+                    1500,
+                    MidiEngineEvent::NoteOff {
+                        note: 64,
+                        channel: 1,
+                    }
+                ),
+            ]
+        );
+
+        // Error checks
+        assert!(parse_smf_bytes(b"BAD!").is_err());
+        let mut smpte = smf.clone();
+        smpte[12] = 0xE7; // SMPTE bit set
+        assert!(parse_smf_bytes(&smpte).is_err());
+        let mut fmt2 = smf.clone();
+        fmt2[9] = 2; // Format 2 unsupported
+        assert!(parse_smf_bytes(&fmt2).is_err());
+    }
+
+    #[test]
+    fn test_live_or_loopback_midi_stream_dispatch() {
+        let ports = list_midi_input_ports();
+        let (tx, rx) = std::sync::mpsc::channel::<MidiEngineEvent>();
+
+        // If any system ALSA/JACK port (including Midi Through) is present, verify clean connect & drop
+        if let Some(target_port) = ports
+            .iter()
+            .find(|p| p.name.contains("Midi Through"))
+            .or_else(|| ports.first())
+        {
+            let handle = connect_midi_port(&target_port.name, tx.clone())
+                .expect("connecting to discovered MIDI port should succeed");
+            assert_eq!(handle.port_name, target_port.name);
+            drop(handle);
+        }
+
+        // End-to-end mpsc dispatch pipeline:
+        // raw MIDI bytes -> parse_midi_message -> mpsc -> apply_transpose_and_range -> apply_velocity_curve -> evaluate_cc_mapping
+        let raw_packets: &[&[u8]] = &[
+            &[0x90, 60, 100], // NoteOn C4
+            &[0xB0, 64, 127], // CC64 Sustain on
+            &[0xB0, 1, 64],   // CC1 -> morphing
+            &[0xB0, 7, 127],  // CC7 -> volume_db max
+            &[0xE0, 0x00, 0x60], // PitchBend up
+            &[0xD0, 88],      // Aftertouch
+            &[0xC0, 3],       // ProgramChange
+            &[0x90, 60, 0],   // NoteOn vel=0 -> NoteOff
+        ];
+
+        for pkt in raw_packets {
+            if let Some(ev) = parse_midi_message(pkt) {
+                tx.send(ev).expect("mpsc send must succeed");
+            }
+        }
+
+        let mut cfg = MidiConfig::default();
+        cfg.transpose = 12;
+
+        let mut notes_on = Vec::new();
+        let mut notes_off = Vec::new();
+        let mut cc_updates = Vec::new();
+        let mut sustain_values = Vec::new();
+        let mut saw_pitch_bend = false;
+        let mut saw_aftertouch = false;
+        let mut saw_program_change = false;
+
+        while let Ok(ev) = rx.try_recv() {
+            match ev {
+                MidiEngineEvent::NoteOn { note, velocity, .. } => {
+                    let mapped_note = apply_transpose_and_range(note, &cfg)
+                        .expect("transposed note should be in range");
+                    let mapped_vel = apply_velocity_curve(velocity, &cfg.velocity_curve);
+                    notes_on.push((mapped_note, mapped_vel));
+                }
+                MidiEngineEvent::NoteOff { note, .. } => {
+                    let mapped_note = apply_transpose_and_range(note, &cfg)
+                        .expect("transposed note-off should be in range");
+                    notes_off.push(mapped_note);
+                }
+                MidiEngineEvent::ControlChange { cc, value, .. } => {
+                    if cc == 64 {
+                        sustain_values.push(value);
+                    } else {
+                        cc_updates.extend(evaluate_cc_mapping(cc, value, &cfg.cc_mappings));
+                    }
+                }
+                MidiEngineEvent::PitchBend { value_14bit, .. } => {
+                    assert!(value_14bit > 8192);
+                    saw_pitch_bend = true;
+                }
+                MidiEngineEvent::Aftertouch { pressure, .. } => {
+                    assert_eq!(pressure, 88);
+                    saw_aftertouch = true;
+                }
+                MidiEngineEvent::ProgramChange { program, .. } => {
+                    assert_eq!(program, 3);
+                    saw_program_change = true;
+                }
+            }
+        }
+
+        assert_eq!(notes_on.len(), 1);
+        assert_eq!(notes_on[0].0, 72); // C4 (60) + 12 = C5 (72)
+        assert!(notes_on[0].1 >= 95 && notes_on[0].1 <= 105);
+        assert_eq!(notes_off, vec![72]);
+        assert_eq!(sustain_values, vec![127]);
+        assert_eq!(cc_updates.len(), 2);
+        assert_eq!(cc_updates[0].0, "morphing");
+        assert!((cc_updates[0].1 - (64.0 / 127.0)).abs() < 1e-4);
+        assert_eq!(cc_updates[1].0, "volume_db");
+        assert!((cc_updates[1].1 - 6.0).abs() < 1e-4);
+        assert!(saw_pitch_bend && saw_aftertouch && saw_program_change);
     }
 }
