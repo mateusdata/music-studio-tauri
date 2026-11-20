@@ -6,36 +6,19 @@ import { ParameterSlider } from "./ParameterSlider";
 
 export interface VelocityCurvePreset {
   id: string;
-  label: "Linear" | "Soft Touch" | "Hard Touch" | "Pianissimo" | "Fortissimo";
+  label:
+    | "Slow keyboard"
+    | "Moderately slow keyboard"
+    | "Normal keyboard"
+    | "Moderately fast keyboard"
+    | "Fast keyboard";
   points: [number, number][];
 }
 
 export const VELOCITY_CURVE_PRESETS: VelocityCurvePreset[] = [
   {
-    id: "linear",
-    label: "Linear",
-    points: [
-      [0, 0],
-      [0.25, 0.25],
-      [0.5, 0.5],
-      [0.75, 0.75],
-      [1, 1],
-    ],
-  },
-  {
-    id: "soft-touch",
-    label: "Soft Touch",
-    points: [
-      [0, 0],
-      [0.25, 0.38],
-      [0.5, 0.68],
-      [0.75, 0.88],
-      [1, 1],
-    ],
-  },
-  {
-    id: "hard-touch",
-    label: "Hard Touch",
+    id: "slow-keyboard",
+    label: "Slow keyboard",
     points: [
       [0, 0],
       [0.25, 0.12],
@@ -45,24 +28,46 @@ export const VELOCITY_CURVE_PRESETS: VelocityCurvePreset[] = [
     ],
   },
   {
-    id: "pianissimo",
-    label: "Pianissimo",
+    id: "mod-slow-keyboard",
+    label: "Moderately slow keyboard",
     points: [
       [0, 0],
-      [0.25, 0.16],
-      [0.5, 0.34],
-      [0.75, 0.56],
-      [1, 0.8],
+      [0.25, 0.18],
+      [0.5, 0.4],
+      [0.75, 0.68],
+      [1, 1],
     ],
   },
   {
-    id: "fortissimo",
-    label: "Fortissimo",
+    id: "normal-keyboard",
+    label: "Normal keyboard",
     points: [
-      [0, 0.08],
-      [0.25, 0.45],
-      [0.5, 0.75],
-      [0.75, 0.92],
+      [0, 0],
+      [0.25, 0.25],
+      [0.5, 0.5],
+      [0.75, 0.75],
+      [1, 1],
+    ],
+  },
+  {
+    id: "mod-fast-keyboard",
+    label: "Moderately fast keyboard",
+    points: [
+      [0, 0],
+      [0.25, 0.34],
+      [0.5, 0.62],
+      [0.75, 0.84],
+      [1, 1],
+    ],
+  },
+  {
+    id: "fast-keyboard",
+    label: "Fast keyboard",
+    points: [
+      [0, 0.05],
+      [0.25, 0.42],
+      [0.5, 0.72],
+      [0.75, 0.9],
       [1, 1],
     ],
   },

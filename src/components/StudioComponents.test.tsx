@@ -213,10 +213,11 @@ describe("Studio UI components", () => {
   });
 
   it("evaluates velocity curve, switches all 5 presets, adds/removes points, and supports SVG pointer drag", () => {
-    expect(evaluateVelocityCurve(0, VELOCITY_CURVE_PRESETS[0].points)).toBe(0);
-    expect(evaluateVelocityCurve(127, VELOCITY_CURVE_PRESETS[0].points)).toBe(127);
-    expect(evaluateVelocityCurve(64, VELOCITY_CURVE_PRESETS[1].points)).toBeGreaterThan(64);
-    expect(evaluateVelocityCurve(64, VELOCITY_CURVE_PRESETS[2].points)).toBeLessThan(64);
+    expect(evaluateVelocityCurve(0, VELOCITY_CURVE_PRESETS[2].points)).toBe(0);
+    expect(evaluateVelocityCurve(127, VELOCITY_CURVE_PRESETS[2].points)).toBe(127);
+    expect(evaluateVelocityCurve(64, VELOCITY_CURVE_PRESETS[2].points)).toBe(64);
+    expect(evaluateVelocityCurve(64, VELOCITY_CURVE_PRESETS[4].points)).toBeGreaterThan(64);
+    expect(evaluateVelocityCurve(64, VELOCITY_CURVE_PRESETS[0].points)).toBeLessThan(64);
 
     const snap = makeSnapshot();
     const onUpdate = vi.fn();
@@ -536,7 +537,7 @@ describe("Studio UI components", () => {
 
     // MIDI & Action tab -> VelocityCurveEditor
     fireEvent.click(screen.getByRole("button", { name: "MIDI & Action" }));
-    fireEvent.click(screen.getByRole("button", { name: "Hard Touch" }));
+    fireEvent.click(screen.getByRole("button", { name: "Slow keyboard" }));
     expect(updateMidiSpy).toHaveBeenCalled();
 
     // Mics & Binaural Stage tab -> MicStageEditor
@@ -789,20 +790,28 @@ describe("Studio UI components", () => {
     // Switch to EQ, FX & Reverb tab
     fireEvent.click(screen.getByRole("button", { name: "EQ, FX & Reverb" }));
 
-    // Verify all 10 Reverb environments + parameters
+    // Verify all 18 official Pianoteq Reverb environments + parameters
     const reverbSelect = screen.getByLabelText("Reverb Environment") as HTMLSelectElement;
     const reverbEnvs = Array.from(reverbSelect.options).map((o) => o.value);
     expect(reverbEnvs).toEqual([
+      "Clean studio",
+      "Jazz studio",
+      "Dry room",
+      "Small Hall",
+      "Medium Hall",
+      "Large Hall",
       "Concert Hall",
+      "Church",
       "Cathedral",
-      "Studio",
-      "Chamber",
       "Taj Mahal",
-      "Plate",
-      "Spring",
-      "Speakers",
+      "Elevator",
       "Broceliande",
-      "Club",
+      "Long Plate",
+      "Super Spring",
+      "Hard Spring",
+      "Smooth Spring",
+      "Small Speaker",
+      "Legacy reverb",
     ]);
 
     fireEvent.change(reverbSelect, { target: { value: "Taj Mahal" } });
@@ -828,17 +837,22 @@ describe("Studio UI components", () => {
       }),
     );
 
-    // Verify all 10 FX types exist in Slot 1 & check dynamic labels across Wah, Phaser, Flanger, Fuzz, Amp
+    const eqPresetSelect = screen.getByLabelText("EQ Preset") as HTMLSelectElement;
+    expect(eqPresetSelect.options.length).toBeGreaterThanOrEqual(17);
+    fireEvent.change(eqPresetSelect, { target: { value: "Brilliant" } });
+    expect(updateParamsSpy).toHaveBeenCalled();
+
+    // Verify all 10 official FX types exist in Slot 1 & check dynamic labels + FX preset selector
     const slot1Type = screen.getByLabelText("FX Slot 1 Type") as HTMLSelectElement;
     const fxOptions = Array.from(slot1Type.options).map((o) => o.value);
     expect(fxOptions).toEqual([
-      "Delay",
+      "Tremolo",
+      "Wah",
       "Chorus",
       "Flanger",
       "Phaser",
-      "Tremolo",
-      "Wah",
       "Fuzz",
+      "Delay",
       "Amp",
       "Compressor",
       "ParametricEq",
@@ -847,11 +861,10 @@ describe("Studio UI components", () => {
     const slot0 = screen.getByTestId("fx-slot-0");
 
     fireEvent.change(slot1Type, { target: { value: "Wah" } });
-    expect(within(slot0).getByText("Wah Pedal")).toBeInTheDocument();
-    expect(within(slot0).getByText("Auto-Wah Sens")).toBeInTheDocument();
-    expect(within(slot0).getByText("Sweep Depth")).toBeInTheDocument();
+    expect(within(slot0).getByText("Sensitivity")).toBeInTheDocument();
+    expect(within(slot0).getByText("Depth")).toBeInTheDocument();
     expect(within(slot0).getByText("Q")).toBeInTheDocument();
-    fireEvent.change(within(slot0).getByLabelText(/Wah Pedal/i), { target: { value: "0.82" } });
+    fireEvent.change(within(slot0).getByLabelText(/^Wah[0-9.]/i), { target: { value: "0.82" } });
     expect(updateParamsSpy).toHaveBeenLastCalledWith(
       expect.objectContaining({
         fx: expect.arrayContaining([
@@ -860,9 +873,12 @@ describe("Studio UI components", () => {
       }),
     );
 
+    const slot1Preset = within(slot0).getByLabelText("FX Slot 1 Preset") as HTMLSelectElement;
+    expect(slot1Preset.options.length).toBeGreaterThan(1);
+
     fireEvent.change(slot1Type, { target: { value: "Phaser" } });
     expect(within(slot0).getByText("Intensity")).toBeInTheDocument();
-    expect(within(slot0).getByText("Center")).toBeInTheDocument();
+    expect(within(slot0).getByText("Phasing")).toBeInTheDocument();
 
     fireEvent.change(slot1Type, { target: { value: "Flanger" } });
     expect(within(slot0).getByText("Depth")).toBeInTheDocument();
@@ -873,8 +889,8 @@ describe("Studio UI components", () => {
     expect(within(slot0).getByText("Grit")).toBeInTheDocument();
 
     fireEvent.change(slot1Type, { target: { value: "Amp" } });
-    expect(within(slot0).getByText("Preamp Drive")).toBeInTheDocument();
-    expect(within(slot0).getByText("Tone Stack")).toBeInTheDocument();
+    expect(within(slot0).getByText("Drive")).toBeInTheDocument();
+    expect(within(slot0).getByText("Bass / Treble")).toBeInTheDocument();
     expect(within(slot0).getByText("Cabinet")).toBeInTheDocument();
     expect(within(slot0).getByText("Presence")).toBeInTheDocument();
   });

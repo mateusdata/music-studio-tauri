@@ -21,7 +21,72 @@ struct ReverbProfile {
 }
 
 fn reverb_environment_profile(name: &str) -> ReverbProfile {
-    match name.trim().to_ascii_lowercase().as_str() {
+    let lower = name.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "clean studio" => ReverbProfile {
+            er_gain: 1.25,
+            er_spread: 0.50,
+            fb_scale: 0.80,
+            damp_bias: 0.04,
+            comb_spread: 0.58,
+            dispersion: 0.08,
+        },
+        "jazz studio" => ReverbProfile {
+            er_gain: 1.28,
+            er_spread: 0.60,
+            fb_scale: 0.85,
+            damp_bias: 0.10,
+            comb_spread: 0.66,
+            dispersion: 0.12,
+        },
+        "dry room" => ReverbProfile {
+            er_gain: 1.40,
+            er_spread: 0.42,
+            fb_scale: 0.72,
+            damp_bias: 0.14,
+            comb_spread: 0.46,
+            dispersion: 0.06,
+        },
+        "small hall" => ReverbProfile {
+            er_gain: 1.32,
+            er_spread: 0.78,
+            fb_scale: 0.90,
+            damp_bias: 0.06,
+            comb_spread: 0.78,
+            dispersion: 0.16,
+        },
+        "medium hall" => ReverbProfile {
+            er_gain: 1.15,
+            er_spread: 0.96,
+            fb_scale: 0.96,
+            damp_bias: 0.02,
+            comb_spread: 0.96,
+            dispersion: 0.22,
+        },
+        "large hall" => ReverbProfile {
+            er_gain: 0.98,
+            er_spread: 1.24,
+            fb_scale: 1.03,
+            damp_bias: 0.04,
+            comb_spread: 1.22,
+            dispersion: 0.30,
+        },
+        "concert hall" => ReverbProfile {
+            er_gain: 1.0,
+            er_spread: 1.12,
+            fb_scale: 1.0,
+            damp_bias: 0.0,
+            comb_spread: 1.08,
+            dispersion: 0.26,
+        },
+        "church" => ReverbProfile {
+            er_gain: 0.92,
+            er_spread: 1.34,
+            fb_scale: 1.05,
+            damp_bias: 0.08,
+            comb_spread: 1.32,
+            dispersion: 0.38,
+        },
         "cathedral" => ReverbProfile {
             er_gain: 0.85,
             er_spread: 1.45,
@@ -29,22 +94,6 @@ fn reverb_environment_profile(name: &str) -> ReverbProfile {
             damp_bias: 0.12,
             comb_spread: 1.45,
             dispersion: 0.45,
-        },
-        "studio" => ReverbProfile {
-            er_gain: 1.25,
-            er_spread: 0.55,
-            fb_scale: 0.84,
-            damp_bias: 0.08,
-            comb_spread: 0.62,
-            dispersion: 0.10,
-        },
-        "chamber" => ReverbProfile {
-            er_gain: 1.35,
-            er_spread: 0.78,
-            fb_scale: 0.92,
-            damp_bias: 0.05,
-            comb_spread: 0.80,
-            dispersion: 0.18,
         },
         "taj mahal" => ReverbProfile {
             er_gain: 1.15,
@@ -54,29 +103,13 @@ fn reverb_environment_profile(name: &str) -> ReverbProfile {
             comb_spread: 1.60,
             dispersion: 0.58,
         },
-        "plate" => ReverbProfile {
-            er_gain: 0.40,
-            er_spread: 0.45,
-            fb_scale: 1.02,
-            damp_bias: -0.22,
-            comb_spread: 0.90,
-            dispersion: 0.68,
-        },
-        "spring" => ReverbProfile {
-            er_gain: 0.65,
-            er_spread: 0.60,
-            fb_scale: 0.88,
-            damp_bias: 0.18,
-            comb_spread: 0.52,
-            dispersion: 0.74,
-        },
-        "speakers" => ReverbProfile {
-            er_gain: 1.45,
-            er_spread: 0.40,
-            fb_scale: 0.76,
-            damp_bias: 0.22,
-            comb_spread: 0.48,
-            dispersion: 0.35,
+        "elevator" => ReverbProfile {
+            er_gain: 1.50,
+            er_spread: 0.34,
+            fb_scale: 0.78,
+            damp_bias: -0.08,
+            comb_spread: 0.42,
+            dispersion: 0.28,
         },
         "broceliande" => ReverbProfile {
             er_gain: 1.10,
@@ -86,23 +119,75 @@ fn reverb_environment_profile(name: &str) -> ReverbProfile {
             comb_spread: 1.32,
             dispersion: 0.50,
         },
-        "club" => ReverbProfile {
-            er_gain: 1.30,
-            er_spread: 0.68,
-            fb_scale: 0.87,
+        "long plate" => ReverbProfile {
+            er_gain: 0.40,
+            er_spread: 0.45,
+            fb_scale: 1.04,
+            damp_bias: -0.22,
+            comb_spread: 0.92,
+            dispersion: 0.68,
+        },
+        "super spring" => ReverbProfile {
+            er_gain: 0.68,
+            er_spread: 0.62,
+            fb_scale: 0.90,
             damp_bias: 0.16,
-            comb_spread: 0.72,
-            dispersion: 0.20,
+            comb_spread: 0.54,
+            dispersion: 0.78,
         },
-        _ => ReverbProfile {
-            // "Concert Hall" default
-            er_gain: 1.0,
-            er_spread: 1.0,
-            fb_scale: 1.0,
-            damp_bias: 0.0,
-            comb_spread: 1.0,
-            dispersion: 0.25,
+        "hard spring" => ReverbProfile {
+            er_gain: 0.72,
+            er_spread: 0.52,
+            fb_scale: 0.87,
+            damp_bias: 0.08,
+            comb_spread: 0.48,
+            dispersion: 0.82,
         },
+        "smooth spring" => ReverbProfile {
+            er_gain: 0.58,
+            er_spread: 0.70,
+            fb_scale: 0.92,
+            damp_bias: 0.22,
+            comb_spread: 0.60,
+            dispersion: 0.64,
+        },
+        "small speaker" => ReverbProfile {
+            er_gain: 1.45,
+            er_spread: 0.38,
+            fb_scale: 0.74,
+            damp_bias: 0.24,
+            comb_spread: 0.44,
+            dispersion: 0.34,
+        },
+        "legacy reverb" => ReverbProfile {
+            er_gain: 0.85,
+            er_spread: 0.95,
+            fb_scale: 0.95,
+            damp_bias: 0.06,
+            comb_spread: 0.95,
+            dispersion: 0.16,
+        },
+        _ => {
+            if lower.contains("cathedral") || lower.contains("bell tower") {
+                reverb_environment_profile("Cathedral")
+            } else if lower.contains("church") || lower.contains("chapel") {
+                reverb_environment_profile("Church")
+            } else if lower.contains("taj") {
+                reverb_environment_profile("Taj Mahal")
+            } else if lower.contains("spring") {
+                reverb_environment_profile("Super Spring")
+            } else if lower.contains("plate") {
+                reverb_environment_profile("Long Plate")
+            } else if lower.contains("studio") || lower.contains("booth") || lower.contains("study") {
+                reverb_environment_profile("Clean studio")
+            } else if lower.contains("speaker") {
+                reverb_environment_profile("Small Speaker")
+            } else if lower.contains("chamber") || lower.contains("salon") || lower.contains("parlor") {
+                reverb_environment_profile("Small Hall")
+            } else {
+                reverb_environment_profile("Concert Hall")
+            }
+        }
     }
 }
 
@@ -1984,16 +2069,24 @@ mod tests {
         };
 
         let envs = [
+            "Clean studio",
+            "Jazz studio",
+            "Dry room",
+            "Small Hall",
+            "Medium Hall",
+            "Large Hall",
             "Concert Hall",
+            "Church",
             "Cathedral",
-            "Studio",
-            "Chamber",
             "Taj Mahal",
-            "Plate",
-            "Spring",
-            "Speakers",
+            "Elevator",
             "Broceliande",
-            "Club",
+            "Long Plate",
+            "Super Spring",
+            "Hard Spring",
+            "Smooth Spring",
+            "Small Speaker",
+            "Legacy reverb",
         ];
 
         let mut results = Vec::new();
@@ -2009,17 +2102,17 @@ mod tests {
             results.push((env, early, late));
         }
 
-        // Cathedral / Taj Mahal must have much longer/louder late decay than tight Studio / Speakers
+        // Cathedral / Taj Mahal must have much longer/louder late decay than tight Clean studio / Small Speaker
         let (_, _, late_cathedral) = results.iter().find(|r| r.0 == "Cathedral").unwrap();
         let (_, _, late_taj) = results.iter().find(|r| r.0 == "Taj Mahal").unwrap();
-        let (_, _, late_studio) = results.iter().find(|r| r.0 == "Studio").unwrap();
-        let (_, _, late_speakers) = results.iter().find(|r| r.0 == "Speakers").unwrap();
-        let (_, early_plate, _) = results.iter().find(|r| r.0 == "Plate").unwrap();
-        let (_, early_chamber, _) = results.iter().find(|r| r.0 == "Chamber").unwrap();
+        let (_, _, late_studio) = results.iter().find(|r| r.0 == "Clean studio").unwrap();
+        let (_, _, late_speakers) = results.iter().find(|r| r.0 == "Small Speaker").unwrap();
+        let (_, early_plate, _) = results.iter().find(|r| r.0 == "Long Plate").unwrap();
+        let (_, early_chamber, _) = results.iter().find(|r| r.0 == "Small Hall").unwrap();
 
         assert!(
             *late_cathedral > *late_studio * 2.0 && *late_taj > *late_speakers * 2.5,
-            "Large spaces (Cathedral {}, Taj Mahal {}) must sustain longer tail than Studio {} / Speakers {}",
+            "Large spaces (Cathedral {}, Taj Mahal {}) must sustain longer tail than Clean studio {} / Small Speaker {}",
             late_cathedral,
             late_taj,
             late_studio,
@@ -2027,7 +2120,7 @@ mod tests {
         );
         assert!(
             *early_chamber > *early_plate * 1.4,
-            "Chamber ({}) must have denser early reflections than Plate ({})",
+            "Small Hall ({}) must have denser early reflections than Long Plate ({})",
             early_chamber,
             early_plate
         );

@@ -517,6 +517,14 @@ input[type="range"].studio-range::-webkit-slider-thumb {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
+}
+
+.fx-head-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 /* Velocity Curve Editor */

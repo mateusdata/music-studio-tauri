@@ -21,7 +21,7 @@ pub fn build_factory_presets(instruments: &[InstrumentModel]) -> Vec<PresetData>
         felt.voicing.hammer_hardness_forte *= 0.75;
         felt.voicing.hammer_noise = (felt.voicing.hammer_noise + 0.15).min(1.0);
         felt.output.lid_position = 0.35;
-        felt.reverb.preset_name = "Chamber".to_string();
+        felt.reverb.preset_name = "Small Hall".to_string();
         felt.reverb.mix = 0.28;
         presets.push(PresetData {
             id: format!("{}-felt", inst.id),
@@ -105,7 +105,7 @@ pub fn build_factory_presets(instruments: &[InstrumentModel]) -> Vec<PresetData>
                     param_4: 0.85,
                 };
                 fx_params.reverb.enabled = true;
-                fx_params.reverb.preset_name = "Spring".to_string();
+                fx_params.reverb.preset_name = "Super Spring".to_string();
                 fx_params.reverb.mix = 0.26;
                 (
                     format!("{} Vintage Phaser & Amp", inst.name),

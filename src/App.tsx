@@ -83,42 +83,135 @@ const INSTRUMENT_CATEGORY_GROUPS: { category: InstrumentCategory; label: string 
 ];
 
 const EFFECT_OPTIONS: { type: EffectType; label: string }[] = [
-  { type: "Delay", label: "Delay" },
+  { type: "Tremolo", label: "Tremolo" },
+  { type: "Wah", label: "Wah" },
   { type: "Chorus", label: "Chorus" },
   { type: "Flanger", label: "Flanger" },
   { type: "Phaser", label: "Phaser" },
-  { type: "Tremolo", label: "Tremolo" },
-  { type: "Wah", label: "Wah" },
   { type: "Fuzz", label: "Fuzz" },
+  { type: "Delay", label: "Delay" },
   { type: "Amp", label: "Amp" },
-  { type: "Compressor", label: "Compressor" },
-  { type: "ParametricEq", label: "Parametric EQ" },
+  { type: "Compressor", label: "Comp" },
+  { type: "ParametricEq", label: "EQ" },
 ];
 
 const FX_PARAM_LABELS: Record<EffectType, [string, string, string, string]> = {
-  Delay: ["Time", "Feedback", "Tone", "Stereo Ping-Pong"],
+  Tremolo: ["Rate", "Shape", "Stereo", "Depth"],
+  Wah: ["Wah", "Sensitivity", "Depth", "Q"],
   Chorus: ["Rate", "Depth", "Delay", "Stereo"],
   Flanger: ["Rate", "Depth", "Feedback", "Stereo"],
-  Phaser: ["Rate", "Intensity", "Feedback", "Center"],
-  Tremolo: ["Rate", "Shape", "Stereo Phase", "Depth"],
-  Wah: ["Wah Pedal", "Auto-Wah Sens", "Sweep Depth", "Q"],
+  Phaser: ["Rate", "Intensity", "Feedback", "Phasing"],
   Fuzz: ["Drive", "Tone", "Grit", "Level"],
-  Amp: ["Preamp Drive", "Tone Stack", "Cabinet", "Presence"],
+  Delay: ["Delay", "Feedback", "Tone", "Stereo"],
+  Amp: ["Drive", "Bass / Treble", "Cabinet", "Presence"],
   Compressor: ["Threshold", "Ratio", "Attack", "Release"],
-  ParametricEq: ["Frequency", "Gain", "Q", "Mode"],
+  ParametricEq: ["Frequency", "Gain", "Q", "Type"],
+};
+
+const FX_PRESETS_BY_TYPE: Record<
+  EffectType,
+  { name: string; mix: number; params: [number, number, number, number] }[]
+> = {
+  Tremolo: [
+    { name: "Gentle tremolo", mix: 0.45, params: [0.22, 0.25, 0.5, 0.45] },
+    { name: "Fast tremolo", mix: 0.65, params: [0.62, 0.45, 0.5, 0.7] },
+    { name: "Deep mono tremolo", mix: 0.85, params: [0.35, 0.65, 0.0, 0.9] },
+    { name: "Ballad stereo Tremolo", mix: 0.55, params: [0.28, 0.2, 0.5, 0.65] },
+  ],
+  Wah: [
+    { name: "Auto-wah", mix: 0.75, params: [0.32, 0.78, 0.72, 0.62] },
+    { name: "Pedal wah-wah", mix: 0.85, params: [0.48, 0.05, 0.65, 0.7] },
+    { name: "Funk Wah", mix: 0.8, params: [0.28, 0.88, 0.82, 0.68] },
+    { name: "Soft Wah", mix: 0.5, params: [0.4, 0.55, 0.45, 0.42] },
+  ],
+  Chorus: [
+    { name: "Vintage chorus", mix: 0.45, params: [0.28, 0.58, 0.45, 0.5] },
+    { name: "Slow chorus", mix: 0.4, params: [0.14, 0.68, 0.55, 0.6] },
+    { name: "Dreamer Chorus", mix: 0.55, params: [0.22, 0.75, 0.62, 0.7] },
+    { name: "Obvious chorus", mix: 0.7, params: [0.45, 0.82, 0.5, 0.8] },
+  ],
+  Flanger: [
+    { name: "Slow flange", mix: 0.48, params: [0.16, 0.52, 0.58, 0.45] },
+    { name: "Captain flanger", mix: 0.6, params: [0.3, 0.68, 0.74, 0.55] },
+    { name: "Plain flanger", mix: 0.42, params: [0.24, 0.45, 0.42, 0.35] },
+    { name: "Psychedelic Flanger", mix: 0.72, params: [0.42, 0.85, 0.82, 0.75] },
+  ],
+  Phaser: [
+    { name: "Seventies phaser", mix: 0.6, params: [0.26, 0.74, 0.56, 0.46] },
+    { name: "Slow phase", mix: 0.48, params: [0.12, 0.65, 0.42, 0.52] },
+    { name: "Beefy stereo Phaser", mix: 0.72, params: [0.34, 0.86, 0.68, 0.58] },
+    { name: "Funky stereo Phaser", mix: 0.68, params: [0.48, 0.8, 0.62, 0.64] },
+  ],
+  Fuzz: [
+    { name: "Light Fuzz", mix: 0.45, params: [0.32, 0.62, 0.35, 0.65] },
+    { name: "Heavy Fuzz", mix: 0.78, params: [0.85, 0.48, 0.75, 0.55] },
+    { name: "Clavi Distortion", mix: 0.65, params: [0.62, 0.72, 0.58, 0.6] },
+    { name: "Vintage Tines Distortion 1", mix: 0.52, params: [0.45, 0.58, 0.42, 0.62] },
+  ],
+  Delay: [
+    { name: "Digital delay", mix: 0.32, params: [0.36, 0.44, 0.78, 0.5] },
+    { name: "Doubling echo", mix: 0.28, params: [0.08, 0.15, 0.68, 0.65] },
+    { name: "Slapback", mix: 0.34, params: [0.15, 0.2, 0.58, 0.35] },
+    { name: "Acoustic echo", mix: 0.35, params: [0.44, 0.5, 0.52, 0.82] },
+    { name: "Atrium Delay", mix: 0.4, params: [0.55, 0.6, 0.48, 0.9] },
+  ],
+  Amp: [
+    { name: "Combo warm", mix: 0.68, params: [0.36, 0.56, 0.58, 0.42] },
+    { name: "Combo bright", mix: 0.7, params: [0.42, 0.74, 0.5, 0.72] },
+    { name: "Overdriven amp", mix: 0.82, params: [0.76, 0.62, 0.68, 0.64] },
+  ],
+  Compressor: [
+    { name: "Punch", mix: 0.65, params: [0.42, 0.48, 0.32, 0.38] },
+    { name: "Bang", mix: 0.8, params: [0.3, 0.68, 0.18, 0.32] },
+    { name: "Squashed", mix: 0.9, params: [0.22, 0.85, 0.1, 0.55] },
+  ],
+  ParametricEq: [
+    { name: "3 Band", mix: 1.0, params: [0.5, 0.62, 0.45, 0.5] },
+    { name: "5 Band", mix: 1.0, params: [0.65, 0.58, 0.52, 0.5] },
+    { name: "Presence", mix: 1.0, params: [0.76, 0.7, 0.4, 0.85] },
+    { name: "Vintage", mix: 1.0, params: [0.38, 0.56, 0.5, 0.15] },
+  ],
 };
 
 const REVERB_ENVIRONMENTS: string[] = [
+  "Clean studio",
+  "Jazz studio",
+  "Dry room",
+  "Small Hall",
+  "Medium Hall",
+  "Large Hall",
   "Concert Hall",
+  "Church",
   "Cathedral",
-  "Studio",
-  "Chamber",
   "Taj Mahal",
-  "Plate",
-  "Spring",
-  "Speakers",
+  "Elevator",
   "Broceliande",
-  "Club",
+  "Long Plate",
+  "Super Spring",
+  "Hard Spring",
+  "Smooth Spring",
+  "Small Speaker",
+  "Legacy reverb",
+];
+
+const EQ_PRESETS: { name: string; gains: [number, number, number] }[] = [
+  { name: "Flat", gains: [0.0, 0.0, 0.0] },
+  { name: "Brilliant", gains: [-1.0, 1.5, 4.5] },
+  { name: "Medium", gains: [-1.5, 2.5, -1.0] },
+  { name: "Pop", gains: [2.5, -1.5, 3.0] },
+  { name: "Presence", gains: [-0.5, 2.0, 3.5] },
+  { name: "Punchy", gains: [3.5, 1.0, 2.0] },
+  { name: "Radio", gains: [-7.0, 4.5, -5.0] },
+  { name: "Fat bass", gains: [5.5, 0.5, -1.0] },
+  { name: "Rock", gains: [4.0, -2.0, 4.0] },
+  { name: "Sit in the mix", gains: [-2.5, 1.5, 2.5] },
+  { name: "Soft", gains: [-1.0, -1.5, -3.5] },
+  { name: "Submarine", gains: [4.0, -4.0, -8.0] },
+  { name: "Uppermid", gains: [-0.5, 3.5, 1.0] },
+  { name: "Treble", gains: [-1.0, 0.5, 5.5] },
+  { name: "Tube", gains: [2.0, 1.0, -1.5] },
+  { name: "Vintage", gains: [1.5, 2.0, -3.0] },
+  { name: "Whistle", gains: [-4.0, 2.0, 6.0] },
 ];
 
 function createDefaultParams(): EngineParams {
@@ -1137,18 +1230,44 @@ export function App() {
                 <section className="panel-card">
                   <div className="panel-title">
                     <span>3-Band Parametric EQ & Limiter</span>
-                    <label className="check-inline">
-                      <input
-                        type="checkbox"
-                        checked={params.eq_enabled}
-                        onChange={(e) =>
+                    <div className="fx-head-controls">
+                      <select
+                        className="studio-select studio-select-sm"
+                        aria-label="EQ Preset"
+                        defaultValue=""
+                        onChange={(e) => {
+                          const found = EQ_PRESETS.find((p) => p.name === e.target.value);
+                          if (!found) return;
                           updateParams((d) => {
-                            d.eq_enabled = e.target.checked;
-                          })
-                        }
-                      />
-                      <span>EQ Enabled</span>
-                    </label>
+                            d.eq_enabled = true;
+                            d.eq_bands[0].gain_db = found.gains[0];
+                            d.eq_bands[1].gain_db = found.gains[1];
+                            d.eq_bands[2].gain_db = found.gains[2];
+                          });
+                        }}
+                      >
+                        <option value="" disabled>
+                          -- EQ Preset --
+                        </option>
+                        {EQ_PRESETS.map((eq) => (
+                          <option key={eq.name} value={eq.name}>
+                            {eq.name}
+                          </option>
+                        ))}
+                      </select>
+                      <label className="check-inline">
+                        <input
+                          type="checkbox"
+                          checked={params.eq_enabled}
+                          onChange={(e) =>
+                            updateParams((d) => {
+                              d.eq_enabled = e.target.checked;
+                            })
+                          }
+                        />
+                        <span>EQ Enabled</span>
+                      </label>
+                    </div>
                   </div>
                   {params.eq_bands.map((band, idx) => (
                     <ParameterSlider
@@ -1223,6 +1342,31 @@ export function App() {
                               {EFFECT_OPTIONS.map((opt) => (
                                 <option key={opt.type} value={opt.type}>
                                   {opt.label}
+                                </option>
+                              ))}
+                            </select>
+                            <select
+                              className="studio-select studio-select-sm"
+                              aria-label={`FX Slot ${idx + 1} Preset`}
+                              defaultValue=""
+                              onChange={(e) => {
+                                const list = FX_PRESETS_BY_TYPE[slot.effect_type] ?? [];
+                                const preset = list.find((p) => p.name === e.target.value);
+                                if (!preset) return;
+                                updateParams((d) => {
+                                  d.fx[idx].enabled = true;
+                                  d.fx[idx].mix = preset.mix;
+                                  d.fx[idx].param_1 = preset.params[0];
+                                  d.fx[idx].param_2 = preset.params[1];
+                                  d.fx[idx].param_3 = preset.params[2];
+                                  d.fx[idx].param_4 = preset.params[3];
+                                });
+                              }}
+                            >
+                              <option value="">-- FX Preset --</option>
+                              {(FX_PRESETS_BY_TYPE[slot.effect_type] ?? []).map((p) => (
+                                <option key={p.name} value={p.name}>
+                                  {p.name}
                                 </option>
                               ))}
                             </select>

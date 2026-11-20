@@ -8,6 +8,7 @@ pub mod presets;
 pub mod synthesis;
 
 use audio::AudioEngineManager;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -15,6 +16,15 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(engine)
+        .setup(|app| {
+            if let (Some(win), Some(icon)) = (
+                app.get_webview_window("main"),
+                app.default_window_icon().cloned(),
+            ) {
+                let _ = win.set_icon(icon);
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::get_engine_snapshot,
             commands::get_telemetry,
