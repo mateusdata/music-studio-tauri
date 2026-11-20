@@ -1,4 +1,4 @@
-use crate::contracts::{EngineParams, InstrumentModel, PresetData};
+use crate::contracts::{EffectSlot, EffectType, EngineParams, InstrumentCategory, InstrumentModel, PresetData};
 use std::path::PathBuf;
 
 pub fn build_factory_presets(instruments: &[InstrumentModel]) -> Vec<PresetData> {
@@ -21,21 +21,23 @@ pub fn build_factory_presets(instruments: &[InstrumentModel]) -> Vec<PresetData>
         felt.voicing.hammer_hardness_forte *= 0.75;
         felt.voicing.hammer_noise = (felt.voicing.hammer_noise + 0.15).min(1.0);
         felt.output.lid_position = 0.35;
+        felt.reverb.preset_name = "Chamber".to_string();
         felt.reverb.mix = 0.28;
         presets.push(PresetData {
             id: format!("{}-felt", inst.id),
             name: format!("{} Intimate Felt", inst.name),
             instrument_id: inst.id.clone(),
             category: "Intimate".to_string(),
-            description: format!("Softened felt hammers and close microphone intimacy for {}", inst.name),
+            description: format!("Softened felt hammers and close chamber intimacy for {}", inst.name),
             params: felt,
             is_factory: true,
         });
 
-        // Concert / Binaural variant
+        // Binaural Player variant
         let mut binaural = inst.default_params.clone();
         binaural.output.binaural_mode = true;
         binaural.output.stereo_width = 0.80;
+        binaural.reverb.preset_name = "Concert Hall".to_string();
         binaural.reverb.duration_s = 2.4;
         binaural.reverb.mix = 0.26;
         presets.push(PresetData {
@@ -45,6 +47,154 @@ pub fn build_factory_presets(instruments: &[InstrumentModel]) -> Vec<PresetData>
             category: "Binaural".to_string(),
             description: format!("Player-perspective 3D binaural acoustic stage for {}", inst.name),
             params: binaural,
+            is_factory: true,
+        });
+
+        // Grand Concert Stage variant
+        let mut concert = inst.default_params.clone();
+        concert.output.lid_position = 1.0;
+        concert.output.stereo_width = 0.76;
+        concert.output.mics[2].enabled = true;
+        concert.output.mics[2].volume = 0.42;
+        concert.reverb.enabled = true;
+        concert.reverb.preset_name = "Concert Hall".to_string();
+        concert.reverb.duration_s = 2.7;
+        concert.reverb.room_size_m = 28.0;
+        concert.reverb.pre_delay_ms = 22.0;
+        concert.reverb.early_reflections = 0.62;
+        concert.reverb.mix = 0.32;
+        presets.push(PresetData {
+            id: format!("{}-concert", inst.id),
+            name: format!("{} Concert Stage", inst.name),
+            instrument_id: inst.id.clone(),
+            category: "Concert".to_string(),
+            description: format!("Full-lid concert hall ambience with room ribbon microphone for {}", inst.name),
+            params: concert,
+            is_factory: true,
+        });
+
+        // FX Showcase variant tailored to instrument category
+        let mut fx_params = inst.default_params.clone();
+        let (fx_name, fx_desc) = match inst.category {
+            InstrumentCategory::ElectricPiano | InstrumentCategory::Synthesizer => {
+                fx_params.fx[0] = EffectSlot {
+                    enabled: true,
+                    effect_type: EffectType::Phaser,
+                    mix: 0.55,
+                    param_1: 0.28,
+                    param_2: 0.72,
+                    param_3: 0.52,
+                    param_4: 0.48,
+                };
+                fx_params.fx[1] = EffectSlot {
+                    enabled: true,
+                    effect_type: EffectType::Amp,
+                    mix: 0.65,
+                    param_1: 0.38,
+                    param_2: 0.62,
+                    param_3: 0.55,
+                    param_4: 0.45,
+                };
+                fx_params.fx[2] = EffectSlot {
+                    enabled: true,
+                    effect_type: EffectType::Delay,
+                    mix: 0.30,
+                    param_1: 0.34,
+                    param_2: 0.42,
+                    param_3: 0.65,
+                    param_4: 0.85,
+                };
+                fx_params.reverb.enabled = true;
+                fx_params.reverb.preset_name = "Spring".to_string();
+                fx_params.reverb.mix = 0.26;
+                (
+                    format!("{} Vintage Phaser & Amp", inst.name),
+                    format!("Classic stereo phaser, warm tube amp cabinet, and spring reverb for {}", inst.name),
+                )
+            }
+            InstrumentCategory::Plucked | InstrumentCategory::Prepared => {
+                fx_params.fx[0] = EffectSlot {
+                    enabled: true,
+                    effect_type: EffectType::Wah,
+                    mix: 0.60,
+                    param_1: 0.35,
+                    param_2: 0.78,
+                    param_3: 0.68,
+                    param_4: 0.58,
+                };
+                fx_params.fx[1] = EffectSlot {
+                    enabled: true,
+                    effect_type: EffectType::Flanger,
+                    mix: 0.42,
+                    param_1: 0.22,
+                    param_2: 0.55,
+                    param_3: 0.70,
+                    param_4: 0.50,
+                };
+                fx_params.fx[2] = EffectSlot {
+                    enabled: true,
+                    effect_type: EffectType::Delay,
+                    mix: 0.36,
+                    param_1: 0.38,
+                    param_2: 0.50,
+                    param_3: 0.60,
+                    param_4: 0.90,
+                };
+                fx_params.reverb.enabled = true;
+                fx_params.reverb.preset_name = "Taj Mahal".to_string();
+                fx_params.reverb.duration_s = 3.2;
+                fx_params.reverb.mix = 0.34;
+                (
+                    format!("{} Ambient Wah & Echo", inst.name),
+                    format!("Envelope auto-wah, stereo flanger, ping-pong echo, and Taj Mahal dome for {}", inst.name),
+                )
+            }
+            _ => {
+                fx_params.fx[0] = EffectSlot {
+                    enabled: true,
+                    effect_type: EffectType::Chorus,
+                    mix: 0.28,
+                    param_1: 0.24,
+                    param_2: 0.48,
+                    param_3: 0.40,
+                    param_4: 0.50,
+                };
+                fx_params.fx[1] = EffectSlot {
+                    enabled: true,
+                    effect_type: EffectType::Delay,
+                    mix: 0.32,
+                    param_1: 0.40,
+                    param_2: 0.45,
+                    param_3: 0.55,
+                    param_4: 0.85,
+                };
+                fx_params.fx[2] = EffectSlot {
+                    enabled: true,
+                    effect_type: EffectType::Compressor,
+                    mix: 0.45,
+                    param_1: 0.35,
+                    param_2: 0.40,
+                    param_3: 0.40,
+                    param_4: 0.50,
+                };
+                fx_params.reverb.enabled = true;
+                fx_params.reverb.preset_name = "Cathedral".to_string();
+                fx_params.reverb.duration_s = 3.6;
+                fx_params.reverb.room_size_m = 38.0;
+                fx_params.reverb.mix = 0.38;
+                (
+                    format!("{} Cathedral Echo", inst.name),
+                    format!("Lush stereo chorus, ping-pong delay, and expansive Cathedral acoustics for {}", inst.name),
+                )
+            }
+        };
+        presets.push(PresetData {
+            id: format!("{}-fx", inst.id),
+            name: fx_name,
+            instrument_id: inst.id.clone(),
+            category: "FX Showcase".to_string(),
+            description: fx_desc,
+            params: fx_params,
             is_factory: true,
         });
     }
@@ -410,9 +560,23 @@ mod tests {
             default_params: EngineParams::default(),
         };
 
-        let factory = build_factory_presets(&[inst]);
-        assert_eq!(factory.len(), 3);
+        let ep_inst = InstrumentModel {
+            id: "test-ep".to_string(),
+            name: "Test EP".to_string(),
+            category: InstrumentCategory::ElectricPiano,
+            exciter: ExciterType::TineHammer,
+            description: "Test EP model".to_string(),
+            inharmonicity_base: 0.00004,
+            decay_scale: 0.85,
+            default_params: EngineParams::default(),
+        };
+
+        let factory = build_factory_presets(&[inst, ep_inst]);
+        assert_eq!(factory.len(), 10);
         assert!(factory.iter().all(|p| p.is_factory));
+        assert!(factory.iter().any(|p| p.id == "test-grand-concert"));
+        assert!(factory.iter().any(|p| p.id == "test-grand-fx" && p.params.reverb.preset_name == "Cathedral"));
+        assert!(factory.iter().any(|p| p.id == "test-ep-fx" && p.params.fx[0].effect_type == EffectType::Phaser && p.params.fx[1].effect_type == EffectType::Amp));
 
         let mut custom = factory[1].clone();
         custom.id = "user-custom-roundtrip".to_string();
