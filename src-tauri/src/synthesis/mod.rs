@@ -4,9 +4,61 @@ use crate::contracts::{
 use std::f32::consts::PI;
 
 pub const MAX_POLYPHONY: usize = 128;
-const NUM_PARTIALS: usize = 8;
+const NUM_PARTIALS: usize = 32;
 const MAX_BOUNCE_EVENTS: usize = 64;
 const DIATONIC_PC_TO_DEG: [usize; 12] = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6];
+const SOUNDBOARD_MODES: [(f32, f32, f32); 4] = [
+    (95.0, 3.2, 0.26),   // Bass belly resonance
+    (215.0, 3.8, 0.24),  // Lower bridge resonance
+    (520.0, 3.0, 0.18),  // Woody midrange body
+    (1450.0, 2.6, 0.12), // Brilliance mode
+];
+
+#[derive(Clone, Copy, Default)]
+struct ResonantMode {
+    b0: f32,
+    b2: f32,
+    a1: f32,
+    a2: f32,
+    z1_l: f32,
+    z2_l: f32,
+    z1_r: f32,
+    z2_r: f32,
+}
+
+impl ResonantMode {
+    fn update_bandpass(&mut self, sr: f32, freq_hz: f32, q: f32) {
+        let safe_sr = sanitize_sample_rate(sr);
+        let w0 = 2.0 * PI * freq_hz.clamp(25.0, safe_sr * 0.42) / safe_sr;
+        let alpha = w0.sin() / (2.0 * q.clamp(0.5, 12.0));
+        let cos_w0 = w0.cos();
+        let a0 = 1.0 + alpha;
+        self.b0 = alpha / a0;
+        self.b2 = -self.b0;
+        self.a1 = (-2.0 * cos_w0) / a0;
+        self.a2 = (1.0 - alpha) / a0;
+    }
+
+    #[inline]
+    fn process_stereo(&mut self, in_l: f32, in_r: f32) -> (f32, f32) {
+        let out_l = self.b0 * in_l + self.z1_l;
+        self.z1_l = -self.a1 * out_l + self.z2_l;
+        self.z2_l = self.b2 * in_l - self.a2 * out_l;
+
+        let out_r = self.b0 * in_r + self.z1_r;
+        self.z1_r = -self.a1 * out_r + self.z2_r;
+        self.z2_r = self.b2 * in_r - self.a2 * out_r;
+
+        if !self.z1_l.is_finite() || !self.z1_r.is_finite() {
+            self.z1_l = 0.0;
+            self.z2_l = 0.0;
+            self.z1_r = 0.0;
+            self.z2_r = 0.0;
+            return (0.0, 0.0);
+        }
+        (out_l, out_r)
+    }
+}
 
 #[derive(Clone, Copy)]
 struct BounceEvent {
@@ -227,13 +279,21 @@ struct Voice {
     age_samples: u64,
     phases_a: [f32; NUM_PARTIALS],
     phases_b: [f32; NUM_PARTIALS],
+    phases_c: [f32; NUM_PARTIALS],
     phase_incs_a: [f32; NUM_PARTIALS],
     phase_incs_b: [f32; NUM_PARTIALS],
+    phase_incs_c: [f32; NUM_PARTIALS],
+    string_count: u8,
     partial_amps: [f32; NUM_PARTIALS],
     partial_decays: [f32; NUM_PARTIALS],
     partial_levels: [f32; NUM_PARTIALS],
+    prompt_env: f32,
+    prompt_decay: f32,
     hammer_noise_env: f32,
     hammer_noise_lp: f32,
+    bridge_knock_env: f32,
+    bridge_knock_phase_lo: f32,
+    bridge_knock_phase_hi: f32,
     damper_noise_env: f32,
     key_release_noise_env: f32,
     key_release_lp: f32,
@@ -260,13 +320,21 @@ impl Default for Voice {
             age_samples: 0,
             phases_a: [0.0; NUM_PARTIALS],
             phases_b: [0.0; NUM_PARTIALS],
+            phases_c: [0.0; NUM_PARTIALS],
             phase_incs_a: [0.0; NUM_PARTIALS],
             phase_incs_b: [0.0; NUM_PARTIALS],
+            phase_incs_c: [0.0; NUM_PARTIALS],
+            string_count: 3,
             partial_amps: [0.0; NUM_PARTIALS],
             partial_decays: [0.9999; NUM_PARTIALS],
             partial_levels: [0.0; NUM_PARTIALS],
+            prompt_env: 0.0,
+            prompt_decay: 0.9998,
             hammer_noise_env: 0.0,
             hammer_noise_lp: 0.0,
+            bridge_knock_env: 0.0,
+            bridge_knock_phase_lo: 0.0,
+            bridge_knock_phase_hi: 0.0,
             damper_noise_env: 0.0,
             key_release_noise_env: 0.0,
             key_release_lp: 0.0,
@@ -295,6 +363,7 @@ pub struct PianoSynthEngine {
     voices: Vec<Voice>,
     bounce_events: [BounceEvent; MAX_BOUNCE_EVENTS],
     global_lfo_phase: f32,
+    soundboard_modes: [ResonantMode; 4],
     sympathetic_lp: f32,
     sympathetic_bp: f32,
     sympathetic_energy: f32,
@@ -305,11 +374,17 @@ pub struct PianoSynthEngine {
 
 impl PianoSynthEngine {
     pub fn new(sample_rate: f32) -> Self {
+        let sr = sanitize_sample_rate(sample_rate);
+        let mut soundboard_modes = [ResonantMode::default(); 4];
+        for (idx, &(freq, q, _)) in SOUNDBOARD_MODES.iter().enumerate() {
+            soundboard_modes[idx].update_bandpass(sr, freq, q);
+        }
         Self {
-            sample_rate: sanitize_sample_rate(sample_rate),
+            sample_rate: sr,
             voices: vec![Voice::default(); MAX_POLYPHONY],
             bounce_events: [BounceEvent::default(); MAX_BOUNCE_EVENTS],
             global_lfo_phase: 0.0,
+            soundboard_modes,
             sympathetic_lp: 0.0,
             sympathetic_bp: 0.0,
             sympathetic_energy: 0.0,
@@ -326,27 +401,38 @@ impl PianoSynthEngine {
             self.sample_rate = new_sr;
             return;
         }
+        for (idx, &(freq, q, _)) in SOUNDBOARD_MODES.iter().enumerate() {
+            self.soundboard_modes[idx].update_bandpass(new_sr, freq, q);
+        }
         let ratio = old_sr / new_sr;
         let nyquist_inc = 2.0 * PI * 0.45;
         for v in &mut self.voices {
             if !v.active {
                 continue;
             }
+            v.prompt_decay = v.prompt_decay.clamp(0.0, 0.999999).powf(ratio);
             for p_idx in 0..NUM_PARTIALS {
                 if v.phase_incs_a[p_idx] > 0.0 {
                     let next_a = v.phase_incs_a[p_idx] * ratio;
                     let next_b = v.phase_incs_b[p_idx] * ratio;
+                    let next_c = v.phase_incs_c[p_idx] * ratio;
                     if !next_a.is_finite() || next_a >= nyquist_inc {
                         v.partial_amps[p_idx] = 0.0;
                         v.partial_levels[p_idx] = 0.0;
                         v.phase_incs_a[p_idx] = 0.0;
                         v.phase_incs_b[p_idx] = 0.0;
+                        v.phase_incs_c[p_idx] = 0.0;
                     } else {
                         v.phase_incs_a[p_idx] = next_a;
                         v.phase_incs_b[p_idx] = if next_b.is_finite() {
                             next_b.clamp(0.0, nyquist_inc * 0.99)
                         } else {
-                            next_a
+                            0.0
+                        };
+                        v.phase_incs_c[p_idx] = if next_c.is_finite() {
+                            next_c.clamp(0.0, nyquist_inc * 0.99)
+                        } else {
+                            0.0
                         };
                         v.partial_decays[p_idx] = v.partial_decays[p_idx].clamp(0.0, 0.999999).powf(ratio);
                     }
@@ -385,7 +471,9 @@ impl PianoSynthEngine {
             v.sustained = false;
             v.sostenuto_held = false;
             v.harmonic_held = false;
+            v.prompt_env = 0.0;
             v.hammer_noise_env = 0.0;
+            v.bridge_knock_env = 0.0;
             v.damper_noise_env = 0.0;
             v.key_release_noise_env = 0.0;
         }
@@ -482,11 +570,28 @@ impl PianoSynthEngine {
             * (1.0 + condition * 0.35))
             .clamp(0.0, 0.1);
 
-        // Unison trichord detune (cents)
+        // Unison trichord detune (cents) & string count scaling (1 bass, 2 low-tenor, 3 mid/treble)
+        let string_count: u8 = if midi_note < 33 {
+            1
+        } else if midi_note <= 44 {
+            2
+        } else {
+            3
+        };
         let unison_cents = (finite_or(params.tuning.unison_width_cents, 0.7).clamp(0.0, 50.0)
             + condition * 12.0)
             * if midi_note < 36 { 0.35 } else { 1.0 };
-        let detune_ratio = 2.0_f32.powf(unison_cents / 1200.0);
+        let detune_a = if string_count >= 2 {
+            2.0_f32.powf((-unison_cents * 0.60) / 1200.0)
+        } else {
+            1.0
+        };
+        let detune_b = 1.0_f32;
+        let detune_c = if string_count == 3 {
+            2.0_f32.powf((unison_cents * 0.72) / 1200.0)
+        } else {
+            0.0
+        };
 
         let nyquist = self.sample_rate * 0.45;
         let impedance = finite_or(params.design.soundboard_impedance, 0.52).clamp(0.0, 1.5);
@@ -495,11 +600,16 @@ impl PianoSynthEngine {
             PlayMode::Guitar => 0.82 + 0.36 * finite_or(params.play_mode.guitar_body, 0.5).clamp(0.0, 1.5),
             PlayMode::Standard => 1.0,
         };
+        let safe_decay_scale = finite_or(decay_scale, 1.0).clamp(0.1, 5.0);
         let base_decay_s = ((7.5 - 5.8 * midi_rel).max(0.4)
-            * finite_or(decay_scale, 1.0).clamp(0.1, 5.0)
+            * safe_decay_scale
             * play_decay_scale
             * (1.35 - impedance * 0.65).max(0.15))
             .max(0.1);
+        let prompt_tau_s = ((0.34 - 0.20 * midi_rel).clamp(0.11, 0.36)
+            * safe_decay_scale.clamp(0.25, 2.5)
+            * (1.20 - impedance * 0.35).clamp(0.5, 1.4))
+            .max(0.06);
 
         let guitar_body = finite_or(params.play_mode.guitar_body, 0.5).clamp(0.0, 1.5);
         let guitar_legato = play_mode == PlayMode::Guitar && params.play_mode.guitar_legato;
@@ -520,6 +630,9 @@ impl PianoSynthEngine {
         v.velocity = vel_eff * soft_atten * mute_atten * note_gain;
         v.freq = freq;
         v.age_samples = 0;
+        v.string_count = string_count;
+        v.prompt_env = 1.0;
+        v.prompt_decay = (-1.0 / (prompt_tau_s * self.sample_rate)).exp();
         v.exciter = exciter;
         v.bloom_state = 0.0;
         v.lfo_phase = lfo_init_phase;
@@ -532,6 +645,7 @@ impl PianoSynthEngine {
 
         let strike_pt = finite_or(params.voicing.strike_point, 0.125).clamp(0.03, 0.48);
         let hammer_bright = 0.4 + hardness * 1.45;
+        let contact_cutoff = 4.0 + hardness * 20.0 + vel_norm * 8.0;
 
         for p_idx in 0..NUM_PARTIALS {
             let n = (p_idx + 1) as f32;
@@ -541,25 +655,51 @@ impl PianoSynthEngine {
                 v.partial_levels[p_idx] = 0.0;
                 v.phase_incs_a[p_idx] = 0.0;
                 v.phase_incs_b[p_idx] = 0.0;
+                v.phase_incs_c[p_idx] = 0.0;
                 continue;
             }
 
             let inc = 2.0 * PI * partial_freq / self.sample_rate;
-            v.phase_incs_a[p_idx] = inc;
-            v.phase_incs_b[p_idx] = (inc * detune_ratio).min(2.0 * PI * 0.48);
+            v.phase_incs_a[p_idx] = (inc * detune_a).min(2.0 * PI * 0.48);
+            v.phase_incs_b[p_idx] = if string_count >= 2 {
+                (inc * detune_b).min(2.0 * PI * 0.48)
+            } else {
+                0.0
+            };
+            v.phase_incs_c[p_idx] = if string_count == 3 {
+                (inc * detune_c).min(2.0 * PI * 0.48)
+            } else {
+                0.0
+            };
             v.phases_a[p_idx] = 0.0;
-            v.phases_b[p_idx] = (p_idx as f32) * 0.37; // Slight unison phase spread
+            v.phases_b[p_idx] = if string_count >= 2 {
+                ((p_idx as f32) * 0.37) % (2.0 * PI)
+            } else {
+                0.0
+            };
+            v.phases_c[p_idx] = if string_count == 3 {
+                ((p_idx as f32) * 0.89) % (2.0 * PI)
+            } else {
+                0.0
+            };
 
             // Strike point comb filter: sin(n * pi * strike_point)
             let strike_comb = (n * PI * strike_pt).sin().abs().max(0.12);
-            // Spectral rolloff controlled by hammer hardness & velocity
-            let rolloff = (1.0 / n.powf(1.35 / hammer_bright)).clamp(0.02, 1.0);
-            let prof_weight = finite_or(params.voicing.spectrum_profile[p_idx], 1.0).clamp(0.0, 2.0);
+            // Physical hammer-contact spectral rolloff H(n, hardness, vel)
+            let contact_lpf = (-(n / contact_cutoff).powi(2) * 0.55).exp();
+            let rolloff = ((1.0 / n.powf(0.85 / hammer_bright)) * contact_lpf).clamp(0.006, 1.0);
+            let prof_weight = if p_idx < 8 {
+                finite_or(params.voicing.spectrum_profile[p_idx], 1.0).clamp(0.0, 2.0)
+            } else {
+                let tail_t = (p_idx - 7) as f32 / (NUM_PARTIALS - 8) as f32;
+                let base_8 = finite_or(params.voicing.spectrum_profile[7], 0.28).clamp(0.0, 2.0);
+                base_8 * (1.0 - 0.30 * tail_t)
+            };
             // Electric piano / harpsichord exciter harmonic emphasis
             let exciter_shape = match exciter {
-                ExciterType::TineHammer => if p_idx == 0 { 1.4 } else if p_idx < 3 { 0.8 } else { 0.25 },
+                ExciterType::TineHammer => if p_idx == 0 { 1.4 } else if p_idx < 3 { 0.8 } else { 0.20 },
                 ExciterType::ReedHammer => if p_idx % 2 == 0 { 1.15 } else { 0.45 },
-                ExciterType::PluckPlectrum => 1.15 * (0.85 + 0.15 * n),
+                ExciterType::PluckPlectrum => 1.15 * (0.85 + 0.06 * n).min(1.8),
                 ExciterType::MalletHard | ExciterType::MalletSoft => {
                     if p_idx == 0 { 1.3 } else if p_idx == 1 { 0.55 } else { 0.12 }
                 }
@@ -572,18 +712,21 @@ impl PianoSynthEngine {
                 PlayMode::Standard => 1.0,
             };
 
-            let amp = v.velocity * strike_comb * rolloff * prof_weight * exciter_shape * play_shape * 0.24;
+            let amp = v.velocity * strike_comb * rolloff * prof_weight * exciter_shape * play_shape * 0.19;
             v.partial_amps[p_idx] = amp;
             v.partial_levels[p_idx] = amp;
 
-            let partial_decay_s = (base_decay_s / (1.0 + 0.48 * (n - 1.0))).max(0.08);
+            let partial_decay_s = (base_decay_s / (1.0 + 0.32 * (n - 1.0))).max(0.06);
             v.partial_decays[p_idx] = (-1.0 / (partial_decay_s * self.sample_rate)).exp();
         }
 
         let legato_noise_scale = if guitar_legato { 0.30 } else { 1.0 };
-        v.hammer_noise_env =
-            v.velocity * finite_or(params.voicing.hammer_noise, 0.35).clamp(0.0, 2.0) * 0.35 * legato_noise_scale;
+        let hammer_noise_amt = finite_or(params.voicing.hammer_noise, 0.35).clamp(0.0, 2.0);
+        v.hammer_noise_env = v.velocity * hammer_noise_amt * 0.35 * legato_noise_scale;
         v.hammer_noise_lp = 0.0;
+        v.bridge_knock_env = v.velocity * hammer_noise_amt * 0.14 * legato_noise_scale;
+        v.bridge_knock_phase_lo = 0.0;
+        v.bridge_knock_phase_hi = 0.0;
         v.damper_noise_env = 0.0;
         v.key_release_noise_env = 0.0;
         v.key_release_lp = 0.0;
@@ -825,6 +968,9 @@ impl PianoSynthEngine {
         let active_note_fx = vib_base_cents.abs() > 1e-4 || vib_vel_cents.abs() > 1e-4 || trem_db > 1e-4;
 
         let hammer_noise_decay = (-1.0 / (0.0018 * self.sample_rate)).exp();
+        let bridge_knock_decay = (-1.0 / (0.0065 * self.sample_rate)).exp();
+        let knock_inc_lo = 2.0 * PI * 180.0 / self.sample_rate;
+        let knock_inc_hi = 2.0 * PI * 620.0 / self.sample_rate;
         let damper_noise_decay = (-1.0 / (0.0026 * self.sample_rate)).exp();
         let key_release_decay = (-1.0 / (0.0045 * self.sample_rate)).exp();
         let key_release_lp_coeff = (1.0 - (-2.0 * PI * 380.0 / self.sample_rate).exp()).clamp(0.02, 0.5);
@@ -834,6 +980,7 @@ impl PianoSynthEngine {
         let symp_lp_coeff = (1.0 - (-1.0 / (0.0007 * self.sample_rate)).exp()).clamp(0.001, 0.25);
         let symp_bp_decay = (-1.0 / (0.0026 * self.sample_rate)).exp();
         let pedal_thump_decay = (-1.0 / (0.0042 * self.sample_rate)).exp();
+        let soundboard_mix = (finite_or(params.design.soundboard_impedance, 0.52).clamp(0.0, 1.5) * 0.55).clamp(0.0, 0.9);
         let nyq_inc = PI * 0.9;
 
         for i in 0..len {
@@ -932,13 +1079,22 @@ impl PianoSynthEngine {
                         continue;
                     }
                     let pa = v.phases_a[p_idx];
-                    let pb = v.phases_b[p_idx];
                     let s_a = pa.sin();
-                    let s_b = pb.sin();
+                    let s_b = if v.string_count >= 2 { v.phases_b[p_idx].sin() } else { 0.0 };
+                    let s_c = if v.string_count == 3 { v.phases_c[p_idx].sin() } else { 0.0 };
+
                     let partial_weight = level * if p_idx >= 2 { bloom_mult } else { 1.0 };
-                    let mixed = s_a * (1.0 - unison_mix * 0.45) + s_b * (unison_mix * 0.45);
-                    if smear > 1e-4 {
-                        let stereo_sep = (s_a - s_b) * (smear * 0.28);
+                    let mixed = match v.string_count {
+                        1 => s_a,
+                        2 => s_b * (1.0 - unison_mix * 0.45) + s_a * (unison_mix * 0.45),
+                        _ => {
+                            let side = unison_mix * 0.32;
+                            s_b * (1.0 - 2.0 * side) + (s_a + s_c) * side
+                        }
+                    };
+                    if smear > 1e-4 && v.string_count >= 2 {
+                        let opp = if v.string_count == 3 { s_c } else { s_b };
+                        let stereo_sep = (s_a - opp) * (smear * 0.28);
                         sample_l += (mixed + stereo_sep) * partial_weight;
                         sample_r += (mixed - stereo_sep) * partial_weight;
                     } else {
@@ -948,25 +1104,41 @@ impl PianoSynthEngine {
                     }
 
                     let inc_a = (v.phase_incs_a[p_idx] * pitch_mult).min(2.0 * PI * 0.48);
-                    let smear_factor = if smear > 1e-4 {
-                        let sign = if p_idx % 2 == 0 { 1.0 } else { -1.0 };
-                        1.0 + sign * smear * 0.004 * (p_idx as f32 + 1.0)
-                    } else {
-                        1.0
-                    };
-                    let inc_b = (v.phase_incs_b[p_idx] * pitch_mult * smear_factor).min(2.0 * PI * 0.48);
-
                     let mut next_pa = pa + inc_a;
                     if next_pa >= 2.0 * PI {
                         next_pa -= 2.0 * PI;
                     }
                     v.phases_a[p_idx] = next_pa;
 
-                    let mut next_pb = pb + inc_b;
-                    if next_pb >= 2.0 * PI {
-                        next_pb -= 2.0 * PI;
+                    if v.string_count >= 2 {
+                        let smear_factor = if smear > 1e-4 {
+                            let sign = if p_idx % 2 == 0 { 1.0 } else { -1.0 };
+                            1.0 + sign * smear * 0.004 * (p_idx as f32 + 1.0)
+                        } else {
+                            1.0
+                        };
+                        let inc_b = (v.phase_incs_b[p_idx] * pitch_mult * smear_factor).min(2.0 * PI * 0.48);
+                        let mut next_pb = v.phases_b[p_idx] + inc_b;
+                        if next_pb >= 2.0 * PI {
+                            next_pb -= 2.0 * PI;
+                        }
+                        v.phases_b[p_idx] = next_pb;
                     }
-                    v.phases_b[p_idx] = next_pb;
+
+                    if v.string_count == 3 {
+                        let smear_c = if smear > 1e-4 {
+                            let sign = if p_idx % 2 == 0 { -1.0 } else { 1.0 };
+                            1.0 + sign * smear * 0.0035 * (p_idx as f32 + 1.0)
+                        } else {
+                            1.0
+                        };
+                        let inc_c = (v.phase_incs_c[p_idx] * pitch_mult * smear_c).min(2.0 * PI * 0.48);
+                        let mut next_pc = v.phases_c[p_idx] + inc_c;
+                        if next_pc >= 2.0 * PI {
+                            next_pc -= 2.0 * PI;
+                        }
+                        v.phases_c[p_idx] = next_pc;
+                    }
 
                     let decay = if full_held {
                         v.partial_decays[p_idx]
@@ -985,6 +1157,26 @@ impl PianoSynthEngine {
                     }
                 }
 
+                // Longitudinal octave coupling (2 * f1) on loud velocities
+                if v.vel_norm_raw > 0.6 && v.partial_levels[0] > 1e-4 && v.phase_incs_a[0] * 2.0 < nyq_inc {
+                    let excess = (v.vel_norm_raw - 0.6) / 0.4;
+                    let long_sig = (v.phases_a[0] * 2.0).sin() * v.partial_levels[0] * excess * excess * 0.18;
+                    sample_l += long_sig;
+                    sample_r += long_sig;
+                }
+
+                // Two-stage piano bridge decay: fast prompt sound + singing horizontal aftersound
+                let prompt_gain = 0.55 * v.prompt_env;
+                let aftersound_gain = 0.68;
+                let stage_mult = aftersound_gain + prompt_gain;
+                sample_l *= stage_mult;
+                sample_r *= stage_mult;
+                v.prompt_env *= if full_held || harmonic_only_held {
+                    v.prompt_decay
+                } else {
+                    v.prompt_decay.min(voice_release_coeff)
+                };
+
                 // Duplex shimmer on treble notes (integer 2x of 3rd partial avoids phase wrap discontinuity)
                 if v.midi_note >= 60 && duplex_amt > 0.001 && max_level > 0.001 {
                     let duplex_sig = (v.phases_a[2] * 2.0).sin() * v.partial_levels[0] * duplex_amt;
@@ -997,21 +1189,23 @@ impl PianoSynthEngine {
                     let phi0 = v.phases_a[0];
                     let fund_inc = v.phase_incs_a[0];
                     let buzz_gate = phi0.sin().max(0.0);
-                    let rattle_env = (v.partial_levels[0] * 1.6
-                        + v.partial_levels[1] * 0.8
-                        + v.partial_levels[2] * 0.4)
-                        .min(0.6);
+                    let rattle_env = (v.partial_levels[0] * 2.0
+                        + v.partial_levels[1] * 1.1
+                        + v.partial_levels[2] * 0.6)
+                        .min(0.7);
                     let mut jangle = 0.0_f32;
                     if fund_inc > 0.0 {
                         if fund_inc * 3.0 < nyq_inc { jangle += (phi0 * 3.0).sin() * 0.45; }
-                        if fund_inc * 5.0 < nyq_inc { jangle += (phi0 * 5.0).sin() * 0.42; }
-                        if fund_inc * 7.0 < nyq_inc { jangle += (phi0 * 7.0).sin() * 0.36; }
-                        if fund_inc * 9.0 < nyq_inc { jangle += (phi0 * 9.0).sin() * 0.30; }
-                        if fund_inc * 11.0 < nyq_inc { jangle += (phi0 * 11.0).sin() * 0.24; }
+                        if fund_inc * 5.0 < nyq_inc { jangle += (phi0 * 5.0).sin() * 0.44; }
+                        if fund_inc * 7.0 < nyq_inc { jangle += (phi0 * 7.0).sin() * 0.40; }
+                        if fund_inc * 9.0 < nyq_inc { jangle += (phi0 * 9.0).sin() * 0.36; }
+                        if fund_inc * 11.0 < nyq_inc { jangle += (phi0 * 11.0).sin() * 0.32; }
+                        if fund_inc * 13.0 < nyq_inc { jangle += (phi0 * 13.0).sin() * 0.26; }
+                        if fund_inc * 15.0 < nyq_inc { jangle += (phi0 * 15.0).sin() * 0.22; }
                     }
-                    let sizzle = v.next_noise() * 0.28;
-                    let rattle_mod = (jangle + sizzle) * buzz_gate * rattle_env * rattle_amt * 1.65;
-                    let am = 1.0 - 0.28 * rattle_amt * buzz_gate;
+                    let sizzle = v.next_noise() * 0.30;
+                    let rattle_mod = (jangle + sizzle) * buzz_gate * rattle_env * rattle_amt * 2.25;
+                    let am = 1.0 - 0.30 * rattle_amt * buzz_gate;
                     sample_l = sample_l * am + rattle_mod;
                     sample_r = sample_r * am + rattle_mod;
                 }
@@ -1024,6 +1218,23 @@ impl PianoSynthEngine {
                     sample_l += hn;
                     sample_r += hn;
                     v.hammer_noise_env *= hammer_noise_decay;
+                }
+
+                // Woody 180 Hz + 620 Hz bridge / keybed knock
+                if v.bridge_knock_env > 1e-5 {
+                    let thump = (v.bridge_knock_phase_lo.sin() * 0.65 + v.bridge_knock_phase_hi.sin() * 0.35)
+                        * v.bridge_knock_env;
+                    sample_l += thump;
+                    sample_r += thump;
+                    v.bridge_knock_phase_lo += knock_inc_lo;
+                    if v.bridge_knock_phase_lo >= 2.0 * PI {
+                        v.bridge_knock_phase_lo -= 2.0 * PI;
+                    }
+                    v.bridge_knock_phase_hi += knock_inc_hi;
+                    if v.bridge_knock_phase_hi >= 2.0 * PI {
+                        v.bridge_knock_phase_hi -= 2.0 * PI;
+                    }
+                    v.bridge_knock_env *= bridge_knock_decay;
                 }
 
                 // Damper release felt thump
@@ -1066,11 +1277,25 @@ impl PianoSynthEngine {
                 v.age_samples += 1;
                 if max_level < 1e-5
                     && v.hammer_noise_env < 1e-5
+                    && v.bridge_knock_env < 1e-5
                     && v.damper_noise_env < 1e-5
                     && v.key_release_noise_env < 1e-5
                 {
                     v.active = false;
                 }
+            }
+
+            // 4-mode parallel soundboard resonant body
+            if soundboard_mix > 1e-4 {
+                let mut sb_l = 0.0_f32;
+                let mut sb_r = 0.0_f32;
+                for (m_idx, &(_, _, mode_gain)) in SOUNDBOARD_MODES.iter().enumerate() {
+                    let (ml, mr) = self.soundboard_modes[m_idx].process_stereo(sum_l, sum_r);
+                    sb_l += ml * mode_gain;
+                    sb_r += mr * mode_gain;
+                }
+                sum_l = sum_l * (1.0 - soundboard_mix * 0.25) + sb_l * soundboard_mix;
+                sum_r = sum_r * (1.0 - soundboard_mix * 0.25) + sb_r * soundboard_mix;
             }
 
             // Sympathetic string resonance body tank
@@ -1550,28 +1775,32 @@ mod tests {
             .fold(0.0_f32, f32::max);
         assert!(max_below_diff < 1e-6, "rattle <= 0.01 must not alter signal");
 
-        // Rattle injects buzz harmonics (5th/7th/9th/11th partials) & amplitude modulation
+        // Rattle injects buzz harmonics (5th/7th/9th/11th/13th/15th) & amplitude modulation
         let jangle_zero = goertzel_power(&b_zero, sr, f0 * 5.0)
             + goertzel_power(&b_zero, sr, f0 * 7.0)
             + goertzel_power(&b_zero, sr, f0 * 9.0)
-            + goertzel_power(&b_zero, sr, f0 * 11.0);
+            + goertzel_power(&b_zero, sr, f0 * 11.0)
+            + goertzel_power(&b_zero, sr, f0 * 13.0)
+            + goertzel_power(&b_zero, sr, f0 * 15.0);
         let jangle_rattle = goertzel_power(&b_rattle, sr, f0 * 5.0)
             + goertzel_power(&b_rattle, sr, f0 * 7.0)
             + goertzel_power(&b_rattle, sr, f0 * 9.0)
-            + goertzel_power(&b_rattle, sr, f0 * 11.0);
-        let high_buzz_zero = goertzel_power(&b_zero, sr, f0 * 9.0)
-            + goertzel_power(&b_zero, sr, f0 * 11.0);
-        let high_buzz_rattle = goertzel_power(&b_rattle, sr, f0 * 9.0)
-            + goertzel_power(&b_rattle, sr, f0 * 11.0);
+            + goertzel_power(&b_rattle, sr, f0 * 11.0)
+            + goertzel_power(&b_rattle, sr, f0 * 13.0)
+            + goertzel_power(&b_rattle, sr, f0 * 15.0);
+        let high_buzz_zero = goertzel_power(&b_zero, sr, f0 * 13.0)
+            + goertzel_power(&b_zero, sr, f0 * 15.0);
+        let high_buzz_rattle = goertzel_power(&b_rattle, sr, f0 * 13.0)
+            + goertzel_power(&b_rattle, sr, f0 * 15.0);
         assert!(
-            jangle_rattle > jangle_zero * 2.5,
+            jangle_rattle > jangle_zero * 2.0,
             "rattle should boost buzz/jangle overtones: rattle={}, zero={}",
             jangle_rattle,
             jangle_zero
         );
         assert!(
-            high_buzz_rattle > high_buzz_zero * 50.0,
-            "rattle should generate high buzz harmonics 9/11: rattle={}, zero={}",
+            high_buzz_rattle > high_buzz_zero * 3.0,
+            "rattle should boost high buzz harmonics 13/15: rattle={}, zero={}",
             high_buzz_rattle,
             high_buzz_zero
         );
@@ -2049,5 +2278,84 @@ mod tests {
             goertzel_power(&b_gtr, sr, f_f4) > goertzel_power(&b_gtr, sr, f_c4) * 50.0,
             "guitar fret +5 should render audio at F4"
         );
+    }
+
+    #[test]
+    fn test_32_partial_trichord_and_soundboard_body_richness() {
+        let sr = 48000.0_f32;
+        let inst = test_instrument();
+        let pedals = PedalState::default();
+
+        // 1. Rich upper harmonic energy > 8th partial on low note C2 (MIDI 36)
+        let mut p_c2 = clean_params();
+        p_c2.voicing.hammer_noise = 0.35;
+        let f_c2 = compute_note_frequency(36, &p_c2);
+        let midi_rel = (36.0 - 21.0) / 87.0;
+        let b_inharm = inst.inharmonicity_base * (0.4 + 4.5 * midi_rel * midi_rel) * (1.0 + p_c2.condition * 0.35);
+
+        let mut s_c2 = PianoSynthEngine::new(sr);
+        s_c2.note_on(36, 118, &p_c2, &inst, &pedals);
+        let buf_c2 = render_mono(&mut s_c2, 16384, 256, &p_c2, &pedals);
+        let p_fund = goertzel_power(&buf_c2, sr, f_c2 * (1.0 + b_inharm).sqrt());
+        let upper_9_to_24: f32 = (9..=24)
+            .map(|n| {
+                let nf = n as f32;
+                let fn_hz = f_c2 * nf * (1.0 + b_inharm * nf * nf).sqrt();
+                goertzel_power(&buf_c2, sr, fn_hz)
+            })
+            .sum();
+        assert!(
+            upper_9_to_24 > p_fund * 0.05,
+            "C2 should exhibit rich 9th..24th stiff-string partials: upper={}, fund={}",
+            upper_9_to_24,
+            p_fund
+        );
+
+        // 2. String count scaling: 1 string in deep bass (<33), 2 in low-tenor (33..=44), 3 in treble (>=45)
+        let diff_unison = |midi_note: u8| -> f32 {
+            let mut p0 = clean_params();
+            p0.condition = 0.0;
+            p0.tuning.unison_width_cents = 0.0;
+            let mut p1 = p0.clone();
+            p1.tuning.unison_width_cents = 4.0;
+
+            let mut s0 = PianoSynthEngine::new(sr);
+            let mut s1 = PianoSynthEngine::new(sr);
+            s0.note_on(midi_note, 100, &p0, &inst, &pedals);
+            s1.note_on(midi_note, 100, &p1, &inst, &pedals);
+            let b0 = render_mono(&mut s0, 12000, 256, &p0, &pedals);
+            let b1 = render_mono(&mut s1, 12000, 256, &p1, &pedals);
+            let diffs: Vec<f32> = b1.iter().zip(b0.iter()).map(|(a, b)| a - b).collect();
+            rms(&diffs)
+        };
+        assert!(diff_unison(28) < 1e-6, "deep bass <33 should use 1 un-detuned string");
+        assert!(diff_unison(38) > 1e-3, "low-tenor 33..=44 should exhibit bichord detune");
+        assert!(diff_unison(60) > 1e-3, "mid/treble >=45 should exhibit trichord detune");
+
+        // 3. 4-mode parallel soundboard body & two-stage prompt -> aftersound envelope
+        let mut p_dry_sb = clean_params();
+        p_dry_sb.design.soundboard_impedance = 0.0;
+        let mut p_rich_sb = clean_params();
+        p_rich_sb.design.soundboard_impedance = 0.90;
+
+        let mut s_sb0 = PianoSynthEngine::new(sr);
+        let mut s_sb1 = PianoSynthEngine::new(sr);
+        s_sb0.note_on(48, 105, &p_dry_sb, &inst, &pedals);
+        s_sb1.note_on(48, 105, &p_rich_sb, &inst, &pedals);
+        let b_sb0 = render_mono(&mut s_sb0, 8192, 256, &p_dry_sb, &pedals);
+        let b_sb1 = render_mono(&mut s_sb1, 8192, 256, &p_rich_sb, &pedals);
+        let sb_diff: Vec<f32> = b_sb1.iter().zip(b_sb0.iter()).map(|(a, b)| a - b).collect();
+        assert!(rms(&sb_diff) > 1e-3, "4-mode soundboard bank should color cabinet resonance");
+
+        // Prompt transient (0..100ms) -> singing aftersound (400..600ms)
+        let mut s_env = PianoSynthEngine::new(sr);
+        let p_env = EngineParams::default();
+        let mut sus = PedalState::default();
+        sus.sustain = 1.0;
+        s_env.note_on(60, 110, &p_env, &inst, &sus);
+        let full = render_mono(&mut s_env, 28800, 256, &p_env, &sus);
+        let prompt_rms = rms(&full[..4800]);
+        let aftersound_rms = rms(&full[19200..28800]);
+        assert!(prompt_rms > aftersound_rms * 1.15 && aftersound_rms > 0.01);
     }
 }
