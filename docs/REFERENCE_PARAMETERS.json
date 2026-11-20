@@ -1,0 +1,5884 @@
+{
+  "metadata": {
+    "product": "Pianoteq 9",
+    "version": "9.3.1",
+    "build_date": "20261118",
+    "lv2_plugin_uri": "https://www.modartt.com/lv2/Pianoteq9",
+    "lv2_ui_uri": "https://www.modartt.com/lv2/Pianoteq9:UI",
+    "sources": {
+      "dsp_ttl": "/home/data/projects/pianoteq-eng-reverse2/Pianoteq-v931/x86-64bit/Pianoteq 9.lv2/dsp.ttl",
+      "manual_html": "/home/data/projects/pianoteq-eng-reverse2/Pianoteq-v931/Documentation/pianoteq-english.html",
+      "cli_instruments": "Pianoteq 9 --list-instruments",
+      "cli_presets": "Pianoteq 9 --list-presets",
+      "rea_evidence_ids": [
+        "ev_1dd73cd50e6511cbe09bccf7cfcbbef5e6dd6f1f57b8cca204080aa36c2cec68",
+        "ev_6960eaa80c9741c870ae6df79b36a5abef3d7df483902d4d1960daebd9dc291b",
+        "ev_eeef488bf478d9168109abd7f4b9b514ba91054bb28d29c5c188a03ea5f26c65",
+        "ev_a116654a8945b4d1b33cf66d56666cc3e5fb62588bf58fa73bd243b0afb8ebb1",
+        "ev_61bcc0c2031feca2f79a8aaf33adfe3025a41c560c69609c8db9934fcb697424"
+      ]
+    },
+    "counts": {
+      "lv2_parameters": 215,
+      "parameter_groups": 15,
+      "parameters_with_scale_points": 29,
+      "lv2_ports": 22,
+      "cli_instruments": 56,
+      "unique_cli_instrument_names": 53,
+      "instrument_families": 9,
+      "cli_presets": 820
+    }
+  },
+  "parameter_groups": [
+    {
+      "id": "paramgroup_main",
+      "symbol": "paramgroup_main",
+      "name": "Main",
+      "parameter_count": 9,
+      "parameter_symbols": [
+        "condition",
+        "dynamics",
+        "volume",
+        "velocity_offset",
+        "post_effect_gain",
+        "morphing",
+        "equalizer_switch",
+        "aftertouch",
+        "diapason"
+      ]
+    },
+    {
+      "id": "paramgroup_tuning",
+      "symbol": "paramgroup_tuning",
+      "name": "Tuning",
+      "parameter_count": 5,
+      "parameter_symbols": [
+        "pitch_bend",
+        "unison",
+        "octave_stretching",
+        "unison_balance",
+        "direct_sound"
+      ]
+    },
+    {
+      "id": "paramgroup_output",
+      "symbol": "paramgroup_output",
+      "name": "Output",
+      "parameter_count": 78,
+      "parameter_symbols": [
+        "stereo_width",
+        "bus_1_volume",
+        "bus_1_pan",
+        "lid_position",
+        "mic_level_compensation",
+        "mic_delay_compensation",
+        "head_x",
+        "head_y",
+        "head_z",
+        "head_diameter",
+        "head_angle",
+        "mic_1_mic_switch",
+        "mic_1_x",
+        "mic_1_y",
+        "mic_1_z",
+        "mic_1_azimuth",
+        "mic_1_elevation",
+        "mic_1_bus_1_volume",
+        "mic_1_bus_1_pan",
+        "mic_2_mic_switch",
+        "mic_2_x",
+        "mic_2_y",
+        "mic_2_z",
+        "mic_2_azimuth",
+        "mic_2_elevation",
+        "mic_2_bus_1_volume",
+        "mic_2_bus_1_pan",
+        "mic_3_mic_switch",
+        "mic_3_x",
+        "mic_3_y",
+        "mic_3_z",
+        "mic_3_azimuth",
+        "mic_3_elevation",
+        "mic_3_bus_1_volume",
+        "mic_3_bus_1_pan",
+        "mic_4_mic_switch",
+        "mic_4_x",
+        "mic_4_y",
+        "mic_4_z",
+        "mic_4_azimuth",
+        "mic_4_elevation",
+        "mic_4_bus_1_volume",
+        "mic_4_bus_1_pan",
+        "mic_5_mic_switch",
+        "mic_5_x",
+        "mic_5_y",
+        "mic_5_z",
+        "mic_5_azimuth",
+        "mic_5_elevation",
+        "mic_5_bus_1_volume",
+        "mic_5_bus_1_pan",
+        "mic_6_mic_switch",
+        "mic_6_x",
+        "mic_6_y",
+        "mic_6_z",
+        "mic_6_azimuth",
+        "mic_6_elevation",
+        "mic_6_bus_1_volume",
+        "mic_6_bus_1_pan",
+        "mic_7_mic_switch",
+        "mic_7_x",
+        "mic_7_y",
+        "mic_7_z",
+        "mic_7_azimuth",
+        "mic_7_elevation",
+        "mic_7_bus_1_volume",
+        "mic_7_bus_1_pan",
+        "mic_8_mic_switch",
+        "mic_8_x",
+        "mic_8_y",
+        "mic_8_z",
+        "mic_8_azimuth",
+        "mic_8_elevation",
+        "mic_8_bus_1_volume",
+        "mic_8_bus_1_pan",
+        "sound_speed",
+        "wall_distance",
+        "lid"
+      ]
+    },
+    {
+      "id": "paramgroup_voicing",
+      "symbol": "paramgroup_voicing",
+      "name": "Voicing",
+      "parameter_count": 21,
+      "parameter_symbols": [
+        "hammer_noise",
+        "hammer_hardness",
+        "hammer_hardness_piano",
+        "hammer_hardness_mezzo",
+        "hammer_hardness_forte",
+        "profil_1",
+        "profil_2",
+        "profil_3",
+        "profil_4",
+        "profil_5",
+        "profil_6",
+        "profil_7",
+        "profil_8",
+        "hammer_tone",
+        "strike_point",
+        "pinch_harmonic_point",
+        "pickup_symmetry",
+        "pickup_distance",
+        "soft_level",
+        "clavinet_low_mic",
+        "clavinet_high_mic"
+      ]
+    },
+    {
+      "id": "paramgroup_pedals",
+      "symbol": "paramgroup_pedals",
+      "name": "Pedals",
+      "parameter_count": 16,
+      "parameter_symbols": [
+        "sustain_pedal",
+        "soft_pedal",
+        "sostenuto_pedal",
+        "harmonic_pedal",
+        "rattle_pedal",
+        "lute_stop_pedal",
+        "celeste_pedal",
+        "mozart_rail",
+        "super_sostenuto",
+        "pinch_harmonic_pedal",
+        "glissando_pedal",
+        "thunder_pedal",
+        "harpsichord_register_1",
+        "harpsichord_register_2",
+        "harpsichord_register_3",
+        "reversed_sustain"
+      ]
+    },
+    {
+      "id": "paramgroup_design",
+      "symbol": "paramgroup_design",
+      "name": "Design",
+      "parameter_count": 12,
+      "parameter_symbols": [
+        "impedance",
+        "impedance_cutoff",
+        "q_factor",
+        "string_length",
+        "sympathetic_resonance",
+        "duplex_scale_resonance",
+        "quadratic_effect",
+        "hammer_tine_noise",
+        "blooming_energy",
+        "blooming_inertia",
+        "external_audio_mix",
+        "external_audio_tone"
+      ]
+    },
+    {
+      "id": "paramgroup_bounce",
+      "symbol": "paramgroup_bounce",
+      "name": "Mallet bounce",
+      "parameter_count": 8,
+      "parameter_symbols": [
+        "bounce_switch",
+        "bounce_delay",
+        "bounce_sync",
+        "bounce_sync_speed",
+        "bounce_velocity_sensitivity",
+        "bounce_delay_loss",
+        "bounce_velocity_loss",
+        "bounce_humanization"
+      ]
+    },
+    {
+      "id": "paramgroup_fx1",
+      "symbol": "paramgroup_fx1",
+      "name": "Effect 1",
+      "parameter_count": 9,
+      "parameter_symbols": [
+        "effect_1_switch",
+        "effect_1_param_1",
+        "effect_1_param_2",
+        "effect_1_param_3",
+        "effect_1_param_4",
+        "effect_1_param_5",
+        "effect_1_param_6",
+        "effect_1_param_7",
+        "effect_1_param_8"
+      ]
+    },
+    {
+      "id": "paramgroup_fx2",
+      "symbol": "paramgroup_fx2",
+      "name": "Effect 2",
+      "parameter_count": 9,
+      "parameter_symbols": [
+        "effect_2_switch",
+        "effect_2_param_1",
+        "effect_2_param_2",
+        "effect_2_param_3",
+        "effect_2_param_4",
+        "effect_2_param_5",
+        "effect_2_param_6",
+        "effect_2_param_7",
+        "effect_2_param_8"
+      ]
+    },
+    {
+      "id": "paramgroup_fx3",
+      "symbol": "paramgroup_fx3",
+      "name": "Effect 3",
+      "parameter_count": 9,
+      "parameter_symbols": [
+        "effect_3_switch",
+        "effect_3_param_1",
+        "effect_3_param_2",
+        "effect_3_param_3",
+        "effect_3_param_4",
+        "effect_3_param_5",
+        "effect_3_param_6",
+        "effect_3_param_7",
+        "effect_3_param_8"
+      ]
+    },
+    {
+      "id": "paramgroup_reverb",
+      "symbol": "paramgroup_reverb",
+      "name": "Reverb",
+      "parameter_count": 10,
+      "parameter_symbols": [
+        "reverb_switch",
+        "reverb_duration",
+        "reverb_mix",
+        "room_dimensions",
+        "reverb_pre_delay",
+        "reverb_early_reflections",
+        "reverb_tone",
+        "reverb_envelope",
+        "reverb_resampling",
+        "reverb_highpass_cutoff"
+      ]
+    },
+    {
+      "id": "paramgroup_limiter",
+      "symbol": "paramgroup_limiter",
+      "name": "Limiter",
+      "parameter_count": 4,
+      "parameter_symbols": [
+        "limiter_switch",
+        "limiter_sharpness",
+        "limiter_threshold",
+        "limiter_gain"
+      ]
+    },
+    {
+      "id": "paramgroup_action",
+      "symbol": "paramgroup_action",
+      "name": "Action",
+      "parameter_count": 8,
+      "parameter_symbols": [
+        "mute",
+        "damper_noise",
+        "damper_position",
+        "last_damper",
+        "pedal_noise",
+        "key_release_noise",
+        "damping_duration",
+        "keyboard_range_switch"
+      ]
+    },
+    {
+      "id": "paramgroup_notefx",
+      "symbol": "paramgroup_notefx",
+      "name": "Note effects",
+      "parameter_count": 12,
+      "parameter_symbols": [
+        "nfx_lfo_shape",
+        "nfx_lfo_skew",
+        "nfx_lfo_rate",
+        "nfx_lfo_phase",
+        "nfx_lfo_phase_locked",
+        "nfx_onset_duration",
+        "nfx_vibrato",
+        "nfx_vibrato_offset",
+        "nfx_tremolo_depth",
+        "nfx_tremolo_phase",
+        "attack_envelope",
+        "smear"
+      ]
+    },
+    {
+      "id": "paramgroup_guitar",
+      "symbol": "paramgroup_guitar",
+      "name": "Guitar",
+      "parameter_count": 5,
+      "parameter_symbols": [
+        "virtuosity",
+        "fret",
+        "guitar_legato",
+        "guitar_easy_fingering",
+        "guitar_body"
+      ]
+    }
+  ],
+  "parameters": [
+    {
+      "index": 0,
+      "patch_index": 0,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:condition",
+      "symbol": "condition",
+      "label": "Condition",
+      "group": "paramgroup_main",
+      "group_name": "Main",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 1,
+      "patch_index": 1,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:dynamics",
+      "symbol": "dynamics",
+      "label": "Dynamics",
+      "group": "paramgroup_main",
+      "group_name": "Main",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.444444,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 2,
+      "patch_index": 2,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:volume",
+      "symbol": "volume",
+      "label": "Volume",
+      "group": "paramgroup_main",
+      "group_name": "Main",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.727273,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 3,
+      "patch_index": 3,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:velocity_offset",
+      "symbol": "velocity_offset",
+      "label": "Velocity Offset",
+      "group": "paramgroup_main",
+      "group_name": "Main",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 4,
+      "patch_index": 4,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:post_effect_gain",
+      "symbol": "post_effect_gain",
+      "label": "Post Effect Gain",
+      "group": "paramgroup_main",
+      "group_name": "Main",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.554167,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 5,
+      "patch_index": 5,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:morphing",
+      "symbol": "morphing",
+      "label": "Morphing",
+      "group": "paramgroup_main",
+      "group_name": "Main",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 6,
+      "patch_index": 6,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:equalizer_switch",
+      "symbol": "equalizer_switch",
+      "label": "Equalizer Switch",
+      "group": "paramgroup_main",
+      "group_name": "Main",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 7,
+      "patch_index": 7,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:aftertouch",
+      "symbol": "aftertouch",
+      "label": "Aftertouch",
+      "group": "paramgroup_main",
+      "group_name": "Main",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 8,
+      "patch_index": 8,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:diapason",
+      "symbol": "diapason",
+      "label": "Diapason",
+      "group": "paramgroup_main",
+      "group_name": "Main",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 9,
+      "patch_index": 25,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:pitch_bend",
+      "symbol": "pitch_bend",
+      "label": "Pitch Bend",
+      "group": "paramgroup_tuning",
+      "group_name": "Tuning",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 10,
+      "patch_index": 26,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:unison",
+      "symbol": "unison",
+      "label": "Unison Width",
+      "group": "paramgroup_tuning",
+      "group_name": "Tuning",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 11,
+      "patch_index": 27,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:octave_stretching",
+      "symbol": "octave_stretching",
+      "label": "Octave Stretching",
+      "group": "paramgroup_tuning",
+      "group_name": "Tuning",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.231088,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 12,
+      "patch_index": 28,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:unison_balance",
+      "symbol": "unison_balance",
+      "label": "Unison Balance",
+      "group": "paramgroup_tuning",
+      "group_name": "Tuning",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 13,
+      "patch_index": 29,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:direct_sound",
+      "symbol": "direct_sound",
+      "label": "Direct Sound Duration",
+      "group": "paramgroup_tuning",
+      "group_name": "Tuning",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 14,
+      "patch_index": 63,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:stereo_width",
+      "symbol": "stereo_width",
+      "label": "Stereo Width",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 15,
+      "patch_index": 64,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:bus_1_volume",
+      "symbol": "bus_1_volume",
+      "label": "Bus 1 Volume",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.75,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 16,
+      "patch_index": 65,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:bus_1_pan",
+      "symbol": "bus_1_pan",
+      "label": "Bus 1 Pan",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 17,
+      "patch_index": 66,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:lid_position",
+      "symbol": "lid_position",
+      "label": "Lid Position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 18,
+      "patch_index": 67,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_level_compensation",
+      "symbol": "mic_level_compensation",
+      "label": "Mic Level Compensation",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 19,
+      "patch_index": 68,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_delay_compensation",
+      "symbol": "mic_delay_compensation",
+      "label": "Mic Delay Compensation",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 20,
+      "patch_index": 69,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:head_x",
+      "symbol": "head_x",
+      "label": "Head X position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.633333,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 21,
+      "patch_index": 70,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:head_y",
+      "symbol": "head_y",
+      "label": "Head Y position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.46,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 22,
+      "patch_index": 71,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:head_z",
+      "symbol": "head_z",
+      "label": "Head Z position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.75,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 23,
+      "patch_index": 72,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:head_diameter",
+      "symbol": "head_diameter",
+      "label": "Head Diameter",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.2,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 24,
+      "patch_index": 73,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:head_angle",
+      "symbol": "head_angle",
+      "label": "Head Angle",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 25,
+      "patch_index": 74,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_1_mic_switch",
+      "symbol": "mic_1_mic_switch",
+      "label": "Mic 1 Mic Switch",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 26,
+      "patch_index": 75,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_1_x",
+      "symbol": "mic_1_x",
+      "label": "Mic 1 X position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.8425,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 27,
+      "patch_index": 76,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_1_y",
+      "symbol": "mic_1_y",
+      "label": "Mic 1 Y position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.793333,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 28,
+      "patch_index": 77,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_1_z",
+      "symbol": "mic_1_z",
+      "label": "Mic 1 Z position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.75,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 29,
+      "patch_index": 78,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_1_azimuth",
+      "symbol": "mic_1_azimuth",
+      "label": "Mic 1 Azimuth",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 30,
+      "patch_index": 79,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_1_elevation",
+      "symbol": "mic_1_elevation",
+      "label": "Mic 1 Elevation",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 31,
+      "patch_index": 80,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_1_bus_1_volume",
+      "symbol": "mic_1_bus_1_volume",
+      "label": "Mic 1 Bus 1 Volume",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.875,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 32,
+      "patch_index": 81,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_1_bus_1_pan",
+      "symbol": "mic_1_bus_1_pan",
+      "label": "Mic 1 Bus 1 Pan",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 33,
+      "patch_index": 82,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_2_mic_switch",
+      "symbol": "mic_2_mic_switch",
+      "label": "Mic 2 Mic Switch",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 34,
+      "patch_index": 83,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_2_x",
+      "symbol": "mic_2_x",
+      "label": "Mic 2 X position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.84375,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 35,
+      "patch_index": 84,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_2_y",
+      "symbol": "mic_2_y",
+      "label": "Mic 2 Y position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.633333,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 36,
+      "patch_index": 85,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_2_z",
+      "symbol": "mic_2_z",
+      "label": "Mic 2 Z position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.75,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 37,
+      "patch_index": 86,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_2_azimuth",
+      "symbol": "mic_2_azimuth",
+      "label": "Mic 2 Azimuth",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.625,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 38,
+      "patch_index": 87,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_2_elevation",
+      "symbol": "mic_2_elevation",
+      "label": "Mic 2 Elevation",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 39,
+      "patch_index": 88,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_2_bus_1_volume",
+      "symbol": "mic_2_bus_1_volume",
+      "label": "Mic 2 Bus 1 Volume",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.875,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 40,
+      "patch_index": 89,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_2_bus_1_pan",
+      "symbol": "mic_2_bus_1_pan",
+      "label": "Mic 2 Bus 1 Pan",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 41,
+      "patch_index": 90,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_3_mic_switch",
+      "symbol": "mic_3_mic_switch",
+      "label": "Mic 3 Mic Switch",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 42,
+      "patch_index": 91,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_3_x",
+      "symbol": "mic_3_x",
+      "label": "Mic 3 X position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.56,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 43,
+      "patch_index": 92,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_3_y",
+      "symbol": "mic_3_y",
+      "label": "Mic 3 Y position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.723333,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 44,
+      "patch_index": 93,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_3_z",
+      "symbol": "mic_3_z",
+      "label": "Mic 3 Z position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.51,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 45,
+      "patch_index": 94,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_3_azimuth",
+      "symbol": "mic_3_azimuth",
+      "label": "Mic 3 Azimuth",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.815784,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 46,
+      "patch_index": 95,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_3_elevation",
+      "symbol": "mic_3_elevation",
+      "label": "Mic 3 Elevation",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 47,
+      "patch_index": 96,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_3_bus_1_volume",
+      "symbol": "mic_3_bus_1_volume",
+      "label": "Mic 3 Bus 1 Volume",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.380536,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 48,
+      "patch_index": 97,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_3_bus_1_pan",
+      "symbol": "mic_3_bus_1_pan",
+      "label": "Mic 3 Bus 1 Pan",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.15667,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 49,
+      "patch_index": 98,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_4_mic_switch",
+      "symbol": "mic_4_mic_switch",
+      "label": "Mic 4 Mic Switch",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 50,
+      "patch_index": 99,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_4_x",
+      "symbol": "mic_4_x",
+      "label": "Mic 4 X position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.576667,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 51,
+      "patch_index": 100,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_4_y",
+      "symbol": "mic_4_y",
+      "label": "Mic 4 Y position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.706667,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 52,
+      "patch_index": 101,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_4_z",
+      "symbol": "mic_4_z",
+      "label": "Mic 4 Z position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.51,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 53,
+      "patch_index": 102,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_4_azimuth",
+      "symbol": "mic_4_azimuth",
+      "label": "Mic 4 Azimuth",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.813889,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 54,
+      "patch_index": 103,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_4_elevation",
+      "symbol": "mic_4_elevation",
+      "label": "Mic 4 Elevation",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.252778,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 55,
+      "patch_index": 104,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_4_bus_1_volume",
+      "symbol": "mic_4_bus_1_volume",
+      "label": "Mic 4 Bus 1 Volume",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.380536,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 56,
+      "patch_index": 105,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_4_bus_1_pan",
+      "symbol": "mic_4_bus_1_pan",
+      "label": "Mic 4 Bus 1 Pan",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.84333,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 57,
+      "patch_index": 106,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_5_mic_switch",
+      "symbol": "mic_5_mic_switch",
+      "label": "Mic 5 Mic Switch",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 58,
+      "patch_index": 107,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_5_x",
+      "symbol": "mic_5_x",
+      "label": "Mic 5 X position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.756667,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 59,
+      "patch_index": 108,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_5_y",
+      "symbol": "mic_5_y",
+      "label": "Mic 5 Y position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.64,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 60,
+      "patch_index": 109,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_5_z",
+      "symbol": "mic_5_z",
+      "label": "Mic 5 Z position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.7825,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 61,
+      "patch_index": 110,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_5_azimuth",
+      "symbol": "mic_5_azimuth",
+      "label": "Mic 5 Azimuth",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 62,
+      "patch_index": 111,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_5_elevation",
+      "symbol": "mic_5_elevation",
+      "label": "Mic 5 Elevation",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 63,
+      "patch_index": 112,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_5_bus_1_volume",
+      "symbol": "mic_5_bus_1_volume",
+      "label": "Mic 5 Bus 1 Volume",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.437715,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 64,
+      "patch_index": 113,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_5_bus_1_pan",
+      "symbol": "mic_5_bus_1_pan",
+      "label": "Mic 5 Bus 1 Pan",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 65,
+      "patch_index": 114,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_6_mic_switch",
+      "symbol": "mic_6_mic_switch",
+      "label": "Mic 6 Mic Switch",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 66,
+      "patch_index": 115,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_6_x",
+      "symbol": "mic_6_x",
+      "label": "Mic 6 X position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.82,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 67,
+      "patch_index": 116,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_6_y",
+      "symbol": "mic_6_y",
+      "label": "Mic 6 Y position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.193333,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 68,
+      "patch_index": 117,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_6_z",
+      "symbol": "mic_6_z",
+      "label": "Mic 6 Z position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.71,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 69,
+      "patch_index": 118,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_6_azimuth",
+      "symbol": "mic_6_azimuth",
+      "label": "Mic 6 Azimuth",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.333333,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 70,
+      "patch_index": 119,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_6_elevation",
+      "symbol": "mic_6_elevation",
+      "label": "Mic 6 Elevation",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 71,
+      "patch_index": 120,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_6_bus_1_volume",
+      "symbol": "mic_6_bus_1_volume",
+      "label": "Mic 6 Bus 1 Volume",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 72,
+      "patch_index": 121,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_6_bus_1_pan",
+      "symbol": "mic_6_bus_1_pan",
+      "label": "Mic 6 Bus 1 Pan",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 73,
+      "patch_index": 122,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_7_mic_switch",
+      "symbol": "mic_7_mic_switch",
+      "label": "Mic 7 Mic Switch",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 74,
+      "patch_index": 123,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_7_x",
+      "symbol": "mic_7_x",
+      "label": "Mic 7 X position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.383333,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 75,
+      "patch_index": 124,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_7_y",
+      "symbol": "mic_7_y",
+      "label": "Mic 7 Y position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.73,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 76,
+      "patch_index": 125,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_7_z",
+      "symbol": "mic_7_z",
+      "label": "Mic 7 Z position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.86,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 77,
+      "patch_index": 126,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_7_azimuth",
+      "symbol": "mic_7_azimuth",
+      "label": "Mic 7 Azimuth",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 78,
+      "patch_index": 127,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_7_elevation",
+      "symbol": "mic_7_elevation",
+      "label": "Mic 7 Elevation",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 79,
+      "patch_index": 128,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_7_bus_1_volume",
+      "symbol": "mic_7_bus_1_volume",
+      "label": "Mic 7 Bus 1 Volume",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 80,
+      "patch_index": 129,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_7_bus_1_pan",
+      "symbol": "mic_7_bus_1_pan",
+      "label": "Mic 7 Bus 1 Pan",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 81,
+      "patch_index": 130,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_8_mic_switch",
+      "symbol": "mic_8_mic_switch",
+      "label": "Mic 8 Mic Switch",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 82,
+      "patch_index": 131,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_8_x",
+      "symbol": "mic_8_x",
+      "label": "Mic 8 X position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.756667,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 83,
+      "patch_index": 132,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_8_y",
+      "symbol": "mic_8_y",
+      "label": "Mic 8 Y position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.806667,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 84,
+      "patch_index": 133,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_8_z",
+      "symbol": "mic_8_z",
+      "label": "Mic 8 Z position",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.8325,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 85,
+      "patch_index": 134,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_8_azimuth",
+      "symbol": "mic_8_azimuth",
+      "label": "Mic 8 Azimuth",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 86,
+      "patch_index": 135,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_8_elevation",
+      "symbol": "mic_8_elevation",
+      "label": "Mic 8 Elevation",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 87,
+      "patch_index": 136,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_8_bus_1_volume",
+      "symbol": "mic_8_bus_1_volume",
+      "label": "Mic 8 Bus 1 Volume",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 88,
+      "patch_index": 137,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mic_8_bus_1_pan",
+      "symbol": "mic_8_bus_1_pan",
+      "label": "Mic 8 Bus 1 Pan",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 89,
+      "patch_index": 138,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:sound_speed",
+      "symbol": "sound_speed",
+      "label": "Sound Speed",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.532379,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 90,
+      "patch_index": 139,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:wall_distance",
+      "symbol": "wall_distance",
+      "label": "Wall distance",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 91,
+      "patch_index": 140,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:lid",
+      "symbol": "lid",
+      "label": "Lid",
+      "group": "paramgroup_output",
+      "group_name": "Output",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 92,
+      "patch_index": 30,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:hammer_noise",
+      "symbol": "hammer_noise",
+      "label": "Hammer Noise",
+      "group": "paramgroup_voicing",
+      "group_name": "Voicing",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.310345,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 93,
+      "patch_index": 31,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:hammer_hardness",
+      "symbol": "hammer_hardness",
+      "label": "Hammer Hardness",
+      "group": "paramgroup_voicing",
+      "group_name": "Voicing",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 94,
+      "patch_index": 32,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:hammer_hardness_piano",
+      "symbol": "hammer_hardness_piano",
+      "label": "Hammer Hardness Piano",
+      "group": "paramgroup_voicing",
+      "group_name": "Voicing",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.480644,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 95,
+      "patch_index": 33,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:hammer_hardness_mezzo",
+      "symbol": "hammer_hardness_mezzo",
+      "label": "Hammer Hardness Mezzo",
+      "group": "paramgroup_voicing",
+      "group_name": "Voicing",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.546744,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 96,
+      "patch_index": 34,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:hammer_hardness_forte",
+      "symbol": "hammer_hardness_forte",
+      "label": "Hammer Hardness Forte",
+      "group": "paramgroup_voicing",
+      "group_name": "Voicing",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 97,
+      "patch_index": 35,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:profil_1",
+      "symbol": "profil_1",
+      "label": "Spectrum Profile 1",
+      "group": "paramgroup_voicing",
+      "group_name": "Voicing",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 98,
+      "patch_index": 36,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:profil_2",
+      "symbol": "profil_2",
+      "label": "Spectrum Profile 2",
+      "group": "paramgroup_voicing",
+      "group_name": "Voicing",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 99,
+      "patch_index": 37,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:profil_3",
+      "symbol": "profil_3",
+      "label": "Spectrum Profile 3",
+      "group": "paramgroup_voicing",
+      "group_name": "Voicing",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 100,
+      "patch_index": 38,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:profil_4",
+      "symbol": "profil_4",
+      "label": "Spectrum Profile 4",
+      "group": "paramgroup_voicing",
+      "group_name": "Voicing",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 101,
+      "patch_index": 39,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:profil_5",
+      "symbol": "profil_5",
+      "label": "Spectrum Profile 5",
+      "group": "paramgroup_voicing",
+      "group_name": "Voicing",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.508197,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 102,
+      "patch_index": 40,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:profil_6",
+      "symbol": "profil_6",
+      "label": "Spectrum Profile 6",
+      "group": "paramgroup_voicing",
+      "group_name": "Voicing",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.509615,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 103,
+      "patch_index": 41,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:profil_7",
+      "symbol": "profil_7",
+      "label": "Spectrum Profile 7",
+      "group": "paramgroup_voicing",
+      "group_name": "Voicing",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 104,
+      "patch_index": 42,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:profil_8",
+      "symbol": "profil_8",
+      "label": "Spectrum Profile 8",
+      "group": "paramgroup_voicing",
+      "group_name": "Voicing",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 105,
+      "patch_index": 43,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:hammer_tone",
+      "symbol": "hammer_tone",
+      "label": "Hammer Tone",
+      "group": "paramgroup_voicing",
+      "group_name": "Voicing",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 106,
+      "patch_index": 44,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:strike_point",
+      "symbol": "strike_point",
+      "label": "Strike Point",
+      "group": "paramgroup_voicing",
+      "group_name": "Voicing",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.557676,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 107,
+      "patch_index": 45,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:pinch_harmonic_point",
+      "symbol": "pinch_harmonic_point",
+      "label": "Pinch Harmonic Point",
+      "group": "paramgroup_voicing",
+      "group_name": "Voicing",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 108,
+      "patch_index": 46,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:pickup_symmetry",
+      "symbol": "pickup_symmetry",
+      "label": "Pickup Symmetry",
+      "group": "paramgroup_voicing",
+      "group_name": "Voicing",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 109,
+      "patch_index": 47,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:pickup_distance",
+      "symbol": "pickup_distance",
+      "label": "Pickup Distance",
+      "group": "paramgroup_voicing",
+      "group_name": "Voicing",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.444444,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 110,
+      "patch_index": 48,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:soft_level",
+      "symbol": "soft_level",
+      "label": "Soft Level",
+      "group": "paramgroup_voicing",
+      "group_name": "Voicing",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.3,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 111,
+      "patch_index": 49,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:clavinet_low_mic",
+      "symbol": "clavinet_low_mic",
+      "label": "Clavinet Low Mic",
+      "group": "paramgroup_voicing",
+      "group_name": "Voicing",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 112,
+      "patch_index": 50,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:clavinet_high_mic",
+      "symbol": "clavinet_high_mic",
+      "label": "Clavinet High Mic",
+      "group": "paramgroup_voicing",
+      "group_name": "Voicing",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 113,
+      "patch_index": 9,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:sustain_pedal",
+      "symbol": "sustain_pedal",
+      "label": "Sustain Pedal",
+      "group": "paramgroup_pedals",
+      "group_name": "Pedals",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 114,
+      "patch_index": 10,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:soft_pedal",
+      "symbol": "soft_pedal",
+      "label": "Soft Pedal",
+      "group": "paramgroup_pedals",
+      "group_name": "Pedals",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 115,
+      "patch_index": 11,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:sostenuto_pedal",
+      "symbol": "sostenuto_pedal",
+      "label": "Sostenuto Pedal",
+      "group": "paramgroup_pedals",
+      "group_name": "Pedals",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 116,
+      "patch_index": 12,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:harmonic_pedal",
+      "symbol": "harmonic_pedal",
+      "label": "Harmonic Pedal",
+      "group": "paramgroup_pedals",
+      "group_name": "Pedals",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 117,
+      "patch_index": 13,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:rattle_pedal",
+      "symbol": "rattle_pedal",
+      "label": "Rattle Pedal",
+      "group": "paramgroup_pedals",
+      "group_name": "Pedals",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 118,
+      "patch_index": 14,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:lute_stop_pedal",
+      "symbol": "lute_stop_pedal",
+      "label": "Buff Stop Pedal",
+      "group": "paramgroup_pedals",
+      "group_name": "Pedals",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 119,
+      "patch_index": 15,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:celeste_pedal",
+      "symbol": "celeste_pedal",
+      "label": "Celeste Pedal",
+      "group": "paramgroup_pedals",
+      "group_name": "Pedals",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 120,
+      "patch_index": 16,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mozart_rail",
+      "symbol": "mozart_rail",
+      "label": "Mozart Rail",
+      "group": "paramgroup_pedals",
+      "group_name": "Pedals",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 121,
+      "patch_index": 17,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:super_sostenuto",
+      "symbol": "super_sostenuto",
+      "label": "Super Sostenuto",
+      "group": "paramgroup_pedals",
+      "group_name": "Pedals",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 122,
+      "patch_index": 18,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:pinch_harmonic_pedal",
+      "symbol": "pinch_harmonic_pedal",
+      "label": "Pinch Harmonic Pedal",
+      "group": "paramgroup_pedals",
+      "group_name": "Pedals",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 123,
+      "patch_index": 19,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:glissando_pedal",
+      "symbol": "glissando_pedal",
+      "label": "Glissando Pedal",
+      "group": "paramgroup_pedals",
+      "group_name": "Pedals",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 124,
+      "patch_index": 20,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:thunder_pedal",
+      "symbol": "thunder_pedal",
+      "label": "Thunder Pedal",
+      "group": "paramgroup_pedals",
+      "group_name": "Pedals",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 125,
+      "patch_index": 21,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:harpsichord_register_1",
+      "symbol": "harpsichord_register_1",
+      "label": "Harpsichord Register 1",
+      "group": "paramgroup_pedals",
+      "group_name": "Pedals",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 126,
+      "patch_index": 22,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:harpsichord_register_2",
+      "symbol": "harpsichord_register_2",
+      "label": "Harpsichord Register 2",
+      "group": "paramgroup_pedals",
+      "group_name": "Pedals",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 127,
+      "patch_index": 23,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:harpsichord_register_3",
+      "symbol": "harpsichord_register_3",
+      "label": "Harpsichord Register 3",
+      "group": "paramgroup_pedals",
+      "group_name": "Pedals",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 128,
+      "patch_index": 24,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:reversed_sustain",
+      "symbol": "reversed_sustain",
+      "label": "Reversed Sustain",
+      "group": "paramgroup_pedals",
+      "group_name": "Pedals",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 129,
+      "patch_index": 51,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:impedance",
+      "symbol": "impedance",
+      "label": "Impedance",
+      "group": "paramgroup_design",
+      "group_name": "Design",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 130,
+      "patch_index": 52,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:impedance_cutoff",
+      "symbol": "impedance_cutoff",
+      "label": "Impedance Cutoff",
+      "group": "paramgroup_design",
+      "group_name": "Design",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 131,
+      "patch_index": 53,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:q_factor",
+      "symbol": "q_factor",
+      "label": "Impedance Slope",
+      "group": "paramgroup_design",
+      "group_name": "Design",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 132,
+      "patch_index": 54,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:string_length",
+      "symbol": "string_length",
+      "label": "String Length",
+      "group": "paramgroup_design",
+      "group_name": "Design",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 133,
+      "patch_index": 55,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:sympathetic_resonance",
+      "symbol": "sympathetic_resonance",
+      "label": "Sympathetic Resonance",
+      "group": "paramgroup_design",
+      "group_name": "Design",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 134,
+      "patch_index": 56,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:duplex_scale_resonance",
+      "symbol": "duplex_scale_resonance",
+      "label": "Duplex Scale Resonance",
+      "group": "paramgroup_design",
+      "group_name": "Design",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 135,
+      "patch_index": 57,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:quadratic_effect",
+      "symbol": "quadratic_effect",
+      "label": "Quadratic Effect",
+      "group": "paramgroup_design",
+      "group_name": "Design",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.569824,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 136,
+      "patch_index": 58,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:hammer_tine_noise",
+      "symbol": "hammer_tine_noise",
+      "label": "Hammer Tine Noise",
+      "group": "paramgroup_design",
+      "group_name": "Design",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 137,
+      "patch_index": 59,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:blooming_energy",
+      "symbol": "blooming_energy",
+      "label": "Blooming Energy",
+      "group": "paramgroup_design",
+      "group_name": "Design",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 138,
+      "patch_index": 60,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:blooming_inertia",
+      "symbol": "blooming_inertia",
+      "label": "Blooming Inertia",
+      "group": "paramgroup_design",
+      "group_name": "Design",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 139,
+      "patch_index": 61,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:external_audio_mix",
+      "symbol": "external_audio_mix",
+      "label": "External Audio Mix",
+      "group": "paramgroup_design",
+      "group_name": "Design",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 140,
+      "patch_index": 62,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:external_audio_tone",
+      "symbol": "external_audio_tone",
+      "label": "External Audio Tone",
+      "group": "paramgroup_design",
+      "group_name": "Design",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 141,
+      "patch_index": 149,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:bounce_switch",
+      "symbol": "bounce_switch",
+      "label": "Bounce Switch",
+      "group": "paramgroup_bounce",
+      "group_name": "Mallet bounce",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 142,
+      "patch_index": 150,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:bounce_delay",
+      "symbol": "bounce_delay",
+      "label": "Bounce Delay",
+      "group": "paramgroup_bounce",
+      "group_name": "Mallet bounce",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 143,
+      "patch_index": 151,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:bounce_sync",
+      "symbol": "bounce_sync",
+      "label": "Bounce Sync",
+      "group": "paramgroup_bounce",
+      "group_name": "Mallet bounce",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 144,
+      "patch_index": 152,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:bounce_sync_speed",
+      "symbol": "bounce_sync_speed",
+      "label": "Bounce Sync Speed",
+      "group": "paramgroup_bounce",
+      "group_name": "Mallet bounce",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.448276,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "16d",
+          "value": 0
+        },
+        {
+          "label": "16",
+          "value": 0.0344828
+        },
+        {
+          "label": "16t",
+          "value": 0.0689655
+        },
+        {
+          "label": "8d",
+          "value": 0.103448
+        },
+        {
+          "label": "8",
+          "value": 0.137931
+        },
+        {
+          "label": "8t",
+          "value": 0.172414
+        },
+        {
+          "label": "4d",
+          "value": 0.206897
+        },
+        {
+          "label": "4",
+          "value": 0.241379
+        },
+        {
+          "label": "4t",
+          "value": 0.275862
+        },
+        {
+          "label": "2d",
+          "value": 0.310345
+        },
+        {
+          "label": "2",
+          "value": 0.344828
+        },
+        {
+          "label": "2t",
+          "value": 0.37931
+        },
+        {
+          "label": "1d",
+          "value": 0.413793
+        },
+        {
+          "label": "1",
+          "value": 0.448276
+        },
+        {
+          "label": "1t",
+          "value": 0.482759
+        },
+        {
+          "label": "1/2d",
+          "value": 0.517241
+        },
+        {
+          "label": "1/2",
+          "value": 0.551724
+        },
+        {
+          "label": "1/2t",
+          "value": 0.586207
+        },
+        {
+          "label": "1/4d",
+          "value": 0.62069
+        },
+        {
+          "label": "1/4",
+          "value": 0.655172
+        },
+        {
+          "label": "1/4t",
+          "value": 0.689655
+        },
+        {
+          "label": "1/8d",
+          "value": 0.724138
+        },
+        {
+          "label": "1/8",
+          "value": 0.758621
+        },
+        {
+          "label": "1/8t",
+          "value": 0.793103
+        },
+        {
+          "label": "1/16d",
+          "value": 0.827586
+        },
+        {
+          "label": "1/16",
+          "value": 0.862069
+        },
+        {
+          "label": "1/16t",
+          "value": 0.896552
+        },
+        {
+          "label": "1/32d",
+          "value": 0.931035
+        },
+        {
+          "label": "1/32",
+          "value": 0.965517
+        },
+        {
+          "label": "1/32t",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 145,
+      "patch_index": 153,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:bounce_velocity_sensitivity",
+      "symbol": "bounce_velocity_sensitivity",
+      "label": "Bounce Velocity Sensitivity",
+      "group": "paramgroup_bounce",
+      "group_name": "Mallet bounce",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 146,
+      "patch_index": 154,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:bounce_delay_loss",
+      "symbol": "bounce_delay_loss",
+      "label": "Bounce Delay Loss",
+      "group": "paramgroup_bounce",
+      "group_name": "Mallet bounce",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 147,
+      "patch_index": 155,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:bounce_velocity_loss",
+      "symbol": "bounce_velocity_loss",
+      "label": "Bounce Velocity Loss",
+      "group": "paramgroup_bounce",
+      "group_name": "Mallet bounce",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 148,
+      "patch_index": 156,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:bounce_humanization",
+      "symbol": "bounce_humanization",
+      "label": "Bounce Humanization",
+      "group": "paramgroup_bounce",
+      "group_name": "Mallet bounce",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 149,
+      "patch_index": 174,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_1_switch",
+      "symbol": "effect_1_switch",
+      "label": "Eff 1 Switch",
+      "group": "paramgroup_fx1",
+      "group_name": "Effect 1",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 150,
+      "patch_index": 175,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_1_param_1",
+      "symbol": "effect_1_param_1",
+      "label": "Eff 1 DelMix",
+      "group": "paramgroup_fx1",
+      "group_name": "Effect 1",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.07,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 151,
+      "patch_index": 176,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_1_param_2",
+      "symbol": "effect_1_param_2",
+      "label": "Eff 1 DelTime",
+      "group": "paramgroup_fx1",
+      "group_name": "Effect 1",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.228336,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 152,
+      "patch_index": 177,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_1_param_3",
+      "symbol": "effect_1_param_3",
+      "label": "Eff 1 DelFb",
+      "group": "paramgroup_fx1",
+      "group_name": "Effect 1",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 153,
+      "patch_index": 178,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_1_param_4",
+      "symbol": "effect_1_param_4",
+      "label": "Eff 1 DelTone",
+      "group": "paramgroup_fx1",
+      "group_name": "Effect 1",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.25,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 154,
+      "patch_index": 179,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_1_param_5",
+      "symbol": "effect_1_param_5",
+      "label": "Eff 1 DelPol",
+      "group": "paramgroup_fx1",
+      "group_name": "Effect 1",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 155,
+      "patch_index": 180,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_1_param_6",
+      "symbol": "effect_1_param_6",
+      "label": "Eff 1 DelPing",
+      "group": "paramgroup_fx1",
+      "group_name": "Effect 1",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 156,
+      "patch_index": 181,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_1_param_7",
+      "symbol": "effect_1_param_7",
+      "label": "Eff 1 Param 7",
+      "group": "paramgroup_fx1",
+      "group_name": "Effect 1",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 157,
+      "patch_index": 182,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_1_param_8",
+      "symbol": "effect_1_param_8",
+      "label": "Eff 1 Param 8",
+      "group": "paramgroup_fx1",
+      "group_name": "Effect 1",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 158,
+      "patch_index": 183,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_2_switch",
+      "symbol": "effect_2_switch",
+      "label": "Eff 2 Switch",
+      "group": "paramgroup_fx2",
+      "group_name": "Effect 2",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 159,
+      "patch_index": 184,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_2_param_1",
+      "symbol": "effect_2_param_1",
+      "label": "Eff 2 PEQ1F",
+      "group": "paramgroup_fx2",
+      "group_name": "Effect 2",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.174046,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 160,
+      "patch_index": 185,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_2_param_2",
+      "symbol": "effect_2_param_2",
+      "label": "Eff 2 PEQ1G",
+      "group": "paramgroup_fx2",
+      "group_name": "Effect 2",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.54,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 161,
+      "patch_index": 186,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_2_param_3",
+      "symbol": "effect_2_param_3",
+      "label": "Eff 2 PEQ1Q",
+      "group": "paramgroup_fx2",
+      "group_name": "Effect 2",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.461274,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 162,
+      "patch_index": 187,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_2_param_4",
+      "symbol": "effect_2_param_4",
+      "label": "Eff 2 PEQ1T",
+      "group": "paramgroup_fx2",
+      "group_name": "Effect 2",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.428571,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 163,
+      "patch_index": 188,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_2_param_5",
+      "symbol": "effect_2_param_5",
+      "label": "Eff 2 PEQ2F",
+      "group": "paramgroup_fx2",
+      "group_name": "Effect 2",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.319208,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 164,
+      "patch_index": 189,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_2_param_6",
+      "symbol": "effect_2_param_6",
+      "label": "Eff 2 PEQ2G",
+      "group": "paramgroup_fx2",
+      "group_name": "Effect 2",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 165,
+      "patch_index": 190,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_2_param_7",
+      "symbol": "effect_2_param_7",
+      "label": "Eff 2 PEQ2Q",
+      "group": "paramgroup_fx2",
+      "group_name": "Effect 2",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.461274,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 166,
+      "patch_index": 191,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_2_param_8",
+      "symbol": "effect_2_param_8",
+      "label": "Eff 2 PEQ2T",
+      "group": "paramgroup_fx2",
+      "group_name": "Effect 2",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 167,
+      "patch_index": 192,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_3_switch",
+      "symbol": "effect_3_switch",
+      "label": "Eff 3 Switch",
+      "group": "paramgroup_fx3",
+      "group_name": "Effect 3",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 168,
+      "patch_index": 193,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_3_param_1",
+      "symbol": "effect_3_param_1",
+      "label": "Eff 3 PEQ1F",
+      "group": "paramgroup_fx3",
+      "group_name": "Effect 3",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 169,
+      "patch_index": 194,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_3_param_2",
+      "symbol": "effect_3_param_2",
+      "label": "Eff 3 PEQ1G",
+      "group": "paramgroup_fx3",
+      "group_name": "Effect 3",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 170,
+      "patch_index": 195,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_3_param_3",
+      "symbol": "effect_3_param_3",
+      "label": "Eff 3 PEQ1Q",
+      "group": "paramgroup_fx3",
+      "group_name": "Effect 3",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 171,
+      "patch_index": 196,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_3_param_4",
+      "symbol": "effect_3_param_4",
+      "label": "Eff 3 PEQ1T",
+      "group": "paramgroup_fx3",
+      "group_name": "Effect 3",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.428571,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 172,
+      "patch_index": 197,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_3_param_5",
+      "symbol": "effect_3_param_5",
+      "label": "Eff 3 PEQ2F",
+      "group": "paramgroup_fx3",
+      "group_name": "Effect 3",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.109811,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 173,
+      "patch_index": 198,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_3_param_6",
+      "symbol": "effect_3_param_6",
+      "label": "Eff 3 PEQ2G",
+      "group": "paramgroup_fx3",
+      "group_name": "Effect 3",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.47,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 174,
+      "patch_index": 199,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_3_param_7",
+      "symbol": "effect_3_param_7",
+      "label": "Eff 3 PEQ2Q",
+      "group": "paramgroup_fx3",
+      "group_name": "Effect 3",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.694538,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 175,
+      "patch_index": 200,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:effect_3_param_8",
+      "symbol": "effect_3_param_8",
+      "label": "Eff 3 PEQ2T",
+      "group": "paramgroup_fx3",
+      "group_name": "Effect 3",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 176,
+      "patch_index": 201,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:reverb_switch",
+      "symbol": "reverb_switch",
+      "label": "Reverb Switch",
+      "group": "paramgroup_reverb",
+      "group_name": "Reverb",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 177,
+      "patch_index": 202,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:reverb_duration",
+      "symbol": "reverb_duration",
+      "label": "Reverb Duration",
+      "group": "paramgroup_reverb",
+      "group_name": "Reverb",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.422333,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 178,
+      "patch_index": 203,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:reverb_mix",
+      "symbol": "reverb_mix",
+      "label": "Reverb Mix",
+      "group": "paramgroup_reverb",
+      "group_name": "Reverb",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.54,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 179,
+      "patch_index": 204,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:room_dimensions",
+      "symbol": "room_dimensions",
+      "label": "Room Dimensions",
+      "group": "paramgroup_reverb",
+      "group_name": "Reverb",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.222222,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 180,
+      "patch_index": 205,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:reverb_pre_delay",
+      "symbol": "reverb_pre_delay",
+      "label": "Reverb Pre-delay",
+      "group": "paramgroup_reverb",
+      "group_name": "Reverb",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.215698,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 181,
+      "patch_index": 206,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:reverb_early_reflections",
+      "symbol": "reverb_early_reflections",
+      "label": "Reverb Early Reflections",
+      "group": "paramgroup_reverb",
+      "group_name": "Reverb",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 182,
+      "patch_index": 207,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:reverb_tone",
+      "symbol": "reverb_tone",
+      "label": "Reverb Tone",
+      "group": "paramgroup_reverb",
+      "group_name": "Reverb",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.45,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 183,
+      "patch_index": 208,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:reverb_envelope",
+      "symbol": "reverb_envelope",
+      "label": "Reverb Envelope",
+      "group": "paramgroup_reverb",
+      "group_name": "Reverb",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 184,
+      "patch_index": 209,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:reverb_resampling",
+      "symbol": "reverb_resampling",
+      "label": "Reverb Resampling",
+      "group": "paramgroup_reverb",
+      "group_name": "Reverb",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 185,
+      "patch_index": 210,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:reverb_highpass_cutoff",
+      "symbol": "reverb_highpass_cutoff",
+      "label": "Reverb Highpass Cutoff",
+      "group": "paramgroup_reverb",
+      "group_name": "Reverb",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.635691,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 186,
+      "patch_index": 211,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:limiter_switch",
+      "symbol": "limiter_switch",
+      "label": "Limiter Switch",
+      "group": "paramgroup_limiter",
+      "group_name": "Limiter",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 187,
+      "patch_index": 212,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:limiter_sharpness",
+      "symbol": "limiter_sharpness",
+      "label": "Limiter Sharpness",
+      "group": "paramgroup_limiter",
+      "group_name": "Limiter",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 188,
+      "patch_index": 213,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:limiter_threshold",
+      "symbol": "limiter_threshold",
+      "label": "Limiter Threshold",
+      "group": "paramgroup_limiter",
+      "group_name": "Limiter",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.52,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 189,
+      "patch_index": 214,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:limiter_gain",
+      "symbol": "limiter_gain",
+      "label": "Limiter Gain",
+      "group": "paramgroup_limiter",
+      "group_name": "Limiter",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.833333,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 190,
+      "patch_index": 141,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:mute",
+      "symbol": "mute",
+      "label": "Mute",
+      "group": "paramgroup_action",
+      "group_name": "Action",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 191,
+      "patch_index": 142,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:damper_noise",
+      "symbol": "damper_noise",
+      "label": "Damper Noise",
+      "group": "paramgroup_action",
+      "group_name": "Action",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 192,
+      "patch_index": 143,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:damper_position",
+      "symbol": "damper_position",
+      "label": "Damper Position",
+      "group": "paramgroup_action",
+      "group_name": "Action",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.742119,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 193,
+      "patch_index": 144,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:last_damper",
+      "symbol": "last_damper",
+      "label": "Last Damper",
+      "group": "paramgroup_action",
+      "group_name": "Action",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.710938,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 194,
+      "patch_index": 145,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:pedal_noise",
+      "symbol": "pedal_noise",
+      "label": "Pedal Noise",
+      "group": "paramgroup_action",
+      "group_name": "Action",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 195,
+      "patch_index": 146,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:key_release_noise",
+      "symbol": "key_release_noise",
+      "label": "Key Release Noise",
+      "group": "paramgroup_action",
+      "group_name": "Action",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 196,
+      "patch_index": 147,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:damping_duration",
+      "symbol": "damping_duration",
+      "label": "Damping Duration",
+      "group": "paramgroup_action",
+      "group_name": "Action",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 197,
+      "patch_index": 148,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:keyboard_range_switch",
+      "symbol": "keyboard_range_switch",
+      "label": "Keyboard Range Switch",
+      "group": "paramgroup_action",
+      "group_name": "Action",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 198,
+      "patch_index": 157,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:nfx_lfo_shape",
+      "symbol": "nfx_lfo_shape",
+      "label": "NFX Lfo Shape",
+      "group": "paramgroup_notefx",
+      "group_name": "Note effects",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 199,
+      "patch_index": 158,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:nfx_lfo_skew",
+      "symbol": "nfx_lfo_skew",
+      "label": "NFX Lfo Skew",
+      "group": "paramgroup_notefx",
+      "group_name": "Note effects",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 200,
+      "patch_index": 159,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:nfx_lfo_rate",
+      "symbol": "nfx_lfo_rate",
+      "label": "NFX Lfo Rate",
+      "group": "paramgroup_notefx",
+      "group_name": "Note effects",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.4,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 201,
+      "patch_index": 160,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:nfx_lfo_phase",
+      "symbol": "nfx_lfo_phase",
+      "label": "NFX Lfo Phase",
+      "group": "paramgroup_notefx",
+      "group_name": "Note effects",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.25,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 202,
+      "patch_index": 161,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:nfx_lfo_phase_locked",
+      "symbol": "nfx_lfo_phase_locked",
+      "label": "NFX Lfo Phase Locked",
+      "group": "paramgroup_notefx",
+      "group_name": "Note effects",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 203,
+      "patch_index": 162,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:nfx_onset_duration",
+      "symbol": "nfx_onset_duration",
+      "label": "NFX Onset Duration",
+      "group": "paramgroup_notefx",
+      "group_name": "Note effects",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 204,
+      "patch_index": 163,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:nfx_vibrato",
+      "symbol": "nfx_vibrato",
+      "label": "NFX Vibrato",
+      "group": "paramgroup_notefx",
+      "group_name": "Note effects",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 205,
+      "patch_index": 164,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:nfx_vibrato_offset",
+      "symbol": "nfx_vibrato_offset",
+      "label": "NFX Vibrato Offset",
+      "group": "paramgroup_notefx",
+      "group_name": "Note effects",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 206,
+      "patch_index": 165,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:nfx_tremolo_depth",
+      "symbol": "nfx_tremolo_depth",
+      "label": "NFX Tremolo Depth",
+      "group": "paramgroup_notefx",
+      "group_name": "Note effects",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 207,
+      "patch_index": 166,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:nfx_tremolo_phase",
+      "symbol": "nfx_tremolo_phase",
+      "label": "NFX Tremolo Phase",
+      "group": "paramgroup_notefx",
+      "group_name": "Note effects",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 208,
+      "patch_index": 167,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:attack_envelope",
+      "symbol": "attack_envelope",
+      "label": "Attack Envelope",
+      "group": "paramgroup_notefx",
+      "group_name": "Note effects",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 209,
+      "patch_index": 168,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:smear",
+      "symbol": "smear",
+      "label": "Smear",
+      "group": "paramgroup_notefx",
+      "group_name": "Note effects",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 210,
+      "patch_index": 169,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:virtuosity",
+      "symbol": "virtuosity",
+      "label": "Virtuosity",
+      "group": "paramgroup_guitar",
+      "group_name": "Guitar",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.5,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 211,
+      "patch_index": 170,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:fret",
+      "symbol": "fret",
+      "label": "Fret",
+      "group": "paramgroup_guitar",
+      "group_name": "Guitar",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 212,
+      "patch_index": 171,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:guitar_legato",
+      "symbol": "guitar_legato",
+      "label": "Guitar Legato",
+      "group": "paramgroup_guitar",
+      "group_name": "Guitar",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 213,
+      "patch_index": 172,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:guitar_easy_fingering",
+      "symbol": "guitar_easy_fingering",
+      "label": "Guitar easy fingering",
+      "group": "paramgroup_guitar",
+      "group_name": "Guitar",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 1.0,
+      "port_properties": [
+        "lv2:enumeration"
+      ],
+      "scale_points": [
+        {
+          "label": "Off",
+          "value": 0
+        },
+        {
+          "label": "On",
+          "value": 1
+        }
+      ],
+      "patch_writable": true,
+      "patch_readable": true
+    },
+    {
+      "index": 214,
+      "patch_index": 173,
+      "uri": "https://www.modartt.com/lv2/Pianoteq9:guitar_body",
+      "symbol": "guitar_body",
+      "label": "Guitar Body",
+      "group": "paramgroup_guitar",
+      "group_name": "Guitar",
+      "range": "atom:Float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.0,
+      "port_properties": [],
+      "scale_points": [],
+      "patch_writable": true,
+      "patch_readable": true
+    }
+  ],
+  "lv2_ports": {
+    "audio_inputs": [
+      {
+        "index": 0,
+        "symbol": "audio_in_1",
+        "name": "Audio In 1",
+        "group": "input_group_1",
+        "designation": "center",
+        "optional": true
+      }
+    ],
+    "audio_outputs": {
+      "channel_count": 16,
+      "stereo_bus_groups": 8,
+      "indices": "1..16",
+      "required_indices": [
+        1,
+        2
+      ],
+      "optional_indices": [
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16
+      ]
+    },
+    "atom_ports": [
+      {
+        "index": 17,
+        "direction": "input",
+        "symbol": "in",
+        "minimum_size_bytes": 23672,
+        "supports": [
+          "midi:MidiEvent",
+          "patch:Message",
+          "time:Position"
+        ]
+      },
+      {
+        "index": 18,
+        "direction": "output",
+        "symbol": "out",
+        "minimum_size_bytes": 23672,
+        "supports": [
+          "patch:Message"
+        ]
+      }
+    ],
+    "control_ports": [
+      {
+        "index": 19,
+        "direction": "output",
+        "symbol": "latency",
+        "designation": "lv2:latency",
+        "unit": "frames"
+      },
+      {
+        "index": 20,
+        "direction": "input",
+        "symbol": "freeWheeling",
+        "designation": "lv2:freeWheeling",
+        "default": 0.0
+      },
+      {
+        "index": 21,
+        "direction": "input",
+        "symbol": "enabled",
+        "designation": "lv2:enabled",
+        "default": 1.0
+      }
+    ]
+  },
+  "instruments": [
+    {
+      "cli_index": 1,
+      "name": "Grand Steinway D (New York)",
+      "family": "Modern Acoustic Grand Pianos",
+      "sub_family": "Steinway & Sons",
+      "manual_section": "16.1.1",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 2,
+      "name": "Grand Steinway D (Hamburg)",
+      "family": "Modern Acoustic Grand Pianos",
+      "sub_family": "Steinway & Sons",
+      "manual_section": "16.1.1",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 3,
+      "name": "Grand Steinway B",
+      "family": "Modern Acoustic Grand Pianos",
+      "sub_family": "Steinway & Sons",
+      "manual_section": "16.1.2",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 4,
+      "name": "Grand Shigeru Kawai SK-EX",
+      "family": "Modern Acoustic Grand Pianos",
+      "sub_family": "Kawai",
+      "manual_section": "16.1.3",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 5,
+      "name": "Grand Japanese YFX",
+      "family": "Modern Acoustic Grand Pianos",
+      "sub_family": "Japanese Concert Grand",
+      "manual_section": "16.1.4",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 6,
+      "name": "Grand Bösendorfer 280VC",
+      "family": "Modern Acoustic Grand Pianos",
+      "sub_family": "Bösendorfer",
+      "manual_section": "16.1.5",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 7,
+      "name": "Grand C. Bechstein DG",
+      "family": "Modern Acoustic Grand Pianos",
+      "sub_family": "C. Bechstein",
+      "manual_section": "16.1.6",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 8,
+      "name": "Grand Ant. Petrof",
+      "family": "Modern Acoustic Grand Pianos",
+      "sub_family": "Petrof",
+      "manual_section": "16.1.7",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 9,
+      "name": "Grand Petrof Mistral",
+      "family": "Modern Acoustic Grand Pianos",
+      "sub_family": "Petrof",
+      "manual_section": "16.1.7",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 10,
+      "name": "Classical Guitar",
+      "family": "Plucked Strings (Guitar & Harps)",
+      "sub_family": "Classical Guitar",
+      "manual_section": "16.3",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 11,
+      "name": "Grand Steingraeber",
+      "family": "Modern Acoustic Grand Pianos",
+      "sub_family": "Steingraeber",
+      "manual_section": "16.1.8",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 12,
+      "name": "Grand Grotrian",
+      "family": "Modern Acoustic Grand Pianos",
+      "sub_family": "Grotrian",
+      "manual_section": "16.1.9",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 13,
+      "name": "Grand Blüthner",
+      "family": "Modern Acoustic Grand Pianos",
+      "sub_family": "Blüthner (Aliquot)",
+      "manual_section": "16.1.10",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 14,
+      "name": "Grand YC5",
+      "family": "Modern Acoustic Grand Pianos",
+      "sub_family": "Rock / Stage Grand",
+      "manual_section": "16.1.12",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 15,
+      "name": "Grand K2",
+      "family": "Modern Acoustic Grand Pianos",
+      "sub_family": "Modartt K2 Grand",
+      "manual_section": "16.1.11",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 16,
+      "name": "Upright U4",
+      "family": "Acoustic Upright Pianos",
+      "sub_family": "Upright Piano",
+      "manual_section": "16.1.13",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 17,
+      "name": "Vintage Tines MKII",
+      "family": "Electro-Acoustic Pianos",
+      "sub_family": "Electric Pianos Pack (Tines)",
+      "manual_section": "16.5",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 18,
+      "name": "Vintage Tines MKI",
+      "family": "Electro-Acoustic Pianos",
+      "sub_family": "Electric Pianos Pack (Tines)",
+      "manual_section": "16.5",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 19,
+      "name": "Vintage Reeds",
+      "family": "Electro-Acoustic Pianos",
+      "sub_family": "Electric Pianos Pack (Reeds)",
+      "manual_section": "16.5",
+      "is_duplicate_cli_name": true,
+      "disambiguation_note": "Duplicate CLI display name; --list-presets separates W2 (37 presets) and W1 (16 presets) reed piano models"
+    },
+    {
+      "cli_index": 20,
+      "name": "Vintage Reeds",
+      "family": "Electro-Acoustic Pianos",
+      "sub_family": "Electric Pianos Pack (Reeds)",
+      "manual_section": "16.5",
+      "is_duplicate_cli_name": true,
+      "disambiguation_note": "Duplicate CLI display name; --list-presets separates W2 (37 presets) and W1 (16 presets) reed piano models"
+    },
+    {
+      "cli_index": 21,
+      "name": "Clavinet D6",
+      "family": "Electro-Acoustic Pianos",
+      "sub_family": "Hohner Collection",
+      "manual_section": "16.6",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 22,
+      "name": "Pianet N",
+      "family": "Electro-Acoustic Pianos",
+      "sub_family": "Hohner Collection",
+      "manual_section": "16.6",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 23,
+      "name": "Pianet T",
+      "family": "Electro-Acoustic Pianos",
+      "sub_family": "Hohner Collection",
+      "manual_section": "16.6",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 24,
+      "name": "Electra-Piano",
+      "family": "Electro-Acoustic Pianos",
+      "sub_family": "Hohner Collection",
+      "manual_section": "16.6",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 25,
+      "name": "Syngular",
+      "family": "Hybrid Physical Synthesis",
+      "sub_family": "Syngular Sound Design Lab",
+      "manual_section": "16.7",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 26,
+      "name": "Vibraphone V-B",
+      "family": "Chromatic Percussion & Idiophones",
+      "sub_family": "Vibraphones (Metal Bars)",
+      "manual_section": "16.8",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 27,
+      "name": "Vibraphone V-M",
+      "family": "Chromatic Percussion & Idiophones",
+      "sub_family": "Vibraphones (Metal Bars)",
+      "manual_section": "16.8",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 28,
+      "name": "Celesta",
+      "family": "Chromatic Percussion & Idiophones",
+      "sub_family": "Celeste Pack (Metal Plates/Rods)",
+      "manual_section": "16.10",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 29,
+      "name": "Glockenspiel",
+      "family": "Chromatic Percussion & Idiophones",
+      "sub_family": "Celeste Pack (Metal Plates/Rods)",
+      "manual_section": "16.10",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 30,
+      "name": "Toy Piano",
+      "family": "Chromatic Percussion & Idiophones",
+      "sub_family": "Celeste Pack (Metal Plates/Rods)",
+      "manual_section": "16.10",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 31,
+      "name": "Kalimba",
+      "family": "Chromatic Percussion & Idiophones",
+      "sub_family": "Lamellophone (Plucked Tines)",
+      "manual_section": "16.12",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 32,
+      "name": "Marimba",
+      "family": "Chromatic Percussion & Idiophones",
+      "sub_family": "Xylo Pack (Wooden Bars)",
+      "manual_section": "16.9",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 33,
+      "name": "Xylophone",
+      "family": "Chromatic Percussion & Idiophones",
+      "sub_family": "Xylo Pack (Wooden Bars)",
+      "manual_section": "16.9",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 34,
+      "name": "Steel Drum",
+      "family": "Steelpans",
+      "sub_family": "Steelpans Pack",
+      "manual_section": "16.11",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 35,
+      "name": "Spacedrum",
+      "family": "Steelpans",
+      "sub_family": "Steelpans Pack",
+      "manual_section": "16.11",
+      "is_duplicate_cli_name": true,
+      "disambiguation_note": "Duplicate CLI display name; manual Sec. 16.11 & --list-presets distinguish hand-played and mallet-played variants"
+    },
+    {
+      "cli_index": 36,
+      "name": "Spacedrum",
+      "family": "Steelpans",
+      "sub_family": "Steelpans Pack",
+      "manual_section": "16.11",
+      "is_duplicate_cli_name": true,
+      "disambiguation_note": "Duplicate CLI display name; manual Sec. 16.11 & --list-presets distinguish hand-played and mallet-played variants"
+    },
+    {
+      "cli_index": 37,
+      "name": "Hand Pan",
+      "family": "Steelpans",
+      "sub_family": "Steelpans Pack",
+      "manual_section": "16.11",
+      "is_duplicate_cli_name": true,
+      "disambiguation_note": "Duplicate CLI display name; manual Sec. 16.11 & --list-presets distinguish hand-played and mallet-played variants"
+    },
+    {
+      "cli_index": 38,
+      "name": "Hand Pan",
+      "family": "Steelpans",
+      "sub_family": "Steelpans Pack",
+      "manual_section": "16.11",
+      "is_duplicate_cli_name": true,
+      "disambiguation_note": "Duplicate CLI display name; manual Sec. 16.11 & --list-presets distinguish hand-played and mallet-played variants"
+    },
+    {
+      "cli_index": 39,
+      "name": "Tank Drum",
+      "family": "Steelpans",
+      "sub_family": "Steelpans Pack",
+      "manual_section": "16.11",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 40,
+      "name": "H. Ruckers II Harpsichord",
+      "family": "Historical Plucked Keyboards",
+      "sub_family": "Hans Ruckers II (1624)",
+      "manual_section": "16.1.16",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 41,
+      "name": "Concert Harp",
+      "family": "Plucked Strings (Guitar & Harps)",
+      "sub_family": "Harp Pack (Salvi Concert)",
+      "manual_section": "16.4",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 42,
+      "name": "Celtic Harp",
+      "family": "Plucked Strings (Guitar & Harps)",
+      "sub_family": "Harp Pack (Aoyama Celtic)",
+      "manual_section": "16.4",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 43,
+      "name": "Triple Harp",
+      "family": "Plucked Strings (Guitar & Harps)",
+      "sub_family": "Harp Pack (Italian Baroque Triple)",
+      "manual_section": "16.4",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 44,
+      "name": "J. Salodiensis Virginal (1600)",
+      "family": "Historical Plucked Keyboards",
+      "sub_family": "Karsten Collection",
+      "manual_section": "16.1.14",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 45,
+      "name": "G. Giusti Harpsichord (1680)",
+      "family": "Historical Plucked Keyboards",
+      "sub_family": "Karsten Collection",
+      "manual_section": "16.1.14",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 46,
+      "name": "Ph. Schmidt Square (1780)",
+      "family": "Historical Pianos & Pianofortes",
+      "sub_family": "Karsten Collection (Square)",
+      "manual_section": "16.1.14",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 47,
+      "name": "J. Weimes Pianoforte (1808)",
+      "family": "Historical Pianos & Pianofortes",
+      "sub_family": "Karsten Collection",
+      "manual_section": "16.1.14",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 48,
+      "name": "NY Steinway Square (1858)",
+      "family": "Historical Pianos & Pianofortes",
+      "sub_family": "Karsten Collection (Square)",
+      "manual_section": "16.1.14",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 49,
+      "name": "J. Dohnal (1795)",
+      "family": "Historical Pianos & Pianofortes",
+      "sub_family": "Kremsegg Collection",
+      "manual_section": "16.1.15",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 50,
+      "name": "I. Besendorfer (1829)",
+      "family": "Historical Pianos & Pianofortes",
+      "sub_family": "Kremsegg Collection",
+      "manual_section": "16.1.15",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 51,
+      "name": "S. Erard (1849)",
+      "family": "Historical Pianos & Pianofortes",
+      "sub_family": "Kremsegg Collection",
+      "manual_section": "16.1.15",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 52,
+      "name": "J.B. Streicher (1852)",
+      "family": "Historical Pianos & Pianofortes",
+      "sub_family": "Kremsegg Collection",
+      "manual_section": "16.1.15",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 53,
+      "name": "J. Broadwood (1796)",
+      "family": "Historical Pianos & Pianofortes",
+      "sub_family": "Kremsegg Collection",
+      "manual_section": "16.1.15",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 54,
+      "name": "I. Pleyel (1835)",
+      "family": "Historical Pianos & Pianofortes",
+      "sub_family": "Kremsegg Collection",
+      "manual_section": "16.1.15",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 55,
+      "name": "J. Frenzel (1841)",
+      "family": "Historical Pianos & Pianofortes",
+      "sub_family": "Kremsegg Collection",
+      "manual_section": "16.1.15",
+      "is_duplicate_cli_name": false
+    },
+    {
+      "cli_index": 56,
+      "name": "C. Bechstein (1899)",
+      "family": "Historical Pianos & Pianofortes",
+      "sub_family": "Kremsegg Collection",
+      "manual_section": "16.1.15",
+      "is_duplicate_cli_name": false
+    }
+  ],
+  "instruments_by_family": [
+    {
+      "family": "Modern Acoustic Grand Pianos",
+      "count": 14,
+      "instruments": [
+        {
+          "cli_index": 1,
+          "name": "Grand Steinway D (New York)",
+          "family": "Modern Acoustic Grand Pianos",
+          "sub_family": "Steinway & Sons",
+          "manual_section": "16.1.1",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 2,
+          "name": "Grand Steinway D (Hamburg)",
+          "family": "Modern Acoustic Grand Pianos",
+          "sub_family": "Steinway & Sons",
+          "manual_section": "16.1.1",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 3,
+          "name": "Grand Steinway B",
+          "family": "Modern Acoustic Grand Pianos",
+          "sub_family": "Steinway & Sons",
+          "manual_section": "16.1.2",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 4,
+          "name": "Grand Shigeru Kawai SK-EX",
+          "family": "Modern Acoustic Grand Pianos",
+          "sub_family": "Kawai",
+          "manual_section": "16.1.3",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 5,
+          "name": "Grand Japanese YFX",
+          "family": "Modern Acoustic Grand Pianos",
+          "sub_family": "Japanese Concert Grand",
+          "manual_section": "16.1.4",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 6,
+          "name": "Grand Bösendorfer 280VC",
+          "family": "Modern Acoustic Grand Pianos",
+          "sub_family": "Bösendorfer",
+          "manual_section": "16.1.5",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 7,
+          "name": "Grand C. Bechstein DG",
+          "family": "Modern Acoustic Grand Pianos",
+          "sub_family": "C. Bechstein",
+          "manual_section": "16.1.6",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 8,
+          "name": "Grand Ant. Petrof",
+          "family": "Modern Acoustic Grand Pianos",
+          "sub_family": "Petrof",
+          "manual_section": "16.1.7",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 9,
+          "name": "Grand Petrof Mistral",
+          "family": "Modern Acoustic Grand Pianos",
+          "sub_family": "Petrof",
+          "manual_section": "16.1.7",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 11,
+          "name": "Grand Steingraeber",
+          "family": "Modern Acoustic Grand Pianos",
+          "sub_family": "Steingraeber",
+          "manual_section": "16.1.8",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 12,
+          "name": "Grand Grotrian",
+          "family": "Modern Acoustic Grand Pianos",
+          "sub_family": "Grotrian",
+          "manual_section": "16.1.9",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 13,
+          "name": "Grand Blüthner",
+          "family": "Modern Acoustic Grand Pianos",
+          "sub_family": "Blüthner (Aliquot)",
+          "manual_section": "16.1.10",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 14,
+          "name": "Grand YC5",
+          "family": "Modern Acoustic Grand Pianos",
+          "sub_family": "Rock / Stage Grand",
+          "manual_section": "16.1.12",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 15,
+          "name": "Grand K2",
+          "family": "Modern Acoustic Grand Pianos",
+          "sub_family": "Modartt K2 Grand",
+          "manual_section": "16.1.11",
+          "is_duplicate_cli_name": false
+        }
+      ]
+    },
+    {
+      "family": "Plucked Strings (Guitar & Harps)",
+      "count": 4,
+      "instruments": [
+        {
+          "cli_index": 10,
+          "name": "Classical Guitar",
+          "family": "Plucked Strings (Guitar & Harps)",
+          "sub_family": "Classical Guitar",
+          "manual_section": "16.3",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 41,
+          "name": "Concert Harp",
+          "family": "Plucked Strings (Guitar & Harps)",
+          "sub_family": "Harp Pack (Salvi Concert)",
+          "manual_section": "16.4",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 42,
+          "name": "Celtic Harp",
+          "family": "Plucked Strings (Guitar & Harps)",
+          "sub_family": "Harp Pack (Aoyama Celtic)",
+          "manual_section": "16.4",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 43,
+          "name": "Triple Harp",
+          "family": "Plucked Strings (Guitar & Harps)",
+          "sub_family": "Harp Pack (Italian Baroque Triple)",
+          "manual_section": "16.4",
+          "is_duplicate_cli_name": false
+        }
+      ]
+    },
+    {
+      "family": "Acoustic Upright Pianos",
+      "count": 1,
+      "instruments": [
+        {
+          "cli_index": 16,
+          "name": "Upright U4",
+          "family": "Acoustic Upright Pianos",
+          "sub_family": "Upright Piano",
+          "manual_section": "16.1.13",
+          "is_duplicate_cli_name": false
+        }
+      ]
+    },
+    {
+      "family": "Electro-Acoustic Pianos",
+      "count": 8,
+      "instruments": [
+        {
+          "cli_index": 17,
+          "name": "Vintage Tines MKII",
+          "family": "Electro-Acoustic Pianos",
+          "sub_family": "Electric Pianos Pack (Tines)",
+          "manual_section": "16.5",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 18,
+          "name": "Vintage Tines MKI",
+          "family": "Electro-Acoustic Pianos",
+          "sub_family": "Electric Pianos Pack (Tines)",
+          "manual_section": "16.5",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 19,
+          "name": "Vintage Reeds",
+          "family": "Electro-Acoustic Pianos",
+          "sub_family": "Electric Pianos Pack (Reeds)",
+          "manual_section": "16.5",
+          "is_duplicate_cli_name": true,
+          "disambiguation_note": "Duplicate CLI display name; --list-presets separates W2 (37 presets) and W1 (16 presets) reed piano models"
+        },
+        {
+          "cli_index": 20,
+          "name": "Vintage Reeds",
+          "family": "Electro-Acoustic Pianos",
+          "sub_family": "Electric Pianos Pack (Reeds)",
+          "manual_section": "16.5",
+          "is_duplicate_cli_name": true,
+          "disambiguation_note": "Duplicate CLI display name; --list-presets separates W2 (37 presets) and W1 (16 presets) reed piano models"
+        },
+        {
+          "cli_index": 21,
+          "name": "Clavinet D6",
+          "family": "Electro-Acoustic Pianos",
+          "sub_family": "Hohner Collection",
+          "manual_section": "16.6",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 22,
+          "name": "Pianet N",
+          "family": "Electro-Acoustic Pianos",
+          "sub_family": "Hohner Collection",
+          "manual_section": "16.6",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 23,
+          "name": "Pianet T",
+          "family": "Electro-Acoustic Pianos",
+          "sub_family": "Hohner Collection",
+          "manual_section": "16.6",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 24,
+          "name": "Electra-Piano",
+          "family": "Electro-Acoustic Pianos",
+          "sub_family": "Hohner Collection",
+          "manual_section": "16.6",
+          "is_duplicate_cli_name": false
+        }
+      ]
+    },
+    {
+      "family": "Hybrid Physical Synthesis",
+      "count": 1,
+      "instruments": [
+        {
+          "cli_index": 25,
+          "name": "Syngular",
+          "family": "Hybrid Physical Synthesis",
+          "sub_family": "Syngular Sound Design Lab",
+          "manual_section": "16.7",
+          "is_duplicate_cli_name": false
+        }
+      ]
+    },
+    {
+      "family": "Chromatic Percussion & Idiophones",
+      "count": 8,
+      "instruments": [
+        {
+          "cli_index": 26,
+          "name": "Vibraphone V-B",
+          "family": "Chromatic Percussion & Idiophones",
+          "sub_family": "Vibraphones (Metal Bars)",
+          "manual_section": "16.8",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 27,
+          "name": "Vibraphone V-M",
+          "family": "Chromatic Percussion & Idiophones",
+          "sub_family": "Vibraphones (Metal Bars)",
+          "manual_section": "16.8",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 28,
+          "name": "Celesta",
+          "family": "Chromatic Percussion & Idiophones",
+          "sub_family": "Celeste Pack (Metal Plates/Rods)",
+          "manual_section": "16.10",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 29,
+          "name": "Glockenspiel",
+          "family": "Chromatic Percussion & Idiophones",
+          "sub_family": "Celeste Pack (Metal Plates/Rods)",
+          "manual_section": "16.10",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 30,
+          "name": "Toy Piano",
+          "family": "Chromatic Percussion & Idiophones",
+          "sub_family": "Celeste Pack (Metal Plates/Rods)",
+          "manual_section": "16.10",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 31,
+          "name": "Kalimba",
+          "family": "Chromatic Percussion & Idiophones",
+          "sub_family": "Lamellophone (Plucked Tines)",
+          "manual_section": "16.12",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 32,
+          "name": "Marimba",
+          "family": "Chromatic Percussion & Idiophones",
+          "sub_family": "Xylo Pack (Wooden Bars)",
+          "manual_section": "16.9",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 33,
+          "name": "Xylophone",
+          "family": "Chromatic Percussion & Idiophones",
+          "sub_family": "Xylo Pack (Wooden Bars)",
+          "manual_section": "16.9",
+          "is_duplicate_cli_name": false
+        }
+      ]
+    },
+    {
+      "family": "Steelpans",
+      "count": 6,
+      "instruments": [
+        {
+          "cli_index": 34,
+          "name": "Steel Drum",
+          "family": "Steelpans",
+          "sub_family": "Steelpans Pack",
+          "manual_section": "16.11",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 35,
+          "name": "Spacedrum",
+          "family": "Steelpans",
+          "sub_family": "Steelpans Pack",
+          "manual_section": "16.11",
+          "is_duplicate_cli_name": true,
+          "disambiguation_note": "Duplicate CLI display name; manual Sec. 16.11 & --list-presets distinguish hand-played and mallet-played variants"
+        },
+        {
+          "cli_index": 36,
+          "name": "Spacedrum",
+          "family": "Steelpans",
+          "sub_family": "Steelpans Pack",
+          "manual_section": "16.11",
+          "is_duplicate_cli_name": true,
+          "disambiguation_note": "Duplicate CLI display name; manual Sec. 16.11 & --list-presets distinguish hand-played and mallet-played variants"
+        },
+        {
+          "cli_index": 37,
+          "name": "Hand Pan",
+          "family": "Steelpans",
+          "sub_family": "Steelpans Pack",
+          "manual_section": "16.11",
+          "is_duplicate_cli_name": true,
+          "disambiguation_note": "Duplicate CLI display name; manual Sec. 16.11 & --list-presets distinguish hand-played and mallet-played variants"
+        },
+        {
+          "cli_index": 38,
+          "name": "Hand Pan",
+          "family": "Steelpans",
+          "sub_family": "Steelpans Pack",
+          "manual_section": "16.11",
+          "is_duplicate_cli_name": true,
+          "disambiguation_note": "Duplicate CLI display name; manual Sec. 16.11 & --list-presets distinguish hand-played and mallet-played variants"
+        },
+        {
+          "cli_index": 39,
+          "name": "Tank Drum",
+          "family": "Steelpans",
+          "sub_family": "Steelpans Pack",
+          "manual_section": "16.11",
+          "is_duplicate_cli_name": false
+        }
+      ]
+    },
+    {
+      "family": "Historical Plucked Keyboards",
+      "count": 3,
+      "instruments": [
+        {
+          "cli_index": 40,
+          "name": "H. Ruckers II Harpsichord",
+          "family": "Historical Plucked Keyboards",
+          "sub_family": "Hans Ruckers II (1624)",
+          "manual_section": "16.1.16",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 44,
+          "name": "J. Salodiensis Virginal (1600)",
+          "family": "Historical Plucked Keyboards",
+          "sub_family": "Karsten Collection",
+          "manual_section": "16.1.14",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 45,
+          "name": "G. Giusti Harpsichord (1680)",
+          "family": "Historical Plucked Keyboards",
+          "sub_family": "Karsten Collection",
+          "manual_section": "16.1.14",
+          "is_duplicate_cli_name": false
+        }
+      ]
+    },
+    {
+      "family": "Historical Pianos & Pianofortes",
+      "count": 11,
+      "instruments": [
+        {
+          "cli_index": 46,
+          "name": "Ph. Schmidt Square (1780)",
+          "family": "Historical Pianos & Pianofortes",
+          "sub_family": "Karsten Collection (Square)",
+          "manual_section": "16.1.14",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 47,
+          "name": "J. Weimes Pianoforte (1808)",
+          "family": "Historical Pianos & Pianofortes",
+          "sub_family": "Karsten Collection",
+          "manual_section": "16.1.14",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 48,
+          "name": "NY Steinway Square (1858)",
+          "family": "Historical Pianos & Pianofortes",
+          "sub_family": "Karsten Collection (Square)",
+          "manual_section": "16.1.14",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 49,
+          "name": "J. Dohnal (1795)",
+          "family": "Historical Pianos & Pianofortes",
+          "sub_family": "Kremsegg Collection",
+          "manual_section": "16.1.15",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 50,
+          "name": "I. Besendorfer (1829)",
+          "family": "Historical Pianos & Pianofortes",
+          "sub_family": "Kremsegg Collection",
+          "manual_section": "16.1.15",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 51,
+          "name": "S. Erard (1849)",
+          "family": "Historical Pianos & Pianofortes",
+          "sub_family": "Kremsegg Collection",
+          "manual_section": "16.1.15",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 52,
+          "name": "J.B. Streicher (1852)",
+          "family": "Historical Pianos & Pianofortes",
+          "sub_family": "Kremsegg Collection",
+          "manual_section": "16.1.15",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 53,
+          "name": "J. Broadwood (1796)",
+          "family": "Historical Pianos & Pianofortes",
+          "sub_family": "Kremsegg Collection",
+          "manual_section": "16.1.15",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 54,
+          "name": "I. Pleyel (1835)",
+          "family": "Historical Pianos & Pianofortes",
+          "sub_family": "Kremsegg Collection",
+          "manual_section": "16.1.15",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 55,
+          "name": "J. Frenzel (1841)",
+          "family": "Historical Pianos & Pianofortes",
+          "sub_family": "Kremsegg Collection",
+          "manual_section": "16.1.15",
+          "is_duplicate_cli_name": false
+        },
+        {
+          "cli_index": 56,
+          "name": "C. Bechstein (1899)",
+          "family": "Historical Pianos & Pianofortes",
+          "sub_family": "Kremsegg Collection",
+          "manual_section": "16.1.15",
+          "is_duplicate_cli_name": false
+        }
+      ]
+    }
+  ],
+  "presets_summary": {
+    "total_count": 820,
+    "counts_by_prefix": {
+      "NY Steinway D": 25,
+      "Other": 20,
+      "HB Steinway D": 23,
+      "Steinway B": 23,
+      "Shigeru Kawai SK-EX": 18,
+      "Japanese YFX": 20,
+      "Bösendorfer": 16,
+      "C. Bechstein DG": 20,
+      "Ant. Petrof": 21,
+      "Petrof Mistral": 19,
+      "Classical Guitar": 19,
+      "Steingraeber": 21,
+      "Grotrian": 16,
+      "Blüthner": 15,
+      "YC5": 18,
+      "K2": 23,
+      "U4": 26,
+      "MKII": 37,
+      "MKI": 34,
+      "W2": 37,
+      "W1": 16,
+      "Clavinet D6": 13,
+      "Pianet N": 15,
+      "Pianet T": 13,
+      "Syngular": 56,
+      "Vibraphone V-B": 9,
+      "Vibraphone V-M": 9,
+      "Celesta": 7,
+      "Glockenspiel": 8,
+      "Toy Piano": 6,
+      "Kalimba": 3,
+      "Marimba": 8,
+      "Xylophone": 8,
+      "Steel Drum": 8,
+      "Spacedrum": 9,
+      "Hand Pan": 9,
+      "Tank Drum": 7,
+      "H. Ruckers II Harpsichord": 12,
+      "Concert Harp": 10,
+      "Celtic Harp": 10,
+      "Triple Harp": 8,
+      "J. Salodiensis Virginal": 8,
+      "G. Giusti Harpsichord": 8,
+      "Ph. Schmidt Square": 9,
+      "J. Weimes Pianoforte": 9,
+      "NY Steinway Square": 9,
+      "J. Dohnal": 10,
+      "I. Besendorfer": 10,
+      "S. Erard": 10,
+      "J.B. Streicher": 10,
+      "J. Broadwood": 10,
+      "I. Pleyel": 11,
+      "J. Frenzel": 10,
+      "C. Bechstein": 11
+    }
+  },
+  "manual_sections_summary": {
+    "voicing": {
+      "manual_sections": [
+        "7.1",
+        "7.2",
+        "7.3",
+        "7.4",
+        "14.2",
+        "14.5"
+      ],
+      "lv2_parameters": [
+        "hammer_noise",
+        "hammer_hardness",
+        "hammer_hardness_piano",
+        "hammer_hardness_mezzo",
+        "hammer_hardness_forte",
+        "profil_1",
+        "profil_2",
+        "profil_3",
+        "profil_4",
+        "profil_5",
+        "profil_6",
+        "profil_7",
+        "profil_8",
+        "hammer_tone",
+        "strike_point",
+        "pinch_harmonic_point",
+        "pickup_symmetry",
+        "pickup_distance",
+        "soft_level",
+        "clavinet_low_mic",
+        "clavinet_high_mic"
+      ],
+      "acoustic": {
+        "hammer_hardness": "Global felt hardness plus 3 velocity anchor bands: Piano (~MIDI vel 41), Mezzo forte (~MIDI vel 70), Forte (~MIDI vel 98).",
+        "spectrum_profile": "8 sliders (profil_1..8) scaling the amplitude of the first 8 overtones (1 = fundamental) per note; PRO Note Edit extends per-note editing to thousands of overtones.",
+        "hammer_noise": "Weight of percussive hammer felt impact sound (independent from hammer brightness).",
+        "hammer_tone": "Balances low-frequency woody hammer impact vs high-pitched string contact attack.",
+        "soft_level": "Smoothing degree of una corda / soft pedal (models striking with a softer part of the hammer felt)."
+      },
+      "electro_acoustic": {
+        "pickup_symmetry": "Moves pickup from asymmetric rest position to symmetric position; exact symmetry causes octave-up frequency doubling.",
+        "pickup_distance": "Controls distance between tone source (tine/reed/bar) and pickup; closer distance increases distortion and soft-vs-loud timbral contrast."
+      },
+      "clavinet": {
+        "pickups": "Four discrete standard settings A-C (lower), B-C (upper), A-D (both in phase), B-D (both out of phase) plus continuous blending via clavinet_low_mic / clavinet_high_mic.",
+        "registers": "Original tone colour register switches: Brilliant (Bright), Treble, Medium, Soft."
+      },
+      "syngular": {
+        "note": "Replaces Hammer Noise, Hammer Tone, and Soft Pedal on main panel with Vibrato/Tremolo Rate and Depth controls wired to Note Effects."
+      }
+    },
+    "design": {
+      "manual_sections": [
+        "8.1",
+        "8.2",
+        "8.3",
+        "14.3",
+        "14.6"
+      ],
+      "lv2_parameters": [
+        "impedance",
+        "impedance_cutoff",
+        "q_factor",
+        "string_length",
+        "sympathetic_resonance",
+        "duplex_scale_resonance",
+        "quadratic_effect",
+        "hammer_tine_noise",
+        "blooming_energy",
+        "blooming_inertia",
+        "external_audio_mix",
+        "external_audio_tone"
+      ],
+      "acoustic_soundboard": {
+        "impedance": "Mechanical impedance (force/velocity ratio) of soundboard; higher impedance yields slower energy transfer and longer sustain.",
+        "impedance_cutoff": "Frequency threshold above which soundboard impedance begins to drop.",
+        "impedance_slope_q_factor": "Rate (q_factor) at which impedance decreases above cutoff, governing high-overtone decay speed."
+      },
+      "string_length": "Controls bass-to-treble string scaling and stiff-string inharmonicity (up to 10 m virtual grand length for near-zero inharmonicity; e.g. 2.7 m grand ranges ~2 m bass to ~5 cm treble).",
+      "strike_point": "Controls hammer/mallet strike position along string/bar; supports Humanize random per-hit variation (especially for chromatic percussion).",
+      "sympathetic_resonance": "Damper-state-dependent string coupling energy (supports silent-key hold and sustain-pedal excitation).",
+      "duplex_scale": "Undamped front-scale (tuning pins to frame) and rear-scale (bridge to frame) string resonances (1872 Steinway/Helmholtz patent).",
+      "blooming": {
+        "origin": "Nonlinear mechanical energy transfer in thin steel sheets (Steel Drum / steelpans) transferring attack energy from lower to higher overtones.",
+        "parameters": [
+          "blooming_energy (transfer amount)",
+          "blooming_inertia (transfer time constant)"
+        ]
+      },
+      "electro_acoustic": {
+        "tine_noises": "Separate hammer-on-tine attack noise and damper-on-tine release noise (Vintage Tines MKI/MKII; LV2 exposes hammer_tine_noise)."
+      },
+      "syngular": {
+        "envelope_mapping": "Replaces soundboard mechanical parameters with Attack, Decay, Decay Cutoff, Decay Slope, Release (= Action Damping Duration + Damper Position shaping), plus Harmonicity (inverse bell-like inharmonicity)."
+      }
+    },
+    "mallet_bounce": {
+      "manual_sections": [
+        "13.2",
+        "9.2"
+      ],
+      "lv2_parameters": [
+        "bounce_switch",
+        "bounce_delay",
+        "bounce_sync",
+        "bounce_sync_speed",
+        "bounce_velocity_sensitivity",
+        "bounce_delay_loss",
+        "bounce_velocity_loss",
+        "bounce_humanization",
+        "attack_envelope"
+      ],
+      "behavior": {
+        "initial_delay": "Delay before the first bounce (free ms/normalized via bounce_delay or tempo-synced via bounce_sync + bounce_sync_speed with 30 rhythmic subdivisions from 16d down to 1/32t).",
+        "velocity_sensitivity": "Increases initial bounce interval at high note velocity (simulating higher mallet drop height).",
+        "delay_loss": "Geometric/progressive reduction in inter-bounce interval from each bounce to the next.",
+        "velocity_loss": "Amplitude attenuation per consecutive bounce.",
+        "humanization": "Stochastic per-bounce jitter across delay and velocity parameters.",
+        "attack_envelope": "Shapes attack transient specifically for bounced repetitions (or initial notes in Note Effects).",
+        "mallet_damping_sec_9_2": "Sustained notes damping option under sustain pedal: dampen via Low-velocity note-on or Aftertouch."
+      }
+    },
+    "note_effects": {
+      "manual_sections": [
+        "13.4",
+        "7.4"
+      ],
+      "lv2_parameters": [
+        "nfx_lfo_shape",
+        "nfx_lfo_skew",
+        "nfx_lfo_rate",
+        "nfx_lfo_phase",
+        "nfx_lfo_phase_locked",
+        "nfx_onset_duration",
+        "nfx_vibrato",
+        "nfx_vibrato_offset",
+        "nfx_tremolo_depth",
+        "nfx_tremolo_phase",
+        "attack_envelope",
+        "smear"
+      ],
+      "features": {
+        "per_note_lfo": "Shared LFO per note with Shape, Skew, Rate, Phase, Phase-Locked switch, and Onset Duration fade-in.",
+        "vibrato": "Frequency modulation depth in cents (nfx_vibrato) with positive/negative pitch asymmetry bias (nfx_vibrato_offset).",
+        "tremolo": "Amplitude modulation depth in dB (nfx_tremolo_depth) with relative phase offset to vibrato (nfx_tremolo_phase).",
+        "attack_envelope_and_smear": "Per-note transient shaping (attack_envelope) and waveform/partial attack smoothing (smear).",
+        "monophonic_mode_ui_state": "Manual Sec. 13.4 describes Mono mode with Legato (suppresses attack on slurred notes) and Portamento (pitch glide rate); these toggles are UI/FXP state and not dedicated top-level LV2 parameters."
+      }
+    },
+    "equalizer_and_effects": {
+      "manual_sections": [
+        "13.3",
+        "13.5",
+        "14.5"
+      ],
+      "lv2_parameters": [
+        "equalizer_switch",
+        "post_effect_gain",
+        "effect_1_switch",
+        "effect_1_param_1..8",
+        "effect_2_switch",
+        "effect_2_param_1..8",
+        "effect_3_switch",
+        "effect_3_param_1..8"
+      ],
+      "main_equalizer": {
+        "processing_stage": "Pre-processing (modifies partial amplitudes inside the physical model before audio synthesis).",
+        "key_property": "Automatic volume compensation preserves natural keyboard register balance; supports arbitrary user-added control points.",
+        "resonance_controls": "Includes Res Eq (equalizes sympathetic resonances) and Res Dur (scales sympathetic resonance duration)."
+      },
+      "effect_slots": {
+        "chain_architecture": "3 serial switchable FX slots followed by post_effect_gain.",
+        "available_algorithms": [
+          "Tremolo",
+          "Wah",
+          "Chorus",
+          "Flanger",
+          "Phaser",
+          "Fuzz",
+          "Delay",
+          "Amp",
+          "Comp",
+          "EQ (5-band post-processing parametric EQ)"
+        ],
+        "lv2_default_slot_mapping": {
+          "effect_1": "Delay (Mix, Time, Feedback, Tone, Polarity, Ping-Pong)",
+          "effect_2": "Parametric EQ (PEQ1 Freq/Gain/Q/Type, PEQ2 Freq/Gain/Q/Type)",
+          "effect_3": "Parametric EQ (PEQ1 Freq/Gain/Q/Type, PEQ2 Freq/Gain/Q/Type)"
+        }
+      }
+    },
+    "reverb": {
+      "manual_sections": [
+        "13.6"
+      ],
+      "lv2_parameters": [
+        "reverb_switch",
+        "reverb_duration",
+        "reverb_mix",
+        "room_dimensions",
+        "reverb_pre_delay",
+        "reverb_early_reflections",
+        "reverb_tone",
+        "reverb_envelope",
+        "reverb_resampling",
+        "reverb_highpass_cutoff"
+      ],
+      "architecture": "Convolution reverb simulating acoustic rooms (Studio to Cathedral, Taj Mahal), Plate, Spring, Speakers, Broceliande, plus external WAV impulse loading in Standard & PRO.",
+      "controls": {
+        "mix": "Relative wet/dry level in dB.",
+        "duration": "Reverb tail length.",
+        "room_size": "5 m to 50 m (room_dimensions).",
+        "pre_delay": "Gap between direct sound and reverberant onset.",
+        "tone": "Tilt EQ applied exclusively to reflected wet signal.",
+        "early_reflections": "Relative dB balance between early reflections and reverberation tail.",
+        "low_cut": "Wet signal high-pass cutoff frequency (reverb_highpass_cutoff).",
+        "lv2_additional": "reverb_envelope and reverb_resampling exposed in dsp.ttl."
+      }
+    },
+    "guitar_and_harp_modes": {
+      "manual_sections": [
+        "4.2",
+        "4.3",
+        "16.3",
+        "16.4"
+      ],
+      "harp_diatonic_mode": {
+        "keyboard_mapping": "White keys produce notes; 7 pedals (D, C, B, E, F, G, A left-to-right) are controlled by groups of 3 black keys (left = flat, center = natural, right = sharp).",
+        "models": [
+          "Concert Harp (Salvi, 7 pedals)",
+          "Celtic Harp (Aoyama, nylon strings + levers)",
+          "Triple Harp (Italian baroque 3-row strings)"
+        ],
+        "techniques": "Supports flageolet harmonics (pinch_harmonic_pedal) and glissando (glissando_pedal)."
+      },
+      "guitar_mode": {
+        "lv2_parameters": [
+          "virtuosity",
+          "fret",
+          "guitar_legato",
+          "guitar_easy_fingering",
+          "guitar_body",
+          "pinch_harmonic_pedal",
+          "pinch_harmonic_point",
+          "glissando_pedal",
+          "lute_stop_pedal"
+        ],
+        "string_model": "6-string virtual fretboard with automatic or Adv. manual left-hand position, string-forcing keyswitches, open-string keyswitch, automatic chord string-conflict resolver, and custom tunings.",
+        "techniques": {
+          "legato": "Hammer-on / pull-off within minor third when first note held (Leg. On / guitar_legato).",
+          "glissando": "Triggered when starting note is interrupted by ending note; ending velocity sets slide speed; chord glissando computed relative to bass note.",
+          "pinch_harmonics": "Continuous pedal or keyswitch stopping vibration at half resonating length (flageolet).",
+          "palm_mute": "Right-hand palm damping via continuous Buff Stop pedal (lute_stop_pedal) or keyswitch.",
+          "rasgueado_and_strums": "Flamenco rasgueado plus up/down chord strum and fast single-note repetition keyswitches.",
+          "thumb": "Right-thumb warm pluck timbre keyswitch."
+        },
+        "realism_and_routing": "Casual-to-Pro slider (virtuosity) for fret/slide/body squeaks; hollow vs solid body (guitar_body); gate vs toggle keyswitch modes; per-string MIDI channel routing and separate keyswitch MIDI channel."
+      }
+    },
+    "pro_note_edit": {
+      "manual_sections": [
+        "1.3",
+        "6.2",
+        "9.1",
+        "15.1",
+        "15.2",
+        "15.3"
+      ],
+      "edition_differences": {
+        "stage": "Up to 48 kHz; no physical model tweaking or Note Edit.",
+        "standard": "Up to 48 kHz; Note Edit restricted to Volume, Detune, and Attack Envelope.",
+        "pro": "Up to 192 kHz internal sample rate; per-note editing across physical parameters (Tuning/Detune, Unison Width, Direct Sound Duration, Hammer Hardness, Strike Point, String Length, Spectrum Profile [thousands of overtones], Soundboard Impedance, Damper Position, Velocity Offset)."
+      },
+      "curve_editing_tools": "Control Notes rail (double-click to add/remove anchors), Shift+drag fine tuning, shape operators: Random, Smooth, Rescale, Reset.",
+      "octave_stretching_note_edit": {
+        "tuned_intervals": [
+          "Octave",
+          "Fifth",
+          "12th (octave+fifth)",
+          "15th (double octave)",
+          "19th (double octave+fifth)",
+          "22th (triple octave)",
+          "Major Third"
+        ],
+        "partial_matching_ratios": {
+          "octaves": [
+            "2:1",
+            "4:2",
+            "8:4",
+            "10:5",
+            "12:6"
+          ],
+          "fifths": [
+            "3:2",
+            "6:4",
+            "9:6",
+            "12:8",
+            "15:10"
+          ]
+        },
+        "roughness_slider": "Smooths transitions between adjacent Stretch Points across keyboard range; interacts directly with String Length inharmonicity."
+      },
+      "spectrum_profile_note_edit": {
+        "interpolation": "Independent set of control notes; linear interpolation across intermediate keys.",
+        "draw_modes": [
+          "Simple draw",
+          "Haircut",
+          "Fill only"
+        ],
+        "overtone_combinations": [
+          "Individual",
+          "Harmonic",
+          "Comb",
+          "Major",
+          "Octave"
+        ]
+      }
+    }
+  }
+}
