@@ -158,8 +158,9 @@ describe("Piano Tect Tauri App UI", () => {
     expect(screen.getByText(/Browser preview mode/i)).toBeInTheDocument();
 
     const nav = screen.getByRole("navigation", { name: "Parameter Sections" });
-    expect(within(nav).getAllByRole("button")).toHaveLength(6);
+    expect(within(nav).getAllByRole("button")).toHaveLength(7);
     expect(screen.getByRole("button", { name: "Voicing & Hammers" })).toHaveClass("active");
+    expect(screen.getByRole("button", { name: "Note Edit (PRO)" })).toBeInTheDocument();
   });
 
   it("renders 88 virtual keyboard keys by default with expected note aria-labels", () => {
