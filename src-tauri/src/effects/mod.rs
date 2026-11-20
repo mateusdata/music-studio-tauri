@@ -5,9 +5,106 @@ const STAGE_SCALE_M: f32 = 3.0;
 const SPEED_OF_SOUND_MPS: f32 = 343.0;
 const MIC_REF_DIST_M: f32 = 0.96;
 const REVERB_BASE_COMB_LENS: [f32; 4] = [1557.0, 1617.0, 1491.0, 1422.0];
+const REVERB_BASE_AP_LENS: [f32; 2] = [225.0, 556.0];
 const REVERB_ER_TAPS_L_MS: [f32; 6] = [7.3, 13.7, 21.1, 29.3, 38.9, 47.7];
 const REVERB_ER_TAPS_R_MS: [f32; 6] = [9.1, 16.3, 24.7, 33.1, 41.9, 53.3];
 const REVERB_ER_WEIGHTS: [f32; 6] = [0.28, -0.22, 0.18, -0.14, 0.11, -0.08];
+
+#[derive(Clone, Copy)]
+struct ReverbProfile {
+    er_gain: f32,
+    er_spread: f32,
+    fb_scale: f32,
+    damp_bias: f32,
+    comb_spread: f32,
+    dispersion: f32,
+}
+
+fn reverb_environment_profile(name: &str) -> ReverbProfile {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "cathedral" => ReverbProfile {
+            er_gain: 0.85,
+            er_spread: 1.45,
+            fb_scale: 1.08,
+            damp_bias: 0.12,
+            comb_spread: 1.45,
+            dispersion: 0.45,
+        },
+        "studio" => ReverbProfile {
+            er_gain: 1.25,
+            er_spread: 0.55,
+            fb_scale: 0.84,
+            damp_bias: 0.08,
+            comb_spread: 0.62,
+            dispersion: 0.10,
+        },
+        "chamber" => ReverbProfile {
+            er_gain: 1.35,
+            er_spread: 0.78,
+            fb_scale: 0.92,
+            damp_bias: 0.05,
+            comb_spread: 0.80,
+            dispersion: 0.18,
+        },
+        "taj mahal" => ReverbProfile {
+            er_gain: 1.15,
+            er_spread: 1.65,
+            fb_scale: 1.12,
+            damp_bias: -0.18,
+            comb_spread: 1.60,
+            dispersion: 0.58,
+        },
+        "plate" => ReverbProfile {
+            er_gain: 0.40,
+            er_spread: 0.45,
+            fb_scale: 1.02,
+            damp_bias: -0.22,
+            comb_spread: 0.90,
+            dispersion: 0.68,
+        },
+        "spring" => ReverbProfile {
+            er_gain: 0.65,
+            er_spread: 0.60,
+            fb_scale: 0.88,
+            damp_bias: 0.18,
+            comb_spread: 0.52,
+            dispersion: 0.74,
+        },
+        "speakers" => ReverbProfile {
+            er_gain: 1.45,
+            er_spread: 0.40,
+            fb_scale: 0.76,
+            damp_bias: 0.22,
+            comb_spread: 0.48,
+            dispersion: 0.35,
+        },
+        "broceliande" => ReverbProfile {
+            er_gain: 1.10,
+            er_spread: 1.55,
+            fb_scale: 1.04,
+            damp_bias: -0.10,
+            comb_spread: 1.32,
+            dispersion: 0.50,
+        },
+        "club" => ReverbProfile {
+            er_gain: 1.30,
+            er_spread: 0.68,
+            fb_scale: 0.87,
+            damp_bias: 0.16,
+            comb_spread: 0.72,
+            dispersion: 0.20,
+        },
+        _ => ReverbProfile {
+            // "Concert Hall" default
+            er_gain: 1.0,
+            er_spread: 1.0,
+            fb_scale: 1.0,
+            damp_bias: 0.0,
+            comb_spread: 1.0,
+            dispersion: 0.25,
+        },
+    }
+}
 
 #[derive(Clone, Default)]
 struct BiquadState {
@@ -129,13 +226,37 @@ pub struct EffectsChain {
     eq_filters: [BiquadState; 3],
     slot_eq_filters: [BiquadState; 3],
     slot_comp_env: [f32; 3],
-    slot_chorus_phase: [f32; 3],
-    delay_buf_l: Vec<f32>,
-    delay_buf_r: Vec<f32>,
-    delay_write_pos: usize,
-    chorus_buf_l: Vec<f32>,
-    chorus_buf_r: Vec<f32>,
-    chorus_pos: usize,
+    slot_lfo_phase: [f32; 3],
+    slot_delay_buf_l: [Vec<f32>; 3],
+    slot_delay_buf_r: [Vec<f32>; 3],
+    slot_delay_pos: [usize; 3],
+    slot_delay_lp_l: [f32; 3],
+    slot_delay_lp_r: [f32; 3],
+    slot_chorus_buf_l: [Vec<f32>; 3],
+    slot_chorus_buf_r: [Vec<f32>; 3],
+    slot_chorus_pos: [usize; 3],
+    slot_flanger_buf_l: [Vec<f32>; 3],
+    slot_flanger_buf_r: [Vec<f32>; 3],
+    slot_flanger_pos: [usize; 3],
+    slot_phaser_ap_l: [[f32; 4]; 3],
+    slot_phaser_ap_r: [[f32; 4]; 3],
+    slot_phaser_fb_l: [f32; 3],
+    slot_phaser_fb_r: [f32; 3],
+    slot_wah_lp_l: [f32; 3],
+    slot_wah_lp_r: [f32; 3],
+    slot_wah_bp_l: [f32; 3],
+    slot_wah_bp_r: [f32; 3],
+    slot_wah_env: [f32; 3],
+    slot_fuzz_lp_l: [f32; 3],
+    slot_fuzz_lp_r: [f32; 3],
+    slot_amp_lp_l: [f32; 3],
+    slot_amp_lp_r: [f32; 3],
+    slot_amp_cab_lp_l: [f32; 3],
+    slot_amp_cab_lp_r: [f32; 3],
+    slot_amp_cab_bp_l: [f32; 3],
+    slot_amp_cab_bp_r: [f32; 3],
+    slot_amp_pres_lp_l: [f32; 3],
+    slot_amp_pres_lp_r: [f32; 3],
     reverb_pre_buf_l: Vec<f32>,
     reverb_pre_buf_r: Vec<f32>,
     reverb_pre_pos: usize,
@@ -144,6 +265,9 @@ pub struct EffectsChain {
     reverb_idx: [usize; 4],
     reverb_lp_l: [f32; 4],
     reverb_lp_r: [f32; 4],
+    reverb_ap_l: [Vec<f32>; 2],
+    reverb_ap_r: [Vec<f32>; 2],
+    reverb_ap_idx: [usize; 2],
     hp_prev_in_l: f32,
     hp_prev_out_l: f32,
     hp_prev_in_r: f32,
@@ -155,8 +279,9 @@ impl EffectsChain {
         let sr = sample_rate.max(22050.0);
         let max_binaural = ((sr * 0.01).ceil() as usize).max(512);
         let max_mic_delay = (sr * 0.25).ceil() as usize;
-        let max_delay = (sr * 1.5).ceil() as usize;
-        let max_chorus = (sr * 0.08).ceil() as usize;
+        let max_delay = ((sr * 1.0).ceil() as usize).max(4096);
+        let max_chorus = ((sr * 0.08).ceil() as usize).max(1024);
+        let max_flanger = ((sr * 0.045).ceil() as usize).max(2048);
         let max_reverb_pre = (sr * 0.5).ceil() as usize;
         let scale = sr / 44100.0;
         let c_max_lens = [
@@ -164,6 +289,10 @@ impl EffectsChain {
             ((REVERB_BASE_COMB_LENS[1] * scale * 2.5).ceil() as usize).max(256),
             ((REVERB_BASE_COMB_LENS[2] * scale * 2.5).ceil() as usize).max(256),
             ((REVERB_BASE_COMB_LENS[3] * scale * 2.5).ceil() as usize).max(256),
+        ];
+        let ap_lens = [
+            ((REVERB_BASE_AP_LENS[0] * scale).round() as usize).max(64),
+            ((REVERB_BASE_AP_LENS[1] * scale).round() as usize).max(128),
         ];
         Self {
             sample_rate: sr,
@@ -183,13 +312,37 @@ impl EffectsChain {
             eq_filters: [BiquadState::default(), BiquadState::default(), BiquadState::default()],
             slot_eq_filters: [BiquadState::default(), BiquadState::default(), BiquadState::default()],
             slot_comp_env: [0.0; 3],
-            slot_chorus_phase: [0.0; 3],
-            delay_buf_l: vec![0.0; max_delay.max(4096)],
-            delay_buf_r: vec![0.0; max_delay.max(4096)],
-            delay_write_pos: 0,
-            chorus_buf_l: vec![0.0; max_chorus.max(1024)],
-            chorus_buf_r: vec![0.0; max_chorus.max(1024)],
-            chorus_pos: 0,
+            slot_lfo_phase: [0.0; 3],
+            slot_delay_buf_l: [vec![0.0; max_delay], vec![0.0; max_delay], vec![0.0; max_delay]],
+            slot_delay_buf_r: [vec![0.0; max_delay], vec![0.0; max_delay], vec![0.0; max_delay]],
+            slot_delay_pos: [0; 3],
+            slot_delay_lp_l: [0.0; 3],
+            slot_delay_lp_r: [0.0; 3],
+            slot_chorus_buf_l: [vec![0.0; max_chorus], vec![0.0; max_chorus], vec![0.0; max_chorus]],
+            slot_chorus_buf_r: [vec![0.0; max_chorus], vec![0.0; max_chorus], vec![0.0; max_chorus]],
+            slot_chorus_pos: [0; 3],
+            slot_flanger_buf_l: [vec![0.0; max_flanger], vec![0.0; max_flanger], vec![0.0; max_flanger]],
+            slot_flanger_buf_r: [vec![0.0; max_flanger], vec![0.0; max_flanger], vec![0.0; max_flanger]],
+            slot_flanger_pos: [0; 3],
+            slot_phaser_ap_l: [[0.0; 4]; 3],
+            slot_phaser_ap_r: [[0.0; 4]; 3],
+            slot_phaser_fb_l: [0.0; 3],
+            slot_phaser_fb_r: [0.0; 3],
+            slot_wah_lp_l: [0.0; 3],
+            slot_wah_lp_r: [0.0; 3],
+            slot_wah_bp_l: [0.0; 3],
+            slot_wah_bp_r: [0.0; 3],
+            slot_wah_env: [0.0; 3],
+            slot_fuzz_lp_l: [0.0; 3],
+            slot_fuzz_lp_r: [0.0; 3],
+            slot_amp_lp_l: [0.0; 3],
+            slot_amp_lp_r: [0.0; 3],
+            slot_amp_cab_lp_l: [0.0; 3],
+            slot_amp_cab_lp_r: [0.0; 3],
+            slot_amp_cab_bp_l: [0.0; 3],
+            slot_amp_cab_bp_r: [0.0; 3],
+            slot_amp_pres_lp_l: [0.0; 3],
+            slot_amp_pres_lp_r: [0.0; 3],
             reverb_pre_buf_l: vec![0.0; max_reverb_pre.max(8192)],
             reverb_pre_buf_r: vec![0.0; max_reverb_pre.max(8192)],
             reverb_pre_pos: 0,
@@ -208,6 +361,9 @@ impl EffectsChain {
             reverb_idx: [0; 4],
             reverb_lp_l: [0.0; 4],
             reverb_lp_r: [0.0; 4],
+            reverb_ap_l: [vec![0.0; ap_lens[0]], vec![0.0; ap_lens[1]]],
+            reverb_ap_r: [vec![0.0; ap_lens[0] + 17], vec![0.0; ap_lens[1] + 19]],
+            reverb_ap_idx: [0; 2],
             hp_prev_in_l: 0.0,
             hp_prev_out_l: 0.0,
             hp_prev_in_r: 0.0,
@@ -354,25 +510,26 @@ impl EffectsChain {
         let shadow_rc = 1.0 / (2.0 * PI * shadow_fc);
         let shadow_alpha = (dt / (shadow_rc + dt)).clamp(0.02, 0.95);
 
-        // Precompute reverb parameters
+        // Precompute reverb parameters with environment acoustic profile
+        let rev_profile = reverb_environment_profile(&params.reverb.preset_name);
         let rev_pre_len = self.reverb_pre_buf_l.len();
         let max_pre_samps = rev_pre_len.saturating_sub(2);
         let pre_delay_samps = ((params.reverb.pre_delay_ms.clamp(0.0, 220.0) * 0.001) * self.sample_rate).round() as usize;
         let pre_delay_samps = pre_delay_samps.min(max_pre_samps);
 
         let room_scale = (params.reverb.room_size_m.clamp(3.0, 60.0) / 18.0).clamp(0.25, 2.5);
-        let er_level = params.reverb.early_reflections.clamp(0.0, 1.5);
+        let er_level = (params.reverb.early_reflections.clamp(0.0, 1.5) * rev_profile.er_gain).clamp(0.0, 2.0);
         let mut er_taps_l = [0_usize; 6];
         let mut er_taps_r = [0_usize; 6];
         for t_idx in 0..6 {
-            let tap_l = (REVERB_ER_TAPS_L_MS[t_idx] * room_scale * 0.001 * self.sample_rate).round() as usize;
-            let tap_r = (REVERB_ER_TAPS_R_MS[t_idx] * room_scale * 0.001 * self.sample_rate).round() as usize;
+            let tap_l = (REVERB_ER_TAPS_L_MS[t_idx] * room_scale * rev_profile.er_spread * 0.001 * self.sample_rate).round() as usize;
+            let tap_r = (REVERB_ER_TAPS_R_MS[t_idx] * room_scale * rev_profile.er_spread * 0.001 * self.sample_rate).round() as usize;
             er_taps_l[t_idx] = (pre_delay_samps + tap_l).min(max_pre_samps);
             er_taps_r[t_idx] = (pre_delay_samps + tap_r).min(max_pre_samps);
         }
 
         let scale = self.sample_rate / 44100.0;
-        let comb_room_scale = (0.55 + 0.45 * room_scale).clamp(0.45, 2.2);
+        let comb_room_scale = ((0.55 + 0.45 * room_scale) * rev_profile.comb_spread).clamp(0.40, 2.2);
         let mut active_comb_len_l = [256_usize; 4];
         let mut active_comb_len_r = [256_usize; 4];
         for c in 0..4 {
@@ -382,8 +539,9 @@ impl EffectsChain {
                 .clamp(64, self.reverb_combs_r[c].len());
         }
 
-        let reverb_fb = (0.62 + (params.reverb.duration_s / 6.0).clamp(0.0, 0.34)).min(0.95);
-        let reverb_damp = (1.0 - params.reverb.tone).clamp(0.1, 0.85);
+        let reverb_fb = ((0.62 + (params.reverb.duration_s / 6.0).clamp(0.0, 0.34)) * rev_profile.fb_scale).clamp(0.35, 0.96);
+        let reverb_damp = ((1.0 - params.reverb.tone) + rev_profile.damp_bias).clamp(0.05, 0.92);
+        let reverb_dispersion = rev_profile.dispersion.clamp(0.0, 0.75);
         let hp_dt = 1.0 / self.sample_rate;
         let hp_rc = 1.0 / (2.0 * PI * params.reverb.highpass_hz.clamp(20.0, 2000.0));
         let hp_alpha = (hp_rc / (hp_rc + hp_dt)).clamp(0.5, 0.998);
@@ -470,66 +628,300 @@ impl EffectsChain {
                 }
             }
 
-            // FX Slots (Delay, ParametricEq, Chorus, Tremolo, Compressor)
+            // FX Slots (all 10 Pianoteq 9 FX processors)
             for (slot_idx, slot) in params.fx.iter().enumerate() {
                 if !slot.enabled {
                     continue;
                 }
                 let mix = slot.mix.clamp(0.0, 1.0);
+                let p1 = sanitize(slot.param_1, 0.5).clamp(0.0, 1.0);
+                let p2 = sanitize(slot.param_2, 0.5).clamp(0.0, 1.0);
+                let p3 = sanitize(slot.param_3, 0.5).clamp(0.0, 1.0);
+                let p4 = sanitize(slot.param_4, 0.5).clamp(0.0, 1.0);
+
                 match slot.effect_type {
                     EffectType::Delay => {
-                        let delay_samps = ((0.06 + slot.param_1.clamp(0.0, 1.0) * 0.55) * self.sample_rate) as usize;
-                        let delay_samps = delay_samps.clamp(1, self.delay_buf_l.len() - 1);
-                        let read_pos = (self.delay_write_pos + self.delay_buf_l.len() - delay_samps)
-                            % self.delay_buf_l.len();
-                        let dl = self.delay_buf_l[read_pos];
-                        let dr = self.delay_buf_r[read_pos];
-                        let fb = (slot.param_2 * 0.72).clamp(0.0, 0.82);
-                        self.delay_buf_l[self.delay_write_pos] = l + dr * fb;
-                        self.delay_buf_r[self.delay_write_pos] = r + dl * fb;
-                        self.delay_write_pos = (self.delay_write_pos + 1) % self.delay_buf_l.len();
+                        let d_len = self.delay_buf_len(slot_idx);
+                        let delay_samps = ((0.020 + p1 * 0.880) * self.sample_rate).clamp(1.0, (d_len - 2) as f32);
+                        let d_int = delay_samps.floor() as usize;
+                        let frac = delay_samps - d_int as f32;
+                        let wpos = self.slot_delay_pos[slot_idx];
+                        let r0 = (wpos + d_len - d_int) % d_len;
+                        let r1 = (wpos + d_len - d_int - 1) % d_len;
+                        let dl_raw = self.slot_delay_buf_l[slot_idx][r0] * (1.0 - frac)
+                            + self.slot_delay_buf_l[slot_idx][r1] * frac;
+                        let dr_raw = self.slot_delay_buf_r[slot_idx][r0] * (1.0 - frac)
+                            + self.slot_delay_buf_r[slot_idx][r1] * frac;
+
+                        let tone_fc = 500.0 * 28.0_f32.powf(p3);
+                        let tone_rc = 1.0 / (2.0 * PI * tone_fc);
+                        let tone_alpha = (dt / (tone_rc + dt)).clamp(0.02, 0.99);
+                        self.slot_delay_lp_l[slot_idx] += tone_alpha * (dl_raw - self.slot_delay_lp_l[slot_idx]);
+                        self.slot_delay_lp_r[slot_idx] += tone_alpha * (dr_raw - self.slot_delay_lp_r[slot_idx]);
+                        let dl = self.slot_delay_lp_l[slot_idx];
+                        let dr = self.slot_delay_lp_r[slot_idx];
+
+                        let fb = p2 * 0.85;
+                        let pp = p4;
+                        let fb_l = dl * (1.0 - pp) + dr * pp;
+                        let fb_r = dr * (1.0 - pp) + dl * pp;
+                        self.slot_delay_buf_l[slot_idx][wpos] = (l + fb_l * fb).clamp(-4.0, 4.0);
+                        self.slot_delay_buf_r[slot_idx][wpos] = (r + fb_r * fb).clamp(-4.0, 4.0);
+                        self.slot_delay_pos[slot_idx] = (wpos + 1) % d_len;
                         l += dl * mix;
                         r += dr * mix;
+                    }
+                    EffectType::Chorus => {
+                        let rate_hz = 0.1 + p1 * 4.9;
+                        self.slot_lfo_phase[slot_idx] += 2.0 * PI * rate_hz / self.sample_rate;
+                        if self.slot_lfo_phase[slot_idx] > 2.0 * PI {
+                            self.slot_lfo_phase[slot_idx] -= 2.0 * PI;
+                        }
+                        let ph_l = self.slot_lfo_phase[slot_idx];
+                        let ph_r = ph_l + p4 * PI;
+                        let lfo_l = 0.5 + 0.5 * ph_l.sin();
+                        let lfo_r = 0.5 + 0.5 * ph_r.sin();
+
+                        let base_delay = 0.003 + p3 * 0.022;
+                        let depth_s = 0.0005 + p2 * 0.0075;
+                        let c_len = self.slot_chorus_buf_l[slot_idx].len();
+                        let wpos = self.slot_chorus_pos[slot_idx];
+
+                        let dl_samps = ((base_delay + lfo_l * depth_s) * self.sample_rate).clamp(1.0, (c_len - 2) as f32);
+                        let dr_samps = ((base_delay + lfo_r * depth_s) * self.sample_rate).clamp(1.0, (c_len - 2) as f32);
+                        let tl_i = dl_samps.floor() as usize;
+                        let fl = dl_samps - tl_i as f32;
+                        let tr_i = dr_samps.floor() as usize;
+                        let fr = dr_samps - tr_i as f32;
+
+                        let rl0 = (wpos + c_len - tl_i) % c_len;
+                        let rl1 = (wpos + c_len - tl_i - 1) % c_len;
+                        let rr0 = (wpos + c_len - tr_i) % c_len;
+                        let rr1 = (wpos + c_len - tr_i - 1) % c_len;
+
+                        let cl = self.slot_chorus_buf_l[slot_idx][rl0] * (1.0 - fl)
+                            + self.slot_chorus_buf_l[slot_idx][rl1] * fl;
+                        let cr = self.slot_chorus_buf_r[slot_idx][rr0] * (1.0 - fr)
+                            + self.slot_chorus_buf_r[slot_idx][rr1] * fr;
+                        self.slot_chorus_buf_l[slot_idx][wpos] = l;
+                        self.slot_chorus_buf_r[slot_idx][wpos] = r;
+                        self.slot_chorus_pos[slot_idx] = (wpos + 1) % c_len;
+                        l = l * (1.0 - mix * 0.5) + cl * mix;
+                        r = r * (1.0 - mix * 0.5) + cr * mix;
+                    }
+                    EffectType::Flanger => {
+                        let rate_hz = 0.08 + p1 * 3.92;
+                        self.slot_lfo_phase[slot_idx] += 2.0 * PI * rate_hz / self.sample_rate;
+                        if self.slot_lfo_phase[slot_idx] > 2.0 * PI {
+                            self.slot_lfo_phase[slot_idx] -= 2.0 * PI;
+                        }
+                        let ph_l = self.slot_lfo_phase[slot_idx];
+                        let ph_r = ph_l + p4 * PI;
+                        let lfo_l = 0.5 + 0.5 * ph_l.sin();
+                        let lfo_r = 0.5 + 0.5 * ph_r.sin();
+
+                        let depth_s = 0.0005 + p2 * 0.0075;
+                        let f_len = self.slot_flanger_buf_l[slot_idx].len();
+                        let wpos = self.slot_flanger_pos[slot_idx];
+                        let dl_samps = ((0.0004 + lfo_l * depth_s) * self.sample_rate).clamp(1.0, (f_len - 2) as f32);
+                        let dr_samps = ((0.0004 + lfo_r * depth_s) * self.sample_rate).clamp(1.0, (f_len - 2) as f32);
+
+                        let tl_i = dl_samps.floor() as usize;
+                        let fl = dl_samps - tl_i as f32;
+                        let tr_i = dr_samps.floor() as usize;
+                        let fr = dr_samps - tr_i as f32;
+
+                        let rl0 = (wpos + f_len - tl_i) % f_len;
+                        let rl1 = (wpos + f_len - tl_i - 1) % f_len;
+                        let rr0 = (wpos + f_len - tr_i) % f_len;
+                        let rr1 = (wpos + f_len - tr_i - 1) % f_len;
+
+                        let fl_tap_l = self.slot_flanger_buf_l[slot_idx][rl0] * (1.0 - fl)
+                            + self.slot_flanger_buf_l[slot_idx][rl1] * fl;
+                        let fl_tap_r = self.slot_flanger_buf_r[slot_idx][rr0] * (1.0 - fr)
+                            + self.slot_flanger_buf_r[slot_idx][rr1] * fr;
+
+                        let fb = (p3 * 2.0 - 1.0) * 0.82;
+                        self.slot_flanger_buf_l[slot_idx][wpos] = (l + fl_tap_l * fb).tanh();
+                        self.slot_flanger_buf_r[slot_idx][wpos] = (r + fl_tap_r * fb).tanh();
+                        self.slot_flanger_pos[slot_idx] = (wpos + 1) % f_len;
+
+                        l = l * (1.0 - mix * 0.5) + fl_tap_l * mix;
+                        r = r * (1.0 - mix * 0.5) + fl_tap_r * mix;
+                    }
+                    EffectType::Phaser => {
+                        let rate_hz = 0.08 + p1 * 4.42;
+                        self.slot_lfo_phase[slot_idx] += 2.0 * PI * rate_hz / self.sample_rate;
+                        if self.slot_lfo_phase[slot_idx] > 2.0 * PI {
+                            self.slot_lfo_phase[slot_idx] -= 2.0 * PI;
+                        }
+                        let ph_l = self.slot_lfo_phase[slot_idx];
+                        let ph_r = ph_l + 0.65 * PI;
+                        let center_hz = 200.0 * 13.0_f32.powf(p4);
+                        let oct_span = 0.3 + p2 * 2.2;
+                        let f_l = (center_hz * 2.0_f32.powf(ph_l.sin() * oct_span)).clamp(60.0, self.sample_rate * 0.42);
+                        let f_r = (center_hz * 2.0_f32.powf(ph_r.sin() * oct_span)).clamp(60.0, self.sample_rate * 0.42);
+
+                        let t_l = (PI * f_l / self.sample_rate).clamp(0.001, 1.3).tan();
+                        let a_l = (t_l - 1.0) / (t_l + 1.0);
+                        let t_r = (PI * f_r / self.sample_rate).clamp(0.001, 1.3).tan();
+                        let a_r = (t_r - 1.0) / (t_r + 1.0);
+
+                        let fb_res = p3 * 0.78;
+                        let mut x_l = (l + fb_res * self.slot_phaser_fb_l[slot_idx]).clamp(-4.0, 4.0);
+                        let mut x_r = (r + fb_res * self.slot_phaser_fb_r[slot_idx]).clamp(-4.0, 4.0);
+                        for st in 0..4 {
+                            let y_l = a_l * x_l + self.slot_phaser_ap_l[slot_idx][st];
+                            self.slot_phaser_ap_l[slot_idx][st] = x_l - a_l * y_l;
+                            x_l = y_l;
+
+                            let y_r = a_r * x_r + self.slot_phaser_ap_r[slot_idx][st];
+                            self.slot_phaser_ap_r[slot_idx][st] = x_r - a_r * y_r;
+                            x_r = y_r;
+                        }
+                        self.slot_phaser_fb_l[slot_idx] = x_l;
+                        self.slot_phaser_fb_r[slot_idx] = x_r;
+
+                        l = l * (1.0 - 0.5 * mix) + x_l * (0.5 * mix);
+                        r = r * (1.0 - 0.5 * mix) + x_r * (0.5 * mix);
+                    }
+                    EffectType::Tremolo => {
+                        let rate_hz = 0.5 + p1 * 13.5;
+                        self.slot_lfo_phase[slot_idx] += 2.0 * PI * rate_hz / self.sample_rate;
+                        if self.slot_lfo_phase[slot_idx] > 2.0 * PI {
+                            self.slot_lfo_phase[slot_idx] -= 2.0 * PI;
+                        }
+                        let ph_l = self.slot_lfo_phase[slot_idx];
+                        let ph_r = ph_l + p3 * 2.0 * PI;
+                        let shape_gain = 1.0 + p2 * 4.5;
+                        let shape_norm = 1.0 / shape_gain.tanh();
+                        let uni_l = 0.5 + 0.5 * ((ph_l.sin() * shape_gain).tanh() * shape_norm);
+                        let uni_r = 0.5 + 0.5 * ((ph_r.sin() * shape_gain).tanh() * shape_norm);
+                        let depth_exp = 0.5 + p4 * 1.5;
+                        let mod_l = 1.0 - mix * uni_l.clamp(0.0, 1.0).powf(depth_exp);
+                        let mod_r = 1.0 - mix * uni_r.clamp(0.0, 1.0).powf(depth_exp);
+                        l *= mod_l;
+                        r *= mod_r;
+                    }
+                    EffectType::Wah => {
+                        let det = l.abs().max(r.abs());
+                        let att_c = (-1.0 / (0.003 * self.sample_rate)).exp();
+                        let rel_c = (-1.0 / (0.085 * self.sample_rate)).exp();
+                        let env = &mut self.slot_wah_env[slot_idx];
+                        if det > *env {
+                            *env = att_c * *env + (1.0 - att_c) * det;
+                        } else {
+                            *env = rel_c * *env + (1.0 - rel_c) * det;
+                        }
+                        let base_hz = 240.0 * (2800.0_f32 / 240.0).powf(p1);
+                        let sweep_oct = (*env * 3.0 * p2).min(1.0) * (2.8 * p3);
+                        let fc = (base_hz * 2.0_f32.powf(sweep_oct)).clamp(180.0, self.sample_rate * 0.38);
+                        let q = 1.2 + p4 * 7.8;
+                        let f_coeff = (2.0 * (PI * fc / (self.sample_rate * 2.0)).sin()).min(0.45);
+                        let q_damp = (1.0 / q).clamp(0.11, 1.2);
+
+                        let lp_l = &mut self.slot_wah_lp_l[slot_idx];
+                        let bp_l = &mut self.slot_wah_bp_l[slot_idx];
+                        let lp_r = &mut self.slot_wah_lp_r[slot_idx];
+                        let bp_r = &mut self.slot_wah_bp_r[slot_idx];
+                        for _ in 0..2 {
+                            let hp_l = l - *lp_l - q_damp * *bp_l;
+                            *bp_l += f_coeff * hp_l;
+                            *lp_l += f_coeff * *bp_l;
+
+                            let hp_r = r - *lp_r - q_damp * *bp_r;
+                            *bp_r += f_coeff * hp_r;
+                            *lp_r += f_coeff * *bp_r;
+                        }
+                        let wah_l = (*bp_l * 0.78 + *lp_l * 0.22).clamp(-4.0, 4.0);
+                        let wah_r = (*bp_r * 0.78 + *lp_r * 0.22).clamp(-4.0, 4.0);
+                        l = l * (1.0 - mix) + wah_l * mix;
+                        r = r * (1.0 - mix) + wah_r * mix;
+                    }
+                    EffectType::Fuzz => {
+                        let drive = 1.0 + p1 * 27.0;
+                        let neg_scale = 1.0 - p3 * 0.48;
+                        let drv_l = l * drive;
+                        let drv_r = r * drive;
+                        let asym_l = if drv_l >= 0.0 {
+                            drv_l.tanh()
+                        } else {
+                            -((-drv_l).tanh()) * neg_scale
+                        };
+                        let asym_r = if drv_r >= 0.0 {
+                            drv_r.tanh()
+                        } else {
+                            -((-drv_r).tanh()) * neg_scale
+                        };
+                        let grit = p3 * 0.22;
+                        let raw_l = asym_l + grit * asym_l * asym_l;
+                        let raw_r = asym_r + grit * asym_r * asym_r;
+
+                        let tone_fc = 700.0 * 16.0_f32.powf(p2);
+                        let tone_rc = 1.0 / (2.0 * PI * tone_fc);
+                        let tone_alpha = (dt / (tone_rc + dt)).clamp(0.02, 0.99);
+                        self.slot_fuzz_lp_l[slot_idx] += tone_alpha * (raw_l - self.slot_fuzz_lp_l[slot_idx]);
+                        self.slot_fuzz_lp_r[slot_idx] += tone_alpha * (raw_r - self.slot_fuzz_lp_r[slot_idx]);
+
+                        let makeup = 0.25 + p4 * 1.0;
+                        let fz_l = (self.slot_fuzz_lp_l[slot_idx] * makeup).clamp(-1.5, 1.5);
+                        let fz_r = (self.slot_fuzz_lp_r[slot_idx] * makeup).clamp(-1.5, 1.5);
+                        l = l * (1.0 - mix) + fz_l * mix;
+                        r = r * (1.0 - mix) + fz_r * mix;
+                    }
+                    EffectType::Amp => {
+                        let drive = 1.0 + p1 * 13.0;
+                        let bias = 0.14_f32;
+                        let bias_dc = bias.tanh();
+                        let tube_l = (l * drive + bias).tanh() - bias_dc;
+                        let tube_r = (r * drive + bias).tanh() - bias_dc;
+
+                        // 2-band tone stack (warm vs bright tilt)
+                        let tone_fc = 1600.0 + p2 * 5900.0;
+                        let tone_rc = 1.0 / (2.0 * PI * tone_fc);
+                        let tone_alpha = (dt / (tone_rc + dt)).clamp(0.05, 0.98);
+                        self.slot_amp_lp_l[slot_idx] += tone_alpha * (tube_l - self.slot_amp_lp_l[slot_idx]);
+                        self.slot_amp_lp_r[slot_idx] += tone_alpha * (tube_r - self.slot_amp_lp_r[slot_idx]);
+                        let bright_tilt = 0.55 + p2 * 0.75;
+                        let ts_l = self.slot_amp_lp_l[slot_idx] * (1.15 - p2 * 0.35) + (tube_l - self.slot_amp_lp_l[slot_idx]) * bright_tilt;
+                        let ts_r = self.slot_amp_lp_r[slot_idx] * (1.15 - p2 * 0.35) + (tube_r - self.slot_amp_lp_r[slot_idx]) * bright_tilt;
+
+                        // Cabinet resonant bandpass bump (~125 Hz) + speaker cone LPF (~4.4 kHz)
+                        let cab_f = (2.0 * (PI * 125.0 / self.sample_rate).sin()).min(0.3);
+                        let cab_q = 0.45_f32;
+                        let hp_c_l = ts_l - self.slot_amp_cab_lp_l[slot_idx] - cab_q * self.slot_amp_cab_bp_l[slot_idx];
+                        self.slot_amp_cab_bp_l[slot_idx] += cab_f * hp_c_l;
+                        self.slot_amp_cab_lp_l[slot_idx] += cab_f * self.slot_amp_cab_bp_l[slot_idx];
+                        let hp_c_r = ts_r - self.slot_amp_cab_lp_r[slot_idx] - cab_q * self.slot_amp_cab_bp_r[slot_idx];
+                        self.slot_amp_cab_bp_r[slot_idx] += cab_f * hp_c_r;
+                        self.slot_amp_cab_lp_r[slot_idx] += cab_f * self.slot_amp_cab_bp_r[slot_idx];
+
+                        let cab_res = p3 * 0.45;
+                        let body_l = ts_l + self.slot_amp_cab_bp_l[slot_idx] * cab_res;
+                        let body_r = ts_r + self.slot_amp_cab_bp_r[slot_idx] * cab_res;
+
+                        // Presence boost (> ~2.2 kHz)
+                        let pres_rc = 1.0 / (2.0 * PI * 2200.0);
+                        let pres_alpha = (dt / (pres_rc + dt)).clamp(0.05, 0.98);
+                        self.slot_amp_pres_lp_l[slot_idx] += pres_alpha * (body_l - self.slot_amp_pres_lp_l[slot_idx]);
+                        self.slot_amp_pres_lp_r[slot_idx] += pres_alpha * (body_r - self.slot_amp_pres_lp_r[slot_idx]);
+                        let pres_boost = p4 * 1.1;
+                        let amp_l = (body_l + (body_l - self.slot_amp_pres_lp_l[slot_idx]) * pres_boost) * 0.72;
+                        let amp_r = (body_r + (body_r - self.slot_amp_pres_lp_r[slot_idx]) * pres_boost) * 0.72;
+
+                        l = l * (1.0 - mix) + amp_l * mix;
+                        r = r * (1.0 - mix) + amp_r * mix;
                     }
                     EffectType::ParametricEq => {
                         let (eq_l, eq_r) = self.slot_eq_filters[slot_idx].process_stereo(l, r);
                         l = l * (1.0 - mix) + eq_l * mix;
                         r = r * (1.0 - mix) + eq_r * mix;
                     }
-                    EffectType::Chorus | EffectType::Tremolo => {
-                        self.slot_chorus_phase[slot_idx] +=
-                            2.0 * PI * (0.4 + slot.param_1.clamp(0.0, 1.0) * 3.5) / self.sample_rate;
-                        if self.slot_chorus_phase[slot_idx] > 2.0 * PI {
-                            self.slot_chorus_phase[slot_idx] -= 2.0 * PI;
-                        }
-                        let lfo = 0.5 + 0.5 * self.slot_chorus_phase[slot_idx].sin();
-                        if slot.effect_type == EffectType::Tremolo {
-                            let mod_l = 1.0 - mix * lfo;
-                            let mod_r = 1.0 - mix * (1.0 - lfo);
-                            l *= mod_l;
-                            r *= mod_r;
-                        } else {
-                            let mod_delay = (0.004 + lfo * 0.012) * self.sample_rate;
-                            let c_len = self.chorus_buf_l.len();
-                            let d_clamped = mod_delay.clamp(1.0, (c_len - 2) as f32);
-                            let tap_int = d_clamped.floor() as usize;
-                            let frac = d_clamped - tap_int as f32;
-                            let rpos0 = (self.chorus_pos + c_len - tap_int) % c_len;
-                            let rpos1 = (self.chorus_pos + c_len - tap_int - 1) % c_len;
-                            let cl = self.chorus_buf_l[rpos0] * (1.0 - frac) + self.chorus_buf_l[rpos1] * frac;
-                            let cr = self.chorus_buf_r[rpos0] * (1.0 - frac) + self.chorus_buf_r[rpos1] * frac;
-                            self.chorus_buf_l[self.chorus_pos] = l;
-                            self.chorus_buf_r[self.chorus_pos] = r;
-                            self.chorus_pos = (self.chorus_pos + 1) % c_len;
-                            l = l * (1.0 - mix * 0.5) + cl * mix;
-                            r = r * (1.0 - mix * 0.5) + cr * mix;
-                        }
-                    }
                     EffectType::Compressor => {
-                        let thresh_db = -36.0 + slot.param_1.clamp(0.0, 1.0) * 32.0;
-                        let ratio = 1.0 + slot.param_2.clamp(0.0, 1.0) * 11.0;
-                        let attack_s = 0.001 + slot.param_3.clamp(0.0, 1.0) * 0.049;
-                        let release_s = 0.02 + slot.param_4.clamp(0.0, 1.0) * 0.45;
+                        let thresh_db = -36.0 + p1 * 32.0;
+                        let ratio = 1.0 + p2 * 11.0;
+                        let attack_s = 0.001 + p3 * 0.049;
+                        let release_s = 0.02 + p4 * 0.45;
                         let attack_coeff = (-1.0 / (attack_s * self.sample_rate)).exp();
                         let release_coeff = (-1.0 / (release_s * self.sample_rate)).exp();
 
@@ -558,7 +950,6 @@ impl EffectsChain {
                         l = l * (1.0 - mix) + wet_l * mix;
                         r = r * (1.0 - mix) + wet_r * mix;
                     }
-                    _ => {}
                 }
             }
 
@@ -605,8 +996,32 @@ impl EffectsChain {
                     self.reverb_idx[c] = self.reverb_idx[c].wrapping_add(1);
                 }
 
-                let wet_l = er_l * 0.45 + comb_sum_l * 0.85;
-                let wet_r = er_r * 0.45 + comb_sum_r * 0.85;
+                let mut late_l = comb_sum_l * 0.85;
+                let mut late_r = comb_sum_r * 0.85;
+
+                // 2-stage Schroeder all-pass dispersion on late tail (Plate/Spring/Cathedral/Taj Mahal)
+                if reverb_dispersion > 0.01 {
+                    for ap in 0..2 {
+                        let len_l = self.reverb_ap_l[ap].len();
+                        let idx_l = self.reverb_ap_idx[ap] % len_l;
+                        let buf_l_val = self.reverb_ap_l[ap][idx_l];
+                        let out_l = -reverb_dispersion * late_l + buf_l_val;
+                        self.reverb_ap_l[ap][idx_l] = late_l + reverb_dispersion * out_l;
+                        late_l = out_l;
+
+                        let len_r = self.reverb_ap_r[ap].len();
+                        let idx_r = self.reverb_ap_idx[ap] % len_r;
+                        let buf_r_val = self.reverb_ap_r[ap][idx_r];
+                        let out_r = -reverb_dispersion * late_r + buf_r_val;
+                        self.reverb_ap_r[ap][idx_r] = late_r + reverb_dispersion * out_r;
+                        late_r = out_r;
+
+                        self.reverb_ap_idx[ap] = self.reverb_ap_idx[ap].wrapping_add(1);
+                    }
+                }
+
+                let wet_l = er_l * 0.45 + late_l;
+                let wet_r = er_r * 0.45 + late_r;
 
                 // Highpass on wet tail
                 let hp_l = hp_alpha * (self.hp_prev_out_l + wet_l - self.hp_prev_in_l);
@@ -634,6 +1049,11 @@ impl EffectsChain {
             buf_l[i] = if l.is_finite() { l.clamp(-1.0, 1.0) } else { 0.0 };
             buf_r[i] = if r.is_finite() { r.clamp(-1.0, 1.0) } else { 0.0 };
         }
+    }
+
+    #[inline]
+    fn delay_buf_len(&self, slot_idx: usize) -> usize {
+        self.slot_delay_buf_l[slot_idx].len()
     }
 }
 
@@ -883,10 +1303,10 @@ mod tests {
             enabled: true,
             effect_type: EffectType::Delay,
             mix: 0.8,
-            param_1: 0.2, // (0.06 + 0.2*0.55) = 0.17s = 8160 samples
+            param_1: 0.2, // (0.020 + 0.2*0.880) = 0.196s = 9408 samples
             param_2: 0.65,
-            param_3: 0.5,
-            param_4: 0.5,
+            param_3: 0.9, // bright tone LPF
+            param_4: 0.5, // 50% ping-pong
         };
 
         let mut fx = EffectsChain::new(sr);
@@ -899,14 +1319,14 @@ mod tests {
 
         fx.process_block(&mut buf_l, &mut buf_r, &params);
 
-        let expected_echo = ((0.06 + 0.2 * 0.55) * sr) as usize;
-        let first_echo_window = &buf_r[expected_echo - 8..expected_echo + 8];
-        let second_echo_window = &buf_l[expected_echo * 2 - 8..expected_echo * 2 + 8];
+        let expected_echo = ((0.020 + 0.2 * 0.880) * sr) as usize;
+        let first_echo_window = &buf_r[expected_echo - 8..expected_echo + 16];
+        let second_echo_window = &buf_l[expected_echo * 2 - 8..expected_echo * 2 + 24];
 
         let max_e1 = first_echo_window.iter().map(|x| x.abs()).fold(0.0_f32, f32::max);
         let max_e2 = second_echo_window.iter().map(|x| x.abs()).fold(0.0_f32, f32::max);
-        assert!(max_e1 > 0.2, "First delay echo must appear near {} samples (got {})", expected_echo, max_e1);
-        assert!(max_e2 > 0.05 && max_e2 < max_e1, "Second feedback echo must appear and decay ({} vs {})", max_e2, max_e1);
+        assert!(max_e1 > 0.15, "First delay echo must appear near {} samples (got {})", expected_echo, max_e1);
+        assert!(max_e2 > 0.04 && max_e2 < max_e1, "Second feedback echo must appear and decay ({} vs {})", max_e2, max_e1);
     }
 
     #[test]
@@ -1354,6 +1774,262 @@ mod tests {
             rms(&rl_l),
             peak_idx(&rl_r),
             rms(&rl_r)
+        );
+    }
+
+    #[test]
+    fn test_flanger_and_phaser_modulation() {
+        let sr = 48000.0;
+        let n = 24000;
+
+        // 1. Flanger jet modulation & regenerative comb sweeping
+        let mut p_fl = make_clean_params();
+        p_fl.fx[0] = EffectSlot {
+            enabled: true,
+            effect_type: EffectType::Flanger,
+            mix: 0.9,
+            param_1: 0.65, // ~2.6 Hz
+            param_2: 0.75, // deep sweep
+            param_3: 0.90, // strong positive feedback (+0.65)
+            param_4: 0.50, // quadrature stereo phase
+        };
+
+        let mut fl_l = vec![0.0; n];
+        let mut fl_r = vec![0.0; n];
+        for i in 0..n {
+            let t = i as f32 / sr;
+            let s = 0.25 * (2.0 * PI * 330.0 * t).sin() + 0.20 * (2.0 * PI * 990.0 * t).sin();
+            fl_l[i] = s;
+            fl_r[i] = s;
+        }
+        let dry = fl_l.clone();
+        EffectsChain::new(sr).process_block(&mut fl_l, &mut fl_r, &p_fl);
+
+        assert!(fl_l.iter().all(|x| x.is_finite()) && fl_r.iter().all(|x| x.is_finite()));
+        let mut min_w = f32::MAX;
+        let mut max_w = 0.0_f32;
+        for chunk in fl_l[2048..].chunks_exact(1024) {
+            let r = rms(chunk);
+            min_w = min_w.min(r);
+            max_w = max_w.max(r);
+        }
+        let lr_diff = rms(&fl_l[2048..].iter().zip(&fl_r[2048..]).map(|(a, b)| a - b).collect::<Vec<_>>());
+        assert!(
+            max_w > min_w * 1.45,
+            "Flanger comb sweep must modulate RMS over LFO cycle (max {} vs min {})",
+            max_w,
+            min_w
+        );
+        assert!(lr_diff > 0.03, "Flanger stereo phase must produce L/R spatial motion (diff {})", lr_diff);
+
+        // 2. Phaser 4-stage all-pass notch sweep
+        let mut p_ph = make_clean_params();
+        p_ph.fx[1] = EffectSlot {
+            enabled: true,
+            effect_type: EffectType::Phaser,
+            mix: 1.0,
+            param_1: 0.55, // ~2.5 Hz
+            param_2: 0.85, // wide sweep
+            param_3: 0.70, // feedback resonance
+            param_4: 0.45, // center ~630 Hz
+        };
+
+        let mut ph_l = dry.clone();
+        let mut ph_r = dry.clone();
+        EffectsChain::new(sr).process_block(&mut ph_l, &mut ph_r, &p_ph);
+        assert!(ph_l.iter().all(|x| x.is_finite()) && ph_r.iter().all(|x| x.is_finite()));
+
+        let ph_diff_from_dry = rms(&ph_l[2048..].iter().zip(&dry[2048..]).map(|(a, b)| a - b).collect::<Vec<_>>());
+        let ph_lr_diff = rms(&ph_l[2048..].iter().zip(&ph_r[2048..]).map(|(a, b)| a - b).collect::<Vec<_>>());
+        let mut ph_min = f32::MAX;
+        let mut ph_max = 0.0_f32;
+        for chunk in ph_l[2048..].chunks_exact(1024) {
+            let r = rms(chunk);
+            ph_min = ph_min.min(r);
+            ph_max = ph_max.max(r);
+        }
+        assert!(
+            ph_diff_from_dry > 0.05 && ph_lr_diff > 0.01 && ph_max > ph_min * 1.20,
+            "Phaser must sweep stereo all-pass notches (dry diff {}, LR diff {}, sweep {}/{})",
+            ph_diff_from_dry,
+            ph_lr_diff,
+            ph_max,
+            ph_min
+        );
+    }
+
+    #[test]
+    fn test_wah_fuzz_and_amp_spectral_shaping() {
+        let sr = 48000.0;
+        let n = 8192;
+
+        // 1. Wah bandpass resonance selectivity (manual pedal sweep at ~650 Hz vs 3500 Hz)
+        let mut p_wah_low = make_clean_params();
+        p_wah_low.fx[0] = EffectSlot {
+            enabled: true,
+            effect_type: EffectType::Wah,
+            mix: 1.0,
+            param_1: 0.40, // ~640 Hz
+            param_2: 0.0,  // manual pedal only
+            param_3: 0.0,
+            param_4: 0.75, // high Q
+        };
+
+        let mut low_l = vec![0.0; n];
+        let mut low_r = vec![0.0; n];
+        fill_sine(&mut low_l, &mut low_r, sr, 640.0, 0.25);
+        let mut hi_l = vec![0.0; n];
+        let mut hi_r = vec![0.0; n];
+        fill_sine(&mut hi_l, &mut hi_r, sr, 3500.0, 0.25);
+
+        EffectsChain::new(sr).process_block(&mut low_l, &mut low_r, &p_wah_low);
+        EffectsChain::new(sr).process_block(&mut hi_l, &mut hi_r, &p_wah_low);
+        assert!(
+            rms(&low_l[1024..]) > rms(&hi_l[1024..]) * 3.0,
+            "Wah pedal tuned to 640 Hz must emphasize 640 Hz ({}) over 3500 Hz ({})",
+            rms(&low_l[1024..]),
+            rms(&hi_l[1024..])
+        );
+
+        // 2. Fuzz harmonic generation & tone shaping (pure sine -> rich odd+even harmonics)
+        let mut p_fuzz = make_clean_params();
+        p_fuzz.fx[0] = EffectSlot {
+            enabled: true,
+            effect_type: EffectType::Fuzz,
+            mix: 1.0,
+            param_1: 0.85, // high drive
+            param_2: 0.85, // bright tone
+            param_3: 0.70, // asymmetric grit
+            param_4: 0.65,
+        };
+        let mut fz_l = vec![0.0; n];
+        let mut fz_r = vec![0.0; n];
+        fill_sine(&mut fz_l, &mut fz_r, sr, 220.0, 0.4);
+        EffectsChain::new(sr).process_block(&mut fz_l, &mut fz_r, &p_fuzz);
+
+        // Measure 2nd (440 Hz) + 3rd (660 Hz) harmonic energy via DFT projection
+        let harmonic_energy = |sig: &[f32], freq_hz: f32| -> f32 {
+            let mut re = 0.0_f32;
+            let mut im = 0.0_f32;
+            let m = sig.len() as f32;
+            for (i, &s) in sig.iter().enumerate() {
+                let ang = 2.0 * PI * freq_hz * (i as f32) / sr;
+                re += s * ang.cos();
+                im += s * ang.sin();
+            }
+            ((re * re + im * im).sqrt()) / m
+        };
+        let h2_fuzz = harmonic_energy(&fz_l[1024..], 440.0);
+        let h3_fuzz = harmonic_energy(&fz_l[1024..], 660.0);
+        assert!(
+            h2_fuzz > 0.01 && h3_fuzz > 0.05,
+            "Asymmetric Fuzz must generate 2nd ({}) and 3rd ({}) harmonics",
+            h2_fuzz,
+            h3_fuzz
+        );
+
+        // 3. Amp warm vs bright tone stack + cabinet resonance
+        let mut p_amp_warm = make_clean_params();
+        p_amp_warm.fx[2] = EffectSlot {
+            enabled: true,
+            effect_type: EffectType::Amp,
+            mix: 1.0,
+            param_1: 0.55,
+            param_2: 0.05, // warm
+            param_3: 0.75, // cabinet resonance
+            param_4: 0.0,  // no presence boost
+        };
+        let mut p_amp_bright = p_amp_warm.clone();
+        p_amp_bright.fx[2].param_2 = 0.95; // bright
+        p_amp_bright.fx[2].param_4 = 0.90; // strong presence
+
+        let mut aw_l = vec![0.0; n];
+        let mut aw_r = vec![0.0; n];
+        fill_sine(&mut aw_l, &mut aw_r, sr, 4200.0, 0.25);
+        let mut ab_l = aw_l.clone();
+        let mut ab_r = aw_r.clone();
+
+        EffectsChain::new(sr).process_block(&mut aw_l, &mut aw_r, &p_amp_warm);
+        EffectsChain::new(sr).process_block(&mut ab_l, &mut ab_r, &p_amp_bright);
+        assert!(
+            rms(&ab_l[1024..]) > rms(&aw_l[1024..]) * 1.4,
+            "Amp bright tone+presence ({}) must boost 4.2 kHz over warm setting ({})",
+            rms(&ab_l[1024..]),
+            rms(&aw_l[1024..])
+        );
+    }
+
+    #[test]
+    fn test_reverb_environment_presets_differentiation() {
+        let sr = 48000.0;
+        let total = 24000;
+
+        let render_env = |preset: &str| -> (f32, f32) {
+            let mut p = make_clean_params();
+            p.reverb.enabled = true;
+            p.reverb.mix = 1.0;
+            p.reverb.duration_s = 2.0;
+            p.reverb.pre_delay_ms = 5.0;
+            p.reverb.early_reflections = 0.6;
+            p.reverb.tone = 0.5;
+            p.reverb.preset_name = preset.to_string();
+
+            let mut l = vec![0.0_f32; total];
+            let mut r = vec![0.0_f32; total];
+            fill_sine(&mut l[..256], &mut r[..256], sr, 600.0, 0.7);
+            EffectsChain::new(sr).process_block(&mut l, &mut r, &p);
+            let early = rms(&l[300..1100]);
+            let late = rms(&l[8000..22000]);
+            (early, late)
+        };
+
+        let envs = [
+            "Concert Hall",
+            "Cathedral",
+            "Studio",
+            "Chamber",
+            "Taj Mahal",
+            "Plate",
+            "Spring",
+            "Speakers",
+            "Broceliande",
+            "Club",
+        ];
+
+        let mut results = Vec::new();
+        for env in envs {
+            let (early, late) = render_env(env);
+            assert!(
+                early.is_finite() && late.is_finite() && (early > 0.001 || late > 0.001),
+                "Reverb environment '{}' must produce finite non-zero response ({}, {})",
+                env,
+                early,
+                late
+            );
+            results.push((env, early, late));
+        }
+
+        // Cathedral / Taj Mahal must have much longer/louder late decay than tight Studio / Speakers
+        let (_, _, late_cathedral) = results.iter().find(|r| r.0 == "Cathedral").unwrap();
+        let (_, _, late_taj) = results.iter().find(|r| r.0 == "Taj Mahal").unwrap();
+        let (_, _, late_studio) = results.iter().find(|r| r.0 == "Studio").unwrap();
+        let (_, _, late_speakers) = results.iter().find(|r| r.0 == "Speakers").unwrap();
+        let (_, early_plate, _) = results.iter().find(|r| r.0 == "Plate").unwrap();
+        let (_, early_chamber, _) = results.iter().find(|r| r.0 == "Chamber").unwrap();
+
+        assert!(
+            *late_cathedral > *late_studio * 2.0 && *late_taj > *late_speakers * 2.5,
+            "Large spaces (Cathedral {}, Taj Mahal {}) must sustain longer tail than Studio {} / Speakers {}",
+            late_cathedral,
+            late_taj,
+            late_studio,
+            late_speakers
+        );
+        assert!(
+            *early_chamber > *early_plate * 1.4,
+            "Chamber ({}) must have denser early reflections than Plate ({})",
+            early_chamber,
+            early_plate
         );
     }
 }
