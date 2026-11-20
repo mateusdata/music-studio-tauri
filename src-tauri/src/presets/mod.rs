@@ -151,6 +151,25 @@ pub fn morph_engine_params(a: &EngineParams, b: &EngineParams, t: f32) -> Engine
     out.limiter.sharpness = lerp(a.limiter.sharpness, b.limiter.sharpness);
     out.limiter.gain_db = lerp(a.limiter.gain_db, b.limiter.gain_db);
 
+    out.bounce.delay_ms = lerp(a.bounce.delay_ms, b.bounce.delay_ms);
+    out.bounce.velocity_sensitivity = lerp(a.bounce.velocity_sensitivity, b.bounce.velocity_sensitivity);
+    out.bounce.delay_loss = lerp(a.bounce.delay_loss, b.bounce.delay_loss);
+    out.bounce.velocity_loss = lerp(a.bounce.velocity_loss, b.bounce.velocity_loss);
+    out.bounce.humanization = lerp(a.bounce.humanization, b.bounce.humanization);
+
+    out.note_fx.lfo_shape = lerp(a.note_fx.lfo_shape, b.note_fx.lfo_shape);
+    out.note_fx.lfo_skew = lerp(a.note_fx.lfo_skew, b.note_fx.lfo_skew);
+    out.note_fx.lfo_rate_hz = lerp(a.note_fx.lfo_rate_hz, b.note_fx.lfo_rate_hz);
+    out.note_fx.onset_duration_ms = lerp(a.note_fx.onset_duration_ms, b.note_fx.onset_duration_ms);
+    out.note_fx.vibrato_cents = lerp(a.note_fx.vibrato_cents, b.note_fx.vibrato_cents);
+    out.note_fx.vibrato_offset_cents = lerp(a.note_fx.vibrato_offset_cents, b.note_fx.vibrato_offset_cents);
+    out.note_fx.tremolo_depth_db = lerp(a.note_fx.tremolo_depth_db, b.note_fx.tremolo_depth_db);
+    out.note_fx.tremolo_phase = lerp(a.note_fx.tremolo_phase, b.note_fx.tremolo_phase);
+    out.note_fx.attack_envelope = lerp(a.note_fx.attack_envelope, b.note_fx.attack_envelope);
+    out.note_fx.smear = lerp(a.note_fx.smear, b.note_fx.smear);
+
+    out.play_mode.guitar_body = lerp(a.play_mode.guitar_body, b.play_mode.guitar_body);
+
     out
 }
 
@@ -237,6 +256,22 @@ mod tests {
         a.reverb.pre_delay_ms = 5.0;
         a.reverb.early_reflections = 0.1;
         a.limiter.threshold_db = -6.0;
+        a.bounce.delay_ms = 60.0;
+        a.bounce.velocity_sensitivity = 0.2;
+        a.bounce.delay_loss = 0.05;
+        a.bounce.velocity_loss = 0.2;
+        a.bounce.humanization = 0.0;
+        a.note_fx.lfo_shape = 0.1;
+        a.note_fx.lfo_skew = 0.2;
+        a.note_fx.lfo_rate_hz = 2.0;
+        a.note_fx.onset_duration_ms = 20.0;
+        a.note_fx.vibrato_cents = 5.0;
+        a.note_fx.vibrato_offset_cents = -2.0;
+        a.note_fx.tremolo_depth_db = 1.0;
+        a.note_fx.tremolo_phase = 0.0;
+        a.note_fx.attack_envelope = 0.2;
+        a.note_fx.smear = 0.1;
+        a.play_mode.guitar_body = 0.2;
 
         let mut b = EngineParams::default();
         b.volume_db = 2.0;
@@ -269,6 +304,22 @@ mod tests {
         b.reverb.pre_delay_ms = 45.0;
         b.reverb.early_reflections = 0.9;
         b.limiter.threshold_db = -0.2;
+        b.bounce.delay_ms = 260.0;
+        b.bounce.velocity_sensitivity = 0.8;
+        b.bounce.delay_loss = 0.45;
+        b.bounce.velocity_loss = 0.6;
+        b.bounce.humanization = 0.6;
+        b.note_fx.lfo_shape = 0.9;
+        b.note_fx.lfo_skew = 0.8;
+        b.note_fx.lfo_rate_hz = 10.0;
+        b.note_fx.onset_duration_ms = 180.0;
+        b.note_fx.vibrato_cents = 35.0;
+        b.note_fx.vibrato_offset_cents = 10.0;
+        b.note_fx.tremolo_depth_db = 9.0;
+        b.note_fx.tremolo_phase = 1.0;
+        b.note_fx.attack_envelope = 0.8;
+        b.note_fx.smear = 0.7;
+        b.play_mode.guitar_body = 0.8;
 
         (a, b)
     }
@@ -312,6 +363,22 @@ mod tests {
         assert!(approx_eq(m_mid.reverb.pre_delay_ms, 25.0, 1e-5));
         assert!(approx_eq(m_mid.reverb.early_reflections, 0.5, 1e-5));
         assert!(approx_eq(m_mid.limiter.threshold_db, -3.1, 1e-5));
+        assert!(approx_eq(m_mid.bounce.delay_ms, 160.0, 1e-4));
+        assert!(approx_eq(m_mid.bounce.velocity_sensitivity, 0.5, 1e-5));
+        assert!(approx_eq(m_mid.bounce.delay_loss, 0.25, 1e-5));
+        assert!(approx_eq(m_mid.bounce.velocity_loss, 0.4, 1e-5));
+        assert!(approx_eq(m_mid.bounce.humanization, 0.3, 1e-5));
+        assert!(approx_eq(m_mid.note_fx.lfo_shape, 0.5, 1e-5));
+        assert!(approx_eq(m_mid.note_fx.lfo_skew, 0.5, 1e-5));
+        assert!(approx_eq(m_mid.note_fx.lfo_rate_hz, 6.0, 1e-5));
+        assert!(approx_eq(m_mid.note_fx.onset_duration_ms, 100.0, 1e-4));
+        assert!(approx_eq(m_mid.note_fx.vibrato_cents, 20.0, 1e-5));
+        assert!(approx_eq(m_mid.note_fx.vibrato_offset_cents, 4.0, 1e-5));
+        assert!(approx_eq(m_mid.note_fx.tremolo_depth_db, 5.0, 1e-5));
+        assert!(approx_eq(m_mid.note_fx.tremolo_phase, 0.5, 1e-5));
+        assert!(approx_eq(m_mid.note_fx.attack_envelope, 0.5, 1e-5));
+        assert!(approx_eq(m_mid.note_fx.smear, 0.4, 1e-5));
+        assert!(approx_eq(m_mid.play_mode.guitar_body, 0.5, 1e-5));
 
         // t = 1.0 -> exact B
         let m1 = morph_engine_params(&a, &b, 1.0);

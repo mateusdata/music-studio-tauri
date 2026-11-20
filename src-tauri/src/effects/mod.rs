@@ -117,6 +117,13 @@ impl BiquadState {
 
 pub struct EffectsChain {
     sample_rate: f32,
+    lid_lp_l: f32,
+    lid_lp_r: f32,
+    binaural_buf_l: Vec<f32>,
+    binaural_buf_r: Vec<f32>,
+    binaural_pos: usize,
+    binaural_shadow_l: f32,
+    binaural_shadow_r: f32,
     mic_delay_bufs: [Vec<f32>; 3],
     mic_write_pos: usize,
     eq_filters: [BiquadState; 3],
@@ -146,6 +153,7 @@ pub struct EffectsChain {
 impl EffectsChain {
     pub fn new(sample_rate: f32) -> Self {
         let sr = sample_rate.max(22050.0);
+        let max_binaural = ((sr * 0.01).ceil() as usize).max(512);
         let max_mic_delay = (sr * 0.25).ceil() as usize;
         let max_delay = (sr * 1.5).ceil() as usize;
         let max_chorus = (sr * 0.08).ceil() as usize;
@@ -159,6 +167,13 @@ impl EffectsChain {
         ];
         Self {
             sample_rate: sr,
+            lid_lp_l: 0.0,
+            lid_lp_r: 0.0,
+            binaural_buf_l: vec![0.0; max_binaural],
+            binaural_buf_r: vec![0.0; max_binaural],
+            binaural_pos: 0,
+            binaural_shadow_l: 0.0,
+            binaural_shadow_r: 0.0,
             mic_delay_bufs: [
                 vec![0.0; max_mic_delay.max(4096)],
                 vec![0.0; max_mic_delay.max(4096)],
@@ -289,12 +304,55 @@ impl EffectsChain {
             mic_out_r[k] = mic_gain * angle.sin();
         }
 
-        // Lid position gentle darkening when closed
-        let lid_gain = 0.72 + params.output.lid_position.clamp(0.0, 1.0) * 0.28;
+        // Lid position gentle level scaling + 1-pole low-pass darkening when closed
+        let lid = params.output.lid_position.clamp(0.0, 1.0);
+        let lid_gain = 0.72 + lid * 0.28;
+        let lid_transparent = lid >= 0.999;
+        let dt = 1.0 / self.sample_rate;
+        let lid_fc = 1100.0 * 18.0_f32.powf(lid);
+        let lid_rc = 1.0 / (2.0 * PI * lid_fc);
+        let lid_lp_alpha = (dt / (lid_rc + dt)).clamp(0.01, 1.0);
+
         // Stereo width mid/side matrix
         let width = (params.output.stereo_width * 2.0).clamp(0.0, 2.0);
-        // Binaural slight crossfeed
-        let crossfeed = if params.output.binaural_mode { 0.14 } else { 0.0 };
+
+        // Binaural ITD + head-shadow low-pass crossfeed controlled by head_angle & head_diameter
+        let binaural_enabled = params.output.binaural_mode;
+        let bin_buf_len = self.binaural_buf_l.len();
+        let max_bin_delay = (bin_buf_len.saturating_sub(2)) as f32;
+        let head_diam = sanitize(params.output.head_diameter, 0.18).clamp(0.10, 0.35);
+        let head_radius = head_diam * 0.5;
+        let head_rad = sanitize(params.output.head_angle, 0.0).clamp(-180.0, 180.0).to_radians();
+        let sin_theta = head_rad.sin();
+        let itd_mag_s = (head_radius / SPEED_OF_SOUND_MPS)
+            * (sin_theta.abs() + sin_theta.abs().asin().min(PI * 0.5));
+        let (bin_delay_l_samps, bin_delay_r_samps, bin_gain_l, bin_gain_r) = if sin_theta >= 0.0 {
+            (
+                0.0,
+                (itd_mag_s * self.sample_rate).clamp(0.0, max_bin_delay),
+                1.0 + 0.08 * sin_theta,
+                1.0 - 0.32 * sin_theta,
+            )
+        } else {
+            let neg_s = -sin_theta;
+            (
+                (itd_mag_s * self.sample_rate).clamp(0.0, max_bin_delay),
+                0.0,
+                1.0 - 0.32 * neg_s,
+                1.0 + 0.08 * neg_s,
+            )
+        };
+        let bin_d_int_l = bin_delay_l_samps.floor() as usize;
+        let bin_frac_l = bin_delay_l_samps - bin_d_int_l as f32;
+        let bin_d_int_r = bin_delay_r_samps.floor() as usize;
+        let bin_frac_r = bin_delay_r_samps - bin_d_int_r as f32;
+        let cross_itd_samps = ((head_diam * 1.35 / SPEED_OF_SOUND_MPS) * self.sample_rate)
+            .clamp(1.0, max_bin_delay);
+        let cross_d_int = cross_itd_samps.floor() as usize;
+        let cross_frac = cross_itd_samps - cross_d_int as f32;
+        let shadow_fc = (1800.0 - (head_diam - 0.18) * 3500.0).clamp(900.0, 2600.0);
+        let shadow_rc = 1.0 / (2.0 * PI * shadow_fc);
+        let shadow_alpha = (dt / (shadow_rc + dt)).clamp(0.02, 0.95);
 
         // Precompute reverb parameters
         let rev_pre_len = self.reverb_pre_buf_l.len();
@@ -336,8 +394,17 @@ impl EffectsChain {
         let lim_gain = 10.0_f32.powf(params.limiter.gain_db / 20.0);
 
         for i in 0..len {
-            let dry_in_l = sanitize(buf_l[i], 0.0) * lid_gain;
-            let dry_in_r = sanitize(buf_r[i], 0.0) * lid_gain;
+            let raw_l = sanitize(buf_l[i], 0.0);
+            let raw_r = sanitize(buf_r[i], 0.0);
+            let (dry_in_l, dry_in_r) = if lid_transparent {
+                self.lid_lp_l = raw_l;
+                self.lid_lp_r = raw_r;
+                (raw_l, raw_r)
+            } else {
+                self.lid_lp_l += lid_lp_alpha * (raw_l * lid_gain - self.lid_lp_l);
+                self.lid_lp_r += lid_lp_alpha * (raw_r * lid_gain - self.lid_lp_r);
+                (self.lid_lp_l, self.lid_lp_r)
+            };
 
             // 3-microphone stage spatializer
             let mut l = 0.0_f32;
@@ -364,11 +431,34 @@ impl EffectsChain {
             l = mid + side;
             r = mid - side;
 
-            if crossfeed > 0.0 {
-                let nl = l * (1.0 - crossfeed) + r * crossfeed;
-                let nr = r * (1.0 - crossfeed) + l * crossfeed;
-                l = nl;
-                r = nr;
+            if binaural_enabled {
+                self.binaural_buf_l[self.binaural_pos] = l;
+                self.binaural_buf_r[self.binaural_pos] = r;
+
+                let idx_l0 = (self.binaural_pos + bin_buf_len - bin_d_int_l) % bin_buf_len;
+                let idx_l1 = (self.binaural_pos + bin_buf_len - bin_d_int_l - 1) % bin_buf_len;
+                let dir_l = self.binaural_buf_l[idx_l0] * (1.0 - bin_frac_l)
+                    + self.binaural_buf_l[idx_l1] * bin_frac_l;
+
+                let idx_r0 = (self.binaural_pos + bin_buf_len - bin_d_int_r) % bin_buf_len;
+                let idx_r1 = (self.binaural_pos + bin_buf_len - bin_d_int_r - 1) % bin_buf_len;
+                let dir_r = self.binaural_buf_r[idx_r0] * (1.0 - bin_frac_r)
+                    + self.binaural_buf_r[idx_r1] * bin_frac_r;
+
+                let c_idx0 = (self.binaural_pos + bin_buf_len - cross_d_int) % bin_buf_len;
+                let c_idx1 = (self.binaural_pos + bin_buf_len - cross_d_int - 1) % bin_buf_len;
+                let contra_l_raw = self.binaural_buf_r[c_idx0] * (1.0 - cross_frac)
+                    + self.binaural_buf_r[c_idx1] * cross_frac;
+                let contra_r_raw = self.binaural_buf_l[c_idx0] * (1.0 - cross_frac)
+                    + self.binaural_buf_l[c_idx1] * cross_frac;
+
+                self.binaural_shadow_l += shadow_alpha * (contra_l_raw - self.binaural_shadow_l);
+                self.binaural_shadow_r += shadow_alpha * (contra_r_raw - self.binaural_shadow_r);
+                self.binaural_pos = (self.binaural_pos + 1) % bin_buf_len;
+
+                let cross_amt = 0.22_f32;
+                l = dir_l * bin_gain_l * (1.0 - cross_amt * 0.5) + self.binaural_shadow_l * cross_amt;
+                r = dir_r * bin_gain_r * (1.0 - cross_amt * 0.5) + self.binaural_shadow_r * cross_amt;
             }
 
             // 3-band EQ
@@ -1062,5 +1152,207 @@ mod tests {
         fx.process_block(&mut buf_l, &mut buf_r, &params);
         assert!(buf_l.iter().all(|x| x.is_finite() && x.abs() <= 1.0));
         assert!(buf_r.iter().all(|x| x.is_finite() && x.abs() <= 1.0));
+    }
+
+    #[test]
+    fn test_lid_position_spectral_attenuation() {
+        let sr = 48000.0;
+        let n = 4096;
+
+        let mut p_open = make_clean_params();
+        p_open.output.lid_position = 1.0;
+
+        let mut p_closed = make_clean_params();
+        p_closed.output.lid_position = 0.0;
+
+        // 120 Hz bass signal
+        let mut bass_open_l = vec![0.0; n];
+        let mut bass_open_r = vec![0.0; n];
+        fill_sine(&mut bass_open_l, &mut bass_open_r, sr, 120.0, 0.5);
+        let mut bass_closed_l = bass_open_l.clone();
+        let mut bass_closed_r = bass_open_r.clone();
+
+        EffectsChain::new(sr).process_block(&mut bass_open_l, &mut bass_open_r, &p_open);
+        EffectsChain::new(sr).process_block(&mut bass_closed_l, &mut bass_closed_r, &p_closed);
+
+        // 6000 Hz treble signal
+        let mut hi_open_l = vec![0.0; n];
+        let mut hi_open_r = vec![0.0; n];
+        fill_sine(&mut hi_open_l, &mut hi_open_r, sr, 6000.0, 0.5);
+        let mut hi_closed_l = hi_open_l.clone();
+        let mut hi_closed_r = hi_open_r.clone();
+
+        EffectsChain::new(sr).process_block(&mut hi_open_l, &mut hi_open_r, &p_open);
+        EffectsChain::new(sr).process_block(&mut hi_closed_l, &mut hi_closed_r, &p_closed);
+
+        let bass_ratio = rms(&bass_closed_l[512..]) / rms(&bass_open_l[512..]);
+        let hi_ratio = rms(&hi_closed_l[512..]) / rms(&hi_open_l[512..]);
+
+        assert!(
+            bass_ratio > 0.65,
+            "Closed lid should preserve low-frequency fundamental energy (ratio {})",
+            bass_ratio
+        );
+        assert!(
+            hi_ratio < bass_ratio * 0.35,
+            "Closed lid must attenuate 6kHz significantly more than 120Hz (hi ratio {} vs bass ratio {})",
+            hi_ratio,
+            bass_ratio
+        );
+    }
+
+    #[test]
+    fn test_stereo_width_mono_to_wide_separation() {
+        let sr = 48000.0;
+        let n = 4096;
+
+        let mut p_mono = make_clean_params();
+        p_mono.output.stereo_width = 0.0;
+
+        let mut p_mid = make_clean_params();
+        p_mid.output.stereo_width = 0.5;
+
+        let mut p_wide = make_clean_params();
+        p_wide.output.stereo_width = 1.0;
+
+        let mut src_l = vec![0.0; n];
+        let mut src_r = vec![0.0; n];
+        for i in 0..n {
+            let s = (2.0 * PI * 440.0 * (i as f32) / sr).sin();
+            src_l[i] = 0.8 * s;
+            src_r[i] = 0.1 * s;
+        }
+
+        let mut ml = src_l.clone();
+        let mut mr = src_r.clone();
+        let mut midl = src_l.clone();
+        let mut midr = src_r.clone();
+        let mut wl = src_l.clone();
+        let mut wr = src_r.clone();
+
+        EffectsChain::new(sr).process_block(&mut ml, &mut mr, &p_mono);
+        EffectsChain::new(sr).process_block(&mut midl, &mut midr, &p_mid);
+        EffectsChain::new(sr).process_block(&mut wl, &mut wr, &p_wide);
+
+        let diff_rms = |a: &[f32], b: &[f32]| -> f32 {
+            let sum_sq: f32 = a.iter().zip(b.iter()).map(|(x, y)| (x - y) * (x - y)).sum();
+            (sum_sq / a.len().max(1) as f32).sqrt()
+        };
+
+        let d_mono = diff_rms(&ml[512..], &mr[512..]);
+        let d_mid = diff_rms(&midl[512..], &midr[512..]);
+        let d_wide = diff_rms(&wl[512..], &wr[512..]);
+
+        assert!(
+            d_mono < 1e-6,
+            "stereo_width = 0.0 must collapse L/R difference to near-zero (got {})",
+            d_mono
+        );
+        assert!(
+            d_wide > d_mid * 1.8 && d_mid > 0.02,
+            "stereo_width = 1.0 ({}) must significantly widen separation over 0.5 ({})",
+            d_wide,
+            d_mid
+        );
+    }
+
+    #[test]
+    fn test_binaural_mode_interaural_crossfeed_and_head_angle() {
+        let sr = 48000.0;
+        let n = 512;
+
+        // 1. Crossfeed + ITD check with hard-left-panned mic and left-only impulse
+        let mut p_off = make_clean_params();
+        p_off.output.binaural_mode = false;
+        p_off.output.stereo_width = 0.5;
+        p_off.output.mics[0].enabled = true;
+        p_off.output.mics[0].x = 0.0;
+        p_off.output.mics[0].pan = -1.0;
+        p_off.output.mics[1].enabled = false;
+        p_off.output.mics[2].enabled = false;
+
+        let mut p_on = p_off.clone();
+        p_on.output.binaural_mode = true;
+        p_on.output.head_angle = 0.0;
+        p_on.output.head_diameter = 0.18;
+
+        let mut p_large_head = p_on.clone();
+        p_large_head.output.head_diameter = 0.28;
+
+        let mut l_off = vec![0.0_f32; n];
+        let mut r_off = vec![0.0_f32; n];
+        l_off[0] = 1.0;
+        let mut l_on = l_off.clone();
+        let mut r_on = r_off.clone();
+        let mut l_lh = l_off.clone();
+        let mut r_lh = r_off.clone();
+
+        EffectsChain::new(sr).process_block(&mut l_off, &mut r_off, &p_off);
+        EffectsChain::new(sr).process_block(&mut l_on, &mut r_on, &p_on);
+        EffectsChain::new(sr).process_block(&mut l_lh, &mut r_lh, &p_large_head);
+
+        assert!(
+            rms(&r_off) < 1e-6,
+            "Without binaural_mode, hard-left impulse must not crossfeed to right ear (got {})",
+            rms(&r_off)
+        );
+        assert!(
+            rms(&r_on) > 0.0008,
+            "With binaural_mode=true, head-shadow crossfeed must reach right ear (got {})",
+            rms(&r_on)
+        );
+
+        let peak_idx = |slice: &[f32]| -> usize {
+            slice
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.abs().partial_cmp(&b.1.abs()).unwrap())
+                .unwrap()
+                .0
+        };
+        let cross_peak_std = peak_idx(&r_on);
+        let cross_peak_large = peak_idx(&r_lh);
+        assert!(
+            cross_peak_std >= 20 && cross_peak_large > cross_peak_std,
+            "Contralateral crossfeed ITD must delay with head_diameter (std {} vs large {})",
+            cross_peak_std,
+            cross_peak_large
+        );
+
+        // 2. Head angle ITD and energy balance asymmetry
+        let mut p_rot_right = make_clean_params();
+        p_rot_right.output.binaural_mode = true;
+        p_rot_right.output.head_diameter = 0.20;
+        p_rot_right.output.head_angle = 45.0;
+
+        let mut p_rot_left = p_rot_right.clone();
+        p_rot_left.output.head_angle = -45.0;
+
+        let mut rr_l = vec![0.0_f32; n];
+        let mut rr_r = vec![0.0_f32; n];
+        rr_l[0] = 1.0;
+        rr_r[0] = 1.0;
+        let mut rl_l = rr_l.clone();
+        let mut rl_r = rr_r.clone();
+
+        EffectsChain::new(sr).process_block(&mut rr_l, &mut rr_r, &p_rot_right);
+        EffectsChain::new(sr).process_block(&mut rl_l, &mut rl_r, &p_rot_left);
+
+        assert!(
+            peak_idx(&rr_r) > peak_idx(&rr_l) + 10 && rms(&rr_l) > rms(&rr_r) * 1.15,
+            "Turning head_angle=+45 deg must delay and shadow right ear (L peak {} RMS {}, R peak {} RMS {})",
+            peak_idx(&rr_l),
+            rms(&rr_l),
+            peak_idx(&rr_r),
+            rms(&rr_r)
+        );
+        assert!(
+            peak_idx(&rl_l) > peak_idx(&rl_r) + 10 && rms(&rl_r) > rms(&rl_l) * 1.15,
+            "Turning head_angle=-45 deg must delay and shadow left ear (L peak {} RMS {}, R peak {} RMS {})",
+            peak_idx(&rl_l),
+            rms(&rl_l),
+            peak_idx(&rl_r),
+            rms(&rl_r)
+        );
     }
 }
