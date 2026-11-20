@@ -1,6 +1,7 @@
 use crate::audio::AudioEngineManager;
 use crate::contracts::{
-    EngineParams, EngineSnapshot, EngineTelemetry, MidiConfig, MidiPortInfo, PresetData,
+    EngineParams, EngineSnapshot, EngineTelemetry, MidiConfig, MidiPortInfo,
+    MidiTransportState, PresetData,
 };
 use crate::midi::list_midi_input_ports;
 use std::path::PathBuf;
@@ -110,4 +111,40 @@ pub fn export_demo_wav(
     let fname = filename.unwrap_or_else(|| "piano-tect-demo.wav".to_string());
     let path = std::env::temp_dir().join(fname);
     engine.export_demo_wav(PathBuf::from(path))
+}
+
+#[tauri::command]
+pub fn play_demo_midi(engine: State<AudioEngineManager>) -> MidiTransportState {
+    engine.play_demo_midi()
+}
+
+#[tauri::command]
+pub fn stop_midi_transport(engine: State<AudioEngineManager>) -> MidiTransportState {
+    engine.stop_midi_transport()
+}
+
+#[tauri::command]
+pub fn toggle_midi_record(engine: State<AudioEngineManager>) -> MidiTransportState {
+    engine.toggle_midi_record()
+}
+
+#[tauri::command]
+pub fn play_recorded_midi(engine: State<AudioEngineManager>) -> MidiTransportState {
+    engine.play_recorded_midi()
+}
+
+#[tauri::command]
+pub fn set_midi_playback_speed(
+    engine: State<AudioEngineManager>,
+    speed: f32,
+) -> MidiTransportState {
+    engine.set_midi_playback_speed(speed)
+}
+
+#[tauri::command]
+pub fn arm_midi_cc_learn(
+    engine: State<AudioEngineManager>,
+    param_path: Option<String>,
+) -> Option<String> {
+    engine.arm_midi_cc_learn(param_path)
 }

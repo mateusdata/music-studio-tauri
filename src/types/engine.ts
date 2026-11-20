@@ -143,6 +143,49 @@ export interface NoteEditOffset {
   impedance_offset: number;
 }
 
+export interface BounceParams {
+  enabled: boolean;
+  delay_ms: number;
+  sync_tempo: boolean;
+  velocity_sensitivity: number;
+  delay_loss: number;
+  velocity_loss: number;
+  humanization: number;
+  max_bounces: number;
+}
+
+export interface NoteFxParams {
+  lfo_shape: number;
+  lfo_skew: number;
+  lfo_rate_hz: number;
+  lfo_phase_locked: boolean;
+  onset_duration_ms: number;
+  vibrato_cents: number;
+  vibrato_offset_cents: number;
+  tremolo_depth_db: number;
+  tremolo_phase: number;
+  attack_envelope: number;
+  smear: number;
+}
+
+export type PlayMode = "Standard" | "DiatonicHarp" | "Guitar";
+
+export interface PlayModeParams {
+  mode: PlayMode;
+  harp_pedals: number[];
+  guitar_fret: number;
+  guitar_legato: boolean;
+  guitar_body: number;
+}
+
+export interface MidiTransportState {
+  is_playing: boolean;
+  is_recording: boolean;
+  playback_speed: number;
+  recorded_events_count: number;
+  current_track_name: string | null;
+}
+
 export interface EngineParams {
   volume_db: number;
   dynamics_db: number;
@@ -161,6 +204,9 @@ export interface EngineParams {
   reverb: ReverbParams;
   limiter: LimiterParams;
   note_edit: Record<number, NoteEditOffset>;
+  bounce?: BounceParams;
+  note_fx?: NoteFxParams;
+  play_mode?: PlayModeParams;
 }
 
 export interface InstrumentModel {
@@ -218,6 +264,8 @@ export interface EngineTelemetry {
   last_midi_velocity: number | null;
   active_notes: number[];
   pedals: PedalState;
+  midi_transport?: MidiTransportState;
+  midi_learn_target?: string | null;
 }
 
 export interface EngineSnapshot {

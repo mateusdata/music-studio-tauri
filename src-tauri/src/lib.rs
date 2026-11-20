@@ -32,6 +32,12 @@ pub fn run() {
             commands::update_midi_config,
             commands::play_test_chord,
             commands::export_demo_wav,
+            commands::play_demo_midi,
+            commands::stop_midi_transport,
+            commands::toggle_midi_record,
+            commands::play_recorded_midi,
+            commands::set_midi_playback_speed,
+            commands::arm_midi_cc_learn,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Piano Tect Tauri application");

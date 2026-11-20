@@ -1,6 +1,6 @@
 use crate::contracts::{
-    EngineParams, EngineSnapshot, EngineTelemetry, InstrumentModel, MidiConfig, PedalState,
-    PresetData,
+    EngineParams, EngineSnapshot, EngineTelemetry, InstrumentModel, MidiConfig,
+    MidiTransportState, PedalState, PresetData,
 };
 use crate::effects::EffectsChain;
 use crate::instruments::build_factory_instruments;
@@ -137,6 +137,8 @@ impl AudioEngineManager {
                 last_midi_velocity: None,
                 active_notes: Vec::new(),
                 pedals: PedalState::default(),
+                midi_transport: MidiTransportState::default(),
+                midi_learn_target: None,
             }),
         });
 
@@ -640,6 +642,42 @@ impl AudioEngineManager {
         *self.shared.midi_config.write() = cfg;
     }
 
+    pub fn play_demo_midi(&self) -> MidiTransportState {
+        let mut t = self.shared.telemetry.write();
+        t.midi_transport.is_playing = true;
+        t.midi_transport.current_track_name = Some("Demo Prelude".to_string());
+        t.midi_transport.clone()
+    }
+
+    pub fn stop_midi_transport(&self) -> MidiTransportState {
+        let mut t = self.shared.telemetry.write();
+        t.midi_transport.is_playing = false;
+        t.midi_transport.is_recording = false;
+        t.midi_transport.clone()
+    }
+
+    pub fn toggle_midi_record(&self) -> MidiTransportState {
+        let mut t = self.shared.telemetry.write();
+        t.midi_transport.is_recording = !t.midi_transport.is_recording;
+        t.midi_transport.clone()
+    }
+
+    pub fn play_recorded_midi(&self) -> MidiTransportState {
+        self.shared.telemetry.read().midi_transport.clone()
+    }
+
+    pub fn set_midi_playback_speed(&self, speed: f32) -> MidiTransportState {
+        let mut t = self.shared.telemetry.write();
+        t.midi_transport.playback_speed = speed.clamp(0.25, 2.0);
+        t.midi_transport.clone()
+    }
+
+    pub fn arm_midi_cc_learn(&self, param_path: Option<String>) -> Option<String> {
+        let mut t = self.shared.telemetry.write();
+        t.midi_learn_target = param_path.clone();
+        param_path
+    }
+
     pub fn snapshot(&self) -> EngineSnapshot {
         EngineSnapshot {
             active_instrument_id: self.shared.active_instrument.read().id.clone(),
@@ -738,6 +776,8 @@ mod tests {
                 last_midi_velocity: None,
                 active_notes: Vec::new(),
                 pedals: PedalState::default(),
+                midi_transport: MidiTransportState::default(),
+                midi_learn_target: None,
             }),
         })
     }

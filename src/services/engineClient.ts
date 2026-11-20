@@ -5,6 +5,7 @@ import type {
   EngineTelemetry,
   MidiConfig,
   MidiPortInfo,
+  MidiTransportState,
   PresetData,
 } from "../types/engine";
 
@@ -77,5 +78,29 @@ export const engineClient = {
 
   async exportDemoWav(filename?: string): Promise<string> {
     return invoke<string>("export_demo_wav", { filename: filename ?? null });
+  },
+
+  async playDemoMidi(): Promise<MidiTransportState> {
+    return invoke<MidiTransportState>("play_demo_midi");
+  },
+
+  async stopMidiTransport(): Promise<MidiTransportState> {
+    return invoke<MidiTransportState>("stop_midi_transport");
+  },
+
+  async toggleMidiRecord(): Promise<MidiTransportState> {
+    return invoke<MidiTransportState>("toggle_midi_record");
+  },
+
+  async playRecordedMidi(): Promise<MidiTransportState> {
+    return invoke<MidiTransportState>("play_recorded_midi");
+  },
+
+  async setMidiPlaybackSpeed(speed: number): Promise<MidiTransportState> {
+    return invoke<MidiTransportState>("set_midi_playback_speed", { speed });
+  },
+
+  async armMidiCcLearn(paramPath: string | null): Promise<string | null> {
+    return invoke<string | null>("arm_midi_cc_learn", { paramPath });
   },
 };

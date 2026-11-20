@@ -363,6 +363,101 @@ pub struct NoteEditOffset {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BounceParams {
+    pub enabled: bool,
+    pub delay_ms: f32,
+    pub sync_tempo: bool,
+    pub velocity_sensitivity: f32,
+    pub delay_loss: f32,
+    pub velocity_loss: f32,
+    pub humanization: f32,
+    pub max_bounces: u8,
+}
+
+impl Default for BounceParams {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            delay_ms: 120.0,
+            sync_tempo: false,
+            velocity_sensitivity: 0.5,
+            delay_loss: 0.15,
+            velocity_loss: 0.35,
+            humanization: 0.1,
+            max_bounces: 6,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteFxParams {
+    pub lfo_shape: f32,
+    pub lfo_skew: f32,
+    pub lfo_rate_hz: f32,
+    pub lfo_phase_locked: bool,
+    pub onset_duration_ms: f32,
+    pub vibrato_cents: f32,
+    pub vibrato_offset_cents: f32,
+    pub tremolo_depth_db: f32,
+    pub tremolo_phase: f32,
+    pub attack_envelope: f32,
+    pub smear: f32,
+}
+
+impl Default for NoteFxParams {
+    fn default() -> Self {
+        Self {
+            lfo_shape: 0.5,
+            lfo_skew: 0.5,
+            lfo_rate_hz: 5.2,
+            lfo_phase_locked: false,
+            onset_duration_ms: 80.0,
+            vibrato_cents: 0.0,
+            vibrato_offset_cents: 0.0,
+            tremolo_depth_db: 0.0,
+            tremolo_phase: 0.0,
+            attack_envelope: 0.5,
+            smear: 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PlayMode {
+    Standard,
+    DiatonicHarp,
+    Guitar,
+}
+
+impl Default for PlayMode {
+    fn default() -> Self {
+        Self::Standard
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayModeParams {
+    pub mode: PlayMode,
+    /// 7 diatonic harp pedals [C, D, E, F, G, A, B] where -1 = flat, 0 = natural, +1 = sharp.
+    pub harp_pedals: [i8; 7],
+    pub guitar_fret: u8,
+    pub guitar_legato: bool,
+    pub guitar_body: f32,
+}
+
+impl Default for PlayModeParams {
+    fn default() -> Self {
+        Self {
+            mode: PlayMode::Standard,
+            harp_pedals: [0; 7],
+            guitar_fret: 0,
+            guitar_legato: false,
+            guitar_body: 0.5,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineParams {
     pub volume_db: f32,
     pub dynamics_db: f32,
@@ -381,6 +476,12 @@ pub struct EngineParams {
     pub reverb: ReverbParams,
     pub limiter: LimiterParams,
     pub note_edit: HashMap<u8, NoteEditOffset>,
+    #[serde(default)]
+    pub bounce: BounceParams,
+    #[serde(default)]
+    pub note_fx: NoteFxParams,
+    #[serde(default)]
+    pub play_mode: PlayModeParams,
 }
 
 impl Default for EngineParams {
@@ -415,6 +516,9 @@ impl Default for EngineParams {
             reverb: ReverbParams::default(),
             limiter: LimiterParams::default(),
             note_edit: HashMap::new(),
+            bounce: BounceParams::default(),
+            note_fx: NoteFxParams::default(),
+            play_mode: PlayModeParams::default(),
         }
     }
 }
@@ -508,6 +612,27 @@ pub struct MidiPortInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MidiTransportState {
+    pub is_playing: bool,
+    pub is_recording: bool,
+    pub playback_speed: f32,
+    pub recorded_events_count: usize,
+    pub current_track_name: Option<String>,
+}
+
+impl Default for MidiTransportState {
+    fn default() -> Self {
+        Self {
+            is_playing: false,
+            is_recording: false,
+            playback_speed: 1.0,
+            recorded_events_count: 0,
+            current_track_name: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineTelemetry {
     pub sample_rate: u32,
     pub buffer_size: usize,
@@ -527,6 +652,10 @@ pub struct EngineTelemetry {
     pub last_midi_velocity: Option<u8>,
     pub active_notes: Vec<u8>,
     pub pedals: PedalState,
+    #[serde(default)]
+    pub midi_transport: MidiTransportState,
+    #[serde(default)]
+    pub midi_learn_target: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
