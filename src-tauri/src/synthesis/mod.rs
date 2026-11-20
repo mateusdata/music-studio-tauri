@@ -1,10 +1,58 @@
 use crate::contracts::{
-    EngineParams, ExciterType, InstrumentModel, PedalState, TemperamentId,
+    EngineParams, ExciterType, InstrumentModel, PedalState, PlayMode, TemperamentId,
 };
 use std::f32::consts::PI;
 
 pub const MAX_POLYPHONY: usize = 128;
 const NUM_PARTIALS: usize = 8;
+const MAX_BOUNCE_EVENTS: usize = 64;
+const DIATONIC_PC_TO_DEG: [usize; 12] = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6];
+
+#[derive(Clone, Copy)]
+struct BounceEvent {
+    active: bool,
+    samples_until_trigger: u64,
+    midi_note: u8,
+    velocity_u8: u8,
+    exciter: ExciterType,
+    inharmonicity_base: f32,
+    decay_scale: f32,
+}
+
+impl Default for BounceEvent {
+    fn default() -> Self {
+        Self {
+            active: false,
+            samples_until_trigger: 0,
+            midi_note: 60,
+            velocity_u8: 64,
+            exciter: ExciterType::FeltHammer,
+            inharmonicity_base: 0.00018,
+            decay_scale: 1.0,
+        }
+    }
+}
+
+#[inline]
+fn eval_lfo(phase: f32, shape: f32, skew: f32) -> f32 {
+    let u = phase.rem_euclid(1.0);
+    let sk = skew.clamp(0.05, 0.95);
+    let u_skewed = if u < sk {
+        0.5 * (u / sk)
+    } else {
+        0.5 + 0.5 * ((u - sk) / (1.0 - sk))
+    };
+    let tri = if u_skewed < 0.25 {
+        4.0 * u_skewed
+    } else if u_skewed < 0.75 {
+        2.0 - 4.0 * u_skewed
+    } else {
+        4.0 * u_skewed - 4.0
+    };
+    let sine = (2.0 * PI * u_skewed).sin();
+    let sh = shape.clamp(0.0, 1.0);
+    tri * (1.0 - sh) + sine * sh
+}
 
 #[inline]
 fn sanitize_sample_rate(sr: f32) -> f32 {
@@ -36,19 +84,35 @@ fn safety_limit(x: f32) -> f32 {
     }
 }
 
-/// Computes exact fundamental frequency (Hz) applying Diapason, Temperament, Octave Stretching,
-/// Pitch Bend, and per-note PRO tuning offset.
+/// Computes exact fundamental frequency (Hz) applying PlayMode (Diatonic Harp / Guitar Fret),
+/// Diapason, Temperament, Octave Stretching, Pitch Bend, and per-note PRO tuning offset.
 pub fn compute_note_frequency(midi_note: u8, params: &EngineParams) -> f32 {
     let diapason = finite_or(params.tuning.diapason_hz, 440.0).clamp(100.0, 1200.0);
     let stretch = finite_or(params.tuning.octave_stretching, 1.0).clamp(0.5, 2.0);
     let pitch_bend = finite_or(params.tuning.pitch_bend_semitones, 0.0).clamp(-24.0, 24.0);
 
-    let base_semi = midi_note as f32 - 69.0;
+    let play_shift: i16 = match params.play_mode.mode {
+        PlayMode::Standard => 0,
+        PlayMode::DiatonicHarp => {
+            let deg = DIATONIC_PC_TO_DEG[(midi_note % 12) as usize];
+            params.play_mode.harp_pedals[deg].clamp(-1, 1) as i16
+        }
+        PlayMode::Guitar => {
+            if params.play_mode.guitar_fret > 0 {
+                (params.play_mode.guitar_fret as i16).min(36)
+            } else {
+                0
+            }
+        }
+    };
+
+    let effective_midi = (midi_note as i16 + play_shift).clamp(0, 127);
+    let base_semi = effective_midi as f32 - 69.0;
     let stretched_semi = base_semi
         + (stretch - 1.0) * (base_semi / 12.0) * 0.045 * base_semi.abs().sqrt();
     let mut freq = diapason * 2.0_f32.powf((stretched_semi + pitch_bend) / 12.0);
 
-    let pc = (midi_note % 12) as usize;
+    let pc = (effective_midi.rem_euclid(12)) as usize;
     let ratio = temperament_ratio(params.tuning.temperament, pc);
     freq *= ratio;
 
@@ -176,6 +240,9 @@ struct Voice {
     pan: f32,
     exciter: ExciterType,
     bloom_state: f32,
+    lfo_phase: f32,
+    vel_norm_raw: f32,
+    is_guitar_legato: bool,
     rng_state: u32,
 }
 
@@ -206,6 +273,9 @@ impl Default for Voice {
             pan: 0.0,
             exciter: ExciterType::FeltHammer,
             bloom_state: 0.0,
+            lfo_phase: 0.0,
+            vel_norm_raw: 0.0,
+            is_guitar_legato: false,
             rng_state: 0x12345678,
         }
     }
@@ -223,6 +293,8 @@ impl Voice {
 pub struct PianoSynthEngine {
     sample_rate: f32,
     voices: Vec<Voice>,
+    bounce_events: [BounceEvent; MAX_BOUNCE_EVENTS],
+    global_lfo_phase: f32,
     sympathetic_lp: f32,
     sympathetic_bp: f32,
     sympathetic_energy: f32,
@@ -236,6 +308,8 @@ impl PianoSynthEngine {
         Self {
             sample_rate: sanitize_sample_rate(sample_rate),
             voices: vec![Voice::default(); MAX_POLYPHONY],
+            bounce_events: [BounceEvent::default(); MAX_BOUNCE_EVENTS],
+            global_lfo_phase: 0.0,
             sympathetic_lp: 0.0,
             sympathetic_bp: 0.0,
             sympathetic_energy: 0.0,
@@ -279,6 +353,12 @@ impl PianoSynthEngine {
                 }
             }
         }
+        let sr_scale = (new_sr as f64) / (old_sr as f64);
+        for b in &mut self.bounce_events {
+            if b.active {
+                b.samples_until_trigger = ((b.samples_until_trigger as f64) * sr_scale).round().max(1.0) as u64;
+            }
+        }
         self.sample_rate = new_sr;
     }
 
@@ -309,27 +389,29 @@ impl PianoSynthEngine {
             v.damper_noise_env = 0.0;
             v.key_release_noise_env = 0.0;
         }
+        for b in &mut self.bounce_events {
+            b.active = false;
+        }
     }
 
-    pub fn note_on(
+    #[allow(clippy::too_many_arguments)]
+    fn trigger_voice(
         &mut self,
         midi_note: u8,
         velocity_u8: u8,
         params: &EngineParams,
-        instrument: &InstrumentModel,
+        exciter: ExciterType,
+        inharmonicity_base: f32,
+        decay_scale: f32,
         pedals: &PedalState,
+        is_bounce: bool,
     ) {
-        if velocity_u8 == 0 {
-            self.note_off(midi_note, params, pedals);
-            return;
-        }
-
         // Check keyboard range if not extended
         if !params.action.keyboard_range_extended && !(21..=108).contains(&midi_note) {
             return;
         }
 
-        // Allocate voice (reuse same note if already sounding softly or oldest released voice)
+        // Allocate voice (reuse free slot, then oldest released voice, then oldest held voice)
         let mut slot_idx = self.voices.iter().position(|v| !v.active);
         if slot_idx.is_none() {
             slot_idx = self
@@ -380,7 +462,9 @@ impl PianoSynthEngine {
             let t = ((vel_norm - 0.55) / 0.45).clamp(0.0, 1.0);
             h_mezzo * (1.0 - t) + h_forte * t
         };
-        let hardness = (hardness_base
+        let play_mode = params.play_mode.mode;
+        let harp_hardness_scale = if play_mode == PlayMode::DiatonicHarp { 0.88 } else { 1.0 };
+        let hardness = ((hardness_base * harp_hardness_scale)
             + note_edit.map(|ne| finite_or(ne.hammer_hardness_offset, 0.0)).unwrap_or(0.0)
             - soft_pedal * 0.22
             - celeste_pedal * 0.30
@@ -392,7 +476,7 @@ impl PianoSynthEngine {
         let length_factor = (2.74 / string_len).powi(2);
         let midi_rel = ((midi_note as f32 - 21.0) / 87.0).clamp(0.0, 1.2);
         let condition = finite_or(params.condition, 0.04).clamp(0.0, 2.0);
-        let b_inharm = (finite_or(instrument.inharmonicity_base, 0.00018).max(0.0)
+        let b_inharm = (finite_or(inharmonicity_base, 0.00018).max(0.0)
             * length_factor
             * (0.4 + 4.5 * midi_rel.powi(2))
             * (1.0 + condition * 0.35))
@@ -406,23 +490,41 @@ impl PianoSynthEngine {
 
         let nyquist = self.sample_rate * 0.45;
         let impedance = finite_or(params.design.soundboard_impedance, 0.52).clamp(0.0, 1.5);
+        let play_decay_scale = match play_mode {
+            PlayMode::DiatonicHarp => 1.15,
+            PlayMode::Guitar => 0.82 + 0.36 * finite_or(params.play_mode.guitar_body, 0.5).clamp(0.0, 1.5),
+            PlayMode::Standard => 1.0,
+        };
         let base_decay_s = ((7.5 - 5.8 * midi_rel).max(0.4)
-            * finite_or(instrument.decay_scale, 1.0).clamp(0.1, 5.0)
+            * finite_or(decay_scale, 1.0).clamp(0.1, 5.0)
+            * play_decay_scale
             * (1.35 - impedance * 0.65).max(0.15))
             .max(0.1);
+
+        let guitar_body = finite_or(params.play_mode.guitar_body, 0.5).clamp(0.0, 1.5);
+        let guitar_legato = play_mode == PlayMode::Guitar && params.play_mode.guitar_legato;
+        let lfo_init_phase = if params.note_fx.lfo_phase_locked {
+            self.global_lfo_phase
+        } else {
+            ((self.note_counter as f32) * 0.37).fract()
+        };
 
         let v = &mut self.voices[idx];
         v.active = true;
         v.midi_note = midi_note;
         v.key_down = true;
         v.sustained = false;
+        let _ = is_bounce;
         v.sostenuto_held = pedals.sostenuto >= 0.5 && pedals.super_sostenuto;
         v.harmonic_held = pedals.harmonic >= 0.5;
         v.velocity = vel_eff * soft_atten * mute_atten * note_gain;
         v.freq = freq;
         v.age_samples = 0;
-        v.exciter = instrument.exciter;
+        v.exciter = exciter;
         v.bloom_state = 0.0;
+        v.lfo_phase = lfo_init_phase;
+        v.vel_norm_raw = vel_norm;
+        v.is_guitar_legato = guitar_legato;
         v.rng_state = (self.note_counter as u32).wrapping_mul(747796405).wrapping_add(midi_note as u32 + 13);
 
         // Natural stereo keyboard image (-0.78 bass to +0.78 treble)
@@ -454,7 +556,7 @@ impl PianoSynthEngine {
             let rolloff = (1.0 / n.powf(1.35 / hammer_bright)).clamp(0.02, 1.0);
             let prof_weight = finite_or(params.voicing.spectrum_profile[p_idx], 1.0).clamp(0.0, 2.0);
             // Electric piano / harpsichord exciter harmonic emphasis
-            let exciter_shape = match instrument.exciter {
+            let exciter_shape = match exciter {
                 ExciterType::TineHammer => if p_idx == 0 { 1.4 } else if p_idx < 3 { 0.8 } else { 0.25 },
                 ExciterType::ReedHammer => if p_idx % 2 == 0 { 1.15 } else { 0.45 },
                 ExciterType::PluckPlectrum => 1.15 * (0.85 + 0.15 * n),
@@ -464,8 +566,13 @@ impl PianoSynthEngine {
                 ExciterType::PreparedBolt => if p_idx % 2 == 1 { 1.35 } else { 0.7 },
                 _ => 1.0,
             };
+            let play_shape = match play_mode {
+                PlayMode::DiatonicHarp => if p_idx < 3 { 1.10 } else { 0.82 },
+                PlayMode::Guitar => if p_idx < 3 { 0.85 + 0.30 * guitar_body } else { 0.90 },
+                PlayMode::Standard => 1.0,
+            };
 
-            let amp = v.velocity * strike_comb * rolloff * prof_weight * exciter_shape * 0.24;
+            let amp = v.velocity * strike_comb * rolloff * prof_weight * exciter_shape * play_shape * 0.24;
             v.partial_amps[p_idx] = amp;
             v.partial_levels[p_idx] = amp;
 
@@ -473,11 +580,105 @@ impl PianoSynthEngine {
             v.partial_decays[p_idx] = (-1.0 / (partial_decay_s * self.sample_rate)).exp();
         }
 
-        v.hammer_noise_env = v.velocity * finite_or(params.voicing.hammer_noise, 0.35).clamp(0.0, 2.0) * 0.35;
+        let legato_noise_scale = if guitar_legato { 0.30 } else { 1.0 };
+        v.hammer_noise_env =
+            v.velocity * finite_or(params.voicing.hammer_noise, 0.35).clamp(0.0, 2.0) * 0.35 * legato_noise_scale;
         v.hammer_noise_lp = 0.0;
         v.damper_noise_env = 0.0;
         v.key_release_noise_env = 0.0;
         v.key_release_lp = 0.0;
+    }
+
+    fn schedule_bounces(
+        &mut self,
+        midi_note: u8,
+        velocity_u8: u8,
+        params: &EngineParams,
+        instrument: &InstrumentModel,
+    ) {
+        let max_bounces = params.bounce.max_bounces.min(16);
+        if max_bounces == 0 {
+            return;
+        }
+        let vel_norm = (velocity_u8 as f32 / 127.0).clamp(0.01, 1.0);
+        let vel_sens = finite_or(params.bounce.velocity_sensitivity, 0.5).clamp(0.0, 1.0);
+        let delay_scale = (1.0 - vel_sens * 0.45 * (vel_norm - 0.5)).clamp(0.4, 1.6);
+        let mut cur_delay_ms = (finite_or(params.bounce.delay_ms, 120.0).clamp(15.0, 2000.0)) * delay_scale;
+        let delay_loss = finite_or(params.bounce.delay_loss, 0.15).clamp(0.0, 0.85);
+        let vel_loss = finite_or(params.bounce.velocity_loss, 0.35).clamp(0.05, 0.90);
+        let humanize = finite_or(params.bounce.humanization, 0.1).clamp(0.0, 1.0);
+
+        let mut cur_vel = velocity_u8 as f32;
+        let mut cumulative_samples = 0_u64;
+
+        for _ in 0..max_bounces {
+            cur_vel *= 1.0 - vel_loss;
+            let next_vel_u8 = cur_vel.round().clamp(0.0, 127.0) as u8;
+            if next_vel_u8 < 2 {
+                break;
+            }
+            self.rng = self.rng.wrapping_mul(1664525).wrapping_add(1013904223);
+            let jitter = ((self.rng >> 16) as f32 / 65535.0 - 0.5) * 2.0 * humanize * 0.12;
+            let step_ms = (cur_delay_ms * (1.0 + jitter)).clamp(10.0, 2000.0);
+            let step_samples = ((step_ms * 0.001) * self.sample_rate).round().max(1.0) as u64;
+            cumulative_samples = cumulative_samples.saturating_add(step_samples);
+            cur_delay_ms = (cur_delay_ms * (1.0 - delay_loss)).clamp(10.0, 2000.0);
+
+            let slot = self
+                .bounce_events
+                .iter()
+                .position(|b| !b.active)
+                .or_else(|| {
+                    self.bounce_events
+                        .iter()
+                        .enumerate()
+                        .max_by_key(|(_, b)| b.samples_until_trigger)
+                        .map(|(i, _)| i)
+                });
+            if let Some(s_idx) = slot {
+                self.bounce_events[s_idx] = BounceEvent {
+                    active: true,
+                    samples_until_trigger: cumulative_samples,
+                    midi_note,
+                    velocity_u8: next_vel_u8,
+                    exciter: instrument.exciter,
+                    inharmonicity_base: instrument.inharmonicity_base,
+                    decay_scale: instrument.decay_scale,
+                };
+            }
+        }
+    }
+
+    pub fn note_on(
+        &mut self,
+        midi_note: u8,
+        velocity_u8: u8,
+        params: &EngineParams,
+        instrument: &InstrumentModel,
+        pedals: &PedalState,
+    ) {
+        if velocity_u8 == 0 {
+            self.note_off(midi_note, params, pedals);
+            return;
+        }
+        if !params.action.keyboard_range_extended && !(21..=108).contains(&midi_note) {
+            return;
+        }
+
+        self.trigger_voice(
+            midi_note,
+            velocity_u8,
+            params,
+            instrument.exciter,
+            instrument.inharmonicity_base,
+            instrument.decay_scale,
+            pedals,
+            false,
+        );
+
+        if params.bounce.enabled {
+            self.schedule_bounces(midi_note, velocity_u8, params, instrument);
+        }
     }
 
     pub fn note_off(&mut self, midi_note: u8, params: &EngineParams, pedals: &PedalState) {
@@ -488,6 +689,12 @@ impl PianoSynthEngine {
         };
         let key_rel_amt = finite_or(params.action.key_release_noise, 0.22).clamp(0.0, 2.0);
         let damper_amt = finite_or(params.action.damper_noise, 0.28).clamp(0.0, 2.0);
+
+        for b in &mut self.bounce_events {
+            if b.active && b.midi_note == midi_note {
+                b.active = false;
+            }
+        }
 
         for v in &mut self.voices {
             if v.active && v.midi_note == midi_note && v.key_down {
@@ -582,14 +789,40 @@ impl PianoSynthEngine {
 
         let damper_release_s = (0.045 + finite_or(params.action.damping_duration, 0.5).clamp(0.0, 2.0) * 0.18).max(0.025);
         let release_coeff = (-1.0 / (damper_release_s * self.sample_rate)).exp();
+        let legato_release_coeff = (-1.0 / ((damper_release_s * 1.8).max(0.05) * self.sample_rate)).exp();
         let hammer_lp_coeff = (0.18 + finite_or(params.voicing.hammer_tone, 0.5) * 0.68).clamp(0.05, 0.92);
         let unison_mix = finite_or(params.tuning.unison_balance, 0.5).clamp(0.0, 1.0);
         let bloom_amt = finite_or(params.design.blooming_energy, 0.28).clamp(0.0, 2.0) * 0.25;
+        let symp_play_scale = if params.play_mode.mode == PlayMode::Guitar {
+            0.4 + finite_or(params.play_mode.guitar_body, 0.5).clamp(0.0, 2.0) * 1.2
+        } else {
+            1.0
+        };
         let symp_amt = finite_or(params.design.sympathetic_resonance, 0.45).clamp(0.0, 2.0)
-            * (0.35 + if sustain_on { 0.65 } else { 0.0 });
+            * (0.35 + if sustain_on { 0.65 } else { 0.0 })
+            * symp_play_scale;
         let duplex_amt = finite_or(params.design.duplex_scale_resonance, 0.35).clamp(0.0, 2.0) * 0.15;
         let quad = finite_or(params.design.quadratic_effect, 0.22).clamp(0.0, 2.0) * 0.12;
         let vol = 10.0_f32.powf(finite_or(params.volume_db, -4.0).clamp(-80.0, 24.0) / 20.0);
+
+        let lfo_rate_hz = finite_or(params.note_fx.lfo_rate_hz, 5.2).clamp(0.05, 40.0);
+        let lfo_inc = lfo_rate_hz / self.sample_rate;
+        let lfo_shape = finite_or(params.note_fx.lfo_shape, 0.5).clamp(0.0, 1.0);
+        let lfo_skew = finite_or(params.note_fx.lfo_skew, 0.5).clamp(0.05, 0.95);
+        let onset_samples = (finite_or(params.note_fx.onset_duration_ms, 80.0).clamp(0.0, 5000.0) * 0.001) * self.sample_rate;
+        let vib_base_cents = finite_or(params.note_fx.vibrato_cents, 0.0).clamp(-200.0, 200.0);
+        let vib_vel_cents = finite_or(params.note_fx.vibrato_offset_cents, 0.0).clamp(-200.0, 200.0);
+        let trem_db = finite_or(params.note_fx.tremolo_depth_db, 0.0).clamp(0.0, 24.0);
+        let trem_phase_offset = finite_or(params.note_fx.tremolo_phase, 0.0).clamp(0.0, 1.0) * 0.5;
+        let smear = finite_or(params.note_fx.smear, 0.0).clamp(0.0, 1.0);
+        let attack_param = finite_or(params.note_fx.attack_envelope, 0.5).clamp(0.0, 1.0);
+        let attack_base_s = if attack_param <= 0.5 {
+            0.0003 + (attack_param / 0.5) * 0.0012
+        } else {
+            0.0015 + ((attack_param - 0.5) / 0.5).powi(2) * 0.080
+        };
+        let attack_samples = attack_base_s * self.sample_rate;
+        let active_note_fx = vib_base_cents.abs() > 1e-4 || vib_vel_cents.abs() > 1e-4 || trem_db > 1e-4;
 
         let hammer_noise_decay = (-1.0 / (0.0018 * self.sample_rate)).exp();
         let damper_noise_decay = (-1.0 / (0.0026 * self.sample_rate)).exp();
@@ -597,7 +830,6 @@ impl PianoSynthEngine {
         let key_release_lp_coeff = (1.0 - (-2.0 * PI * 380.0 / self.sample_rate).exp()).clamp(0.02, 0.5);
         let bloom_tau = self.sample_rate * 0.35;
         let bloom_state_decay = (-1.0 / (0.0416 * self.sample_rate)).exp();
-        let attack_samples = self.sample_rate * 0.0015;
         let symp_in_coeff = (1.0 - (-1.0 / (0.035 * self.sample_rate)).exp()).clamp(1e-5, 0.05);
         let symp_lp_coeff = (1.0 - (-1.0 / (0.0007 * self.sample_rate)).exp()).clamp(0.001, 0.25);
         let symp_bp_decay = (-1.0 / (0.0026 * self.sample_rate)).exp();
@@ -605,6 +837,31 @@ impl PianoSynthEngine {
         let nyq_inc = PI * 0.9;
 
         for i in 0..len {
+            // Sample-accurate Mallet Bounce event dispatch (zero allocation)
+            for b_idx in 0..MAX_BOUNCE_EVENTS {
+                if !self.bounce_events[b_idx].active {
+                    continue;
+                }
+                if self.bounce_events[b_idx].samples_until_trigger > 0 {
+                    self.bounce_events[b_idx].samples_until_trigger -= 1;
+                }
+                if self.bounce_events[b_idx].samples_until_trigger == 0 {
+                    let ev = self.bounce_events[b_idx];
+                    self.bounce_events[b_idx].active = false;
+                    self.trigger_voice(
+                        ev.midi_note,
+                        ev.velocity_u8,
+                        params,
+                        ev.exciter,
+                        ev.inharmonicity_base,
+                        ev.decay_scale,
+                        pedals,
+                        true,
+                    );
+                }
+            }
+            self.global_lfo_phase = (self.global_lfo_phase + lfo_inc).fract();
+
             let mut sum_l = 0.0_f32;
             let mut sum_r = 0.0_f32;
             let mut body_energy = 0.0_f32;
@@ -616,11 +873,55 @@ impl PianoSynthEngine {
 
                 let full_held = v.key_down || (v.sustained && sustain_on) || v.sostenuto_held;
                 let harmonic_only_held = !full_held && v.harmonic_held && pedals.harmonic >= 0.5;
-                let mut sample = 0.0_f32;
+                let voice_release_coeff = if v.is_guitar_legato {
+                    legato_release_coeff
+                } else {
+                    release_coeff
+                };
+                let mut sample_l = 0.0_f32;
+                let mut sample_r = 0.0_f32;
                 let mut max_level = 0.0_f32;
 
-                // Attack smoothing (first ~1.5 ms)
-                let attack_env = (v.age_samples as f32 / attack_samples).min(1.0);
+                // Attack smoothing (scaled by NoteFx attack_envelope and guitar legato)
+                let v_attack_samples = if v.is_guitar_legato {
+                    attack_samples * 2.2
+                } else {
+                    attack_samples
+                };
+                let attack_env = (v.age_samples as f32 / v_attack_samples.max(1.0)).min(1.0);
+
+                // Per-voice LFO modulation (vibrato + stereo tremolo)
+                let (pitch_mult, trem_gain_l, trem_gain_r) = if active_note_fx {
+                    let onset_env = if onset_samples < 1.0 {
+                        1.0
+                    } else {
+                        (v.age_samples as f32 / onset_samples).min(1.0)
+                    };
+                    let lfo_l = eval_lfo(v.lfo_phase, lfo_shape, lfo_skew);
+                    let lfo_r = if trem_phase_offset > 1e-4 {
+                        eval_lfo((v.lfo_phase + trem_phase_offset).fract(), lfo_shape, lfo_skew)
+                    } else {
+                        lfo_l
+                    };
+                    let vib_cents = (vib_base_cents + vib_vel_cents * v.vel_norm_raw).clamp(-200.0, 200.0);
+                    let p_mult = if vib_cents.abs() > 1e-4 {
+                        2.0_f32.powf((lfo_l * onset_env * vib_cents) / 1200.0)
+                    } else {
+                        1.0
+                    };
+                    let (tg_l, tg_r) = if trem_db > 1e-4 {
+                        let att_l = -trem_db * 0.5 * (1.0 - lfo_l) * onset_env;
+                        let att_r = -trem_db * 0.5 * (1.0 - lfo_r) * onset_env;
+                        (10.0_f32.powf(att_l / 20.0), 10.0_f32.powf(att_r / 20.0))
+                    } else {
+                        (1.0, 1.0)
+                    };
+                    (p_mult, tg_l, tg_r)
+                } else {
+                    (1.0, 1.0, 1.0)
+                };
+                v.lfo_phase = (v.lfo_phase + lfo_inc).fract();
+
                 // Blooming swell for sustained acoustic tone
                 v.bloom_state = v.bloom_state * bloom_state_decay + (1.0 - v.bloom_state) * (1.0 - bloom_state_decay);
                 let bloom_mult = 1.0 + bloom_amt * (1.0 - (-(v.age_samples as f32) / bloom_tau).exp());
@@ -634,16 +935,34 @@ impl PianoSynthEngine {
                     let pb = v.phases_b[p_idx];
                     let s_a = pa.sin();
                     let s_b = pb.sin();
+                    let partial_weight = level * if p_idx >= 2 { bloom_mult } else { 1.0 };
                     let mixed = s_a * (1.0 - unison_mix * 0.45) + s_b * (unison_mix * 0.45);
-                    sample += mixed * level * if p_idx >= 2 { bloom_mult } else { 1.0 };
+                    if smear > 1e-4 {
+                        let stereo_sep = (s_a - s_b) * (smear * 0.28);
+                        sample_l += (mixed + stereo_sep) * partial_weight;
+                        sample_r += (mixed - stereo_sep) * partial_weight;
+                    } else {
+                        let w = mixed * partial_weight;
+                        sample_l += w;
+                        sample_r += w;
+                    }
 
-                    let mut next_pa = pa + v.phase_incs_a[p_idx];
+                    let inc_a = (v.phase_incs_a[p_idx] * pitch_mult).min(2.0 * PI * 0.48);
+                    let smear_factor = if smear > 1e-4 {
+                        let sign = if p_idx % 2 == 0 { 1.0 } else { -1.0 };
+                        1.0 + sign * smear * 0.004 * (p_idx as f32 + 1.0)
+                    } else {
+                        1.0
+                    };
+                    let inc_b = (v.phase_incs_b[p_idx] * pitch_mult * smear_factor).min(2.0 * PI * 0.48);
+
+                    let mut next_pa = pa + inc_a;
                     if next_pa >= 2.0 * PI {
                         next_pa -= 2.0 * PI;
                     }
                     v.phases_a[p_idx] = next_pa;
 
-                    let mut next_pb = pb + v.phase_incs_b[p_idx];
+                    let mut next_pb = pb + inc_b;
                     if next_pb >= 2.0 * PI {
                         next_pb -= 2.0 * PI;
                     }
@@ -653,12 +972,12 @@ impl PianoSynthEngine {
                         v.partial_decays[p_idx]
                     } else if harmonic_only_held {
                         if p_idx == 0 {
-                            v.partial_decays[p_idx].min(release_coeff)
+                            v.partial_decays[p_idx].min(voice_release_coeff)
                         } else {
                             v.partial_decays[p_idx]
                         }
                     } else {
-                        v.partial_decays[p_idx].min(release_coeff)
+                        v.partial_decays[p_idx].min(voice_release_coeff)
                     };
                     v.partial_levels[p_idx] = level * decay;
                     if v.partial_levels[p_idx] > max_level {
@@ -666,10 +985,11 @@ impl PianoSynthEngine {
                     }
                 }
 
-                // Duplex shimmer on treble notes
+                // Duplex shimmer on treble notes (integer 2x of 3rd partial avoids phase wrap discontinuity)
                 if v.midi_note >= 60 && duplex_amt > 0.001 && max_level > 0.001 {
-                    let duplex_sig = (v.phases_a[2] * 1.5).sin() * v.partial_levels[0] * duplex_amt;
-                    sample += duplex_sig;
+                    let duplex_sig = (v.phases_a[2] * 2.0).sin() * v.partial_levels[0] * duplex_amt;
+                    sample_l += duplex_sig;
+                    sample_r += duplex_sig;
                 }
 
                 // Rattle pedal (parchment strip buzz / jangle harmonic modulation)
@@ -691,21 +1011,26 @@ impl PianoSynthEngine {
                     }
                     let sizzle = v.next_noise() * 0.28;
                     let rattle_mod = (jangle + sizzle) * buzz_gate * rattle_env * rattle_amt * 1.65;
-                    sample = sample * (1.0 - 0.28 * rattle_amt * buzz_gate) + rattle_mod;
+                    let am = 1.0 - 0.28 * rattle_amt * buzz_gate;
+                    sample_l = sample_l * am + rattle_mod;
+                    sample_r = sample_r * am + rattle_mod;
                 }
 
                 // Hammer percussion transient burst
                 if v.hammer_noise_env > 1e-5 {
                     let noise = v.next_noise();
                     v.hammer_noise_lp = v.hammer_noise_lp * (1.0 - hammer_lp_coeff) + noise * hammer_lp_coeff;
-                    sample += v.hammer_noise_lp * v.hammer_noise_env;
+                    let hn = v.hammer_noise_lp * v.hammer_noise_env;
+                    sample_l += hn;
+                    sample_r += hn;
                     v.hammer_noise_env *= hammer_noise_decay;
                 }
 
                 // Damper release felt thump
                 if v.damper_noise_env > 1e-5 {
-                    let d_noise = v.next_noise();
-                    sample += d_noise * v.damper_noise_env * 0.25;
+                    let d_noise = v.next_noise() * v.damper_noise_env * 0.25;
+                    sample_l += d_noise;
+                    sample_r += d_noise;
                     v.damper_noise_env *= damper_noise_decay;
                 }
 
@@ -714,23 +1039,29 @@ impl PianoSynthEngine {
                     let kr_noise = v.next_noise();
                     v.key_release_lp = v.key_release_lp * (1.0 - key_release_lp_coeff)
                         + kr_noise * key_release_lp_coeff;
-                    sample += v.key_release_lp * v.key_release_noise_env;
+                    let kr = v.key_release_lp * v.key_release_noise_env;
+                    sample_l += kr;
+                    sample_r += kr;
                     v.key_release_noise_env *= key_release_decay;
                 }
 
-                // Subtle nonlinear quadratic soundboard saturation
-                sample = sample * attack_env + quad * sample * sample;
-                if !sample.is_finite() {
-                    sample = 0.0;
+                // Subtle nonlinear quadratic soundboard saturation & amplitude tremolo
+                sample_l = (sample_l * attack_env + quad * sample_l * sample_l) * trem_gain_l;
+                sample_r = (sample_r * attack_env + quad * sample_r * sample_r) * trem_gain_r;
+                if !sample_l.is_finite() {
+                    sample_l = 0.0;
+                }
+                if !sample_r.is_finite() {
+                    sample_r = 0.0;
                 }
 
                 let pan_r = ((v.pan + 1.0) * 0.5).clamp(0.0, 1.0);
                 let gain_l = (1.0 - pan_r).sqrt();
                 let gain_r = pan_r.sqrt();
 
-                sum_l += sample * gain_l;
-                sum_r += sample * gain_r;
-                body_energy += sample;
+                sum_l += sample_l * gain_l;
+                sum_r += sample_r * gain_r;
+                body_energy += 0.5 * (sample_l + sample_r);
 
                 v.age_samples += 1;
                 if max_level < 1e-5
@@ -1420,5 +1751,303 @@ mod tests {
 
         synth.all_notes_off();
         assert_eq!(synth.active_voice_count(), 0);
+    }
+
+    #[test]
+    fn test_sympathetic_and_duplex_scale_resonance_isolation() {
+        let sr = 48000.0_f32;
+        let inst = test_instrument();
+
+        // 1. Sympathetic tank isolation
+        let mut p_dry = clean_params();
+        p_dry.design.sympathetic_resonance = 0.0;
+        let mut p_symp = clean_params();
+        p_symp.design.sympathetic_resonance = 1.0;
+
+        let mut pedals = PedalState::default();
+        pedals.sustain = 1.0;
+
+        let mut s_dry = PianoSynthEngine::new(sr);
+        let mut s_symp = PianoSynthEngine::new(sr);
+        s_dry.note_on(60, 110, &p_dry, &inst, &pedals);
+        s_symp.note_on(60, 110, &p_symp, &inst, &pedals);
+
+        let _ = render_mono(&mut s_dry, 4096, 256, &p_dry, &pedals);
+        let _ = render_mono(&mut s_symp, 4096, 256, &p_symp, &pedals);
+        s_dry.note_off(60, &p_dry, &pedals);
+        s_symp.note_off(60, &p_symp, &pedals);
+
+        let tail_dry = render_mono(&mut s_dry, 16384, 256, &p_dry, &pedals);
+        let tail_symp = render_mono(&mut s_symp, 16384, 256, &p_symp, &pedals);
+        let diff_symp: Vec<f32> = tail_symp.iter().zip(tail_dry.iter()).map(|(a, b)| a - b).collect();
+        let symp_diff_rms = rms(&diff_symp);
+        assert!(symp_diff_rms > 1e-4, "sympathetic resonance should alter tail: {}", symp_diff_rms);
+
+        // 2. Duplex scale shimmer isolation on treble (MIDI >= 60) vs bass (MIDI < 60)
+        let mut p_dup0 = clean_params();
+        p_dup0.design.duplex_scale_resonance = 0.0;
+        let mut p_dup1 = clean_params();
+        p_dup1.design.duplex_scale_resonance = 1.0;
+
+        let pedals_off = PedalState::default();
+        let mut s_t0 = PianoSynthEngine::new(sr);
+        let mut s_t1 = PianoSynthEngine::new(sr);
+        s_t0.note_on(72, 110, &p_dup0, &inst, &pedals_off); // C5 >= 60
+        s_t1.note_on(72, 110, &p_dup1, &inst, &pedals_off);
+        let b_t0 = render_mono(&mut s_t0, 8192, 256, &p_dup0, &pedals_off);
+        let b_t1 = render_mono(&mut s_t1, 8192, 256, &p_dup1, &pedals_off);
+        let treble_diff: Vec<f32> = b_t1.iter().zip(b_t0.iter()).map(|(a, b)| a - b).collect();
+        let treble_diff_rms = rms(&treble_diff);
+        assert!(
+            treble_diff_rms > 1e-3,
+            "duplex shimmer should appear on treble >= 60: diff_rms={}",
+            treble_diff_rms
+        );
+        // Verify duplex energy sits at 2x partial 3 (~6 * f0)
+        let f_c5 = compute_note_frequency(72, &p_dup0);
+        let shimmer_diff_pow = goertzel_power(&treble_diff, sr, f_c5 * 6.0);
+        assert!(shimmer_diff_pow > 1e-6, "duplex shimmer spectral peak missing: {}", shimmer_diff_pow);
+
+        let mut s_b0 = PianoSynthEngine::new(sr);
+        let mut s_b1 = PianoSynthEngine::new(sr);
+        s_b0.note_on(48, 110, &p_dup0, &inst, &pedals_off); // C3 < 60
+        s_b1.note_on(48, 110, &p_dup1, &inst, &pedals_off);
+        let b_b0 = render_mono(&mut s_b0, 4096, 256, &p_dup0, &pedals_off);
+        let b_b1 = render_mono(&mut s_b1, 4096, 256, &p_dup1, &pedals_off);
+        let bass_diff = b_b0.iter().zip(b_b1.iter()).map(|(a, b)| (a - b).abs()).fold(0.0_f32, f32::max);
+        assert!(bass_diff < 1e-6, "duplex resonance should only engage on treble notes >= 60");
+    }
+
+    #[test]
+    fn test_hammer_damper_and_pedal_mechanical_noises_isolation() {
+        let sr = 48000.0_f32;
+        let inst = test_instrument();
+        let pedals = PedalState::default();
+
+        // 1. Hammer noise isolation
+        let p_h0 = clean_params();
+        let mut p_h1 = clean_params();
+        p_h1.voicing.hammer_noise = 1.0;
+
+        let mut s_h0 = PianoSynthEngine::new(sr);
+        let mut s_h1 = PianoSynthEngine::new(sr);
+        s_h0.note_on(60, 100, &p_h0, &inst, &pedals);
+        s_h1.note_on(60, 100, &p_h1, &inst, &pedals);
+        let b_h0 = render_mono(&mut s_h0, 512, 256, &p_h0, &pedals);
+        let b_h1 = render_mono(&mut s_h1, 512, 256, &p_h1, &pedals);
+        let diff_hammer: Vec<f32> = b_h1.iter().zip(b_h0.iter()).map(|(a, b)| a - b).collect();
+        assert!(rms(&diff_hammer) > 1e-3, "hammer_noise=1.0 should inject attack transient");
+
+        // 2. Damper noise isolation on note_off
+        let p_d0 = clean_params();
+        let mut p_d1 = clean_params();
+        p_d1.action.damper_noise = 1.0;
+
+        let mut s_d0 = PianoSynthEngine::new(sr);
+        let mut s_d1 = PianoSynthEngine::new(sr);
+        s_d0.note_on(60, 100, &p_d0, &inst, &pedals);
+        s_d1.note_on(60, 100, &p_d1, &inst, &pedals);
+        let _ = render_mono(&mut s_d0, 2048, 256, &p_d0, &pedals);
+        let _ = render_mono(&mut s_d1, 2048, 256, &p_d1, &pedals);
+        s_d0.note_off(60, &p_d0, &pedals);
+        s_d1.note_off(60, &p_d1, &pedals);
+        let rel_d0 = render_mono(&mut s_d0, 512, 256, &p_d0, &pedals);
+        let rel_d1 = render_mono(&mut s_d1, 512, 256, &p_d1, &pedals);
+        let diff_damper: Vec<f32> = rel_d1.iter().zip(rel_d0.iter()).map(|(a, b)| a - b).collect();
+        assert!(rms(&diff_damper) > 1e-4, "damper_noise=1.0 should inject release thump");
+
+        // 3. Pedal mechanical noise isolation with zero active notes
+        let mut p_p0 = clean_params();
+        p_p0.action.pedal_noise = 0.0;
+        let mut p_p1 = clean_params();
+        p_p1.action.pedal_noise = 1.0;
+
+        let mut prev_p = PedalState::default();
+        let mut next_p = PedalState::default();
+        next_p.sustain = 1.0;
+
+        let mut s_p0 = PianoSynthEngine::new(sr);
+        let mut s_p1 = PianoSynthEngine::new(sr);
+        s_p0.update_pedals(&next_p, &prev_p, &p_p0);
+        s_p1.update_pedals(&next_p, &prev_p, &p_p1);
+        let out_p0 = render_mono(&mut s_p0, 512, 256, &p_p0, &next_p);
+        let out_p1 = render_mono(&mut s_p1, 512, 256, &p_p1, &next_p);
+        prev_p = next_p;
+        let _ = prev_p;
+        assert!(rms(&out_p0) < 1e-6);
+        assert!(rms(&out_p1) > 1e-3, "pedal_noise=1.0 should produce thump on sustain press");
+    }
+
+    #[test]
+    fn test_mallet_bounce_multi_strike_decay() {
+        let sr = 48000.0_f32;
+        let mut inst = test_instrument();
+        inst.decay_scale = 0.10;
+
+        let pedals = PedalState::default();
+
+        let mut p_single = clean_params();
+        p_single.bounce.enabled = false;
+        p_single.voicing.hammer_noise = 0.8;
+
+        let mut p_bounce = clean_params();
+        p_bounce.voicing.hammer_noise = 0.8;
+        p_bounce.bounce.enabled = true;
+        p_bounce.bounce.delay_ms = 120.0;
+        p_bounce.bounce.velocity_sensitivity = 0.0;
+        p_bounce.bounce.delay_loss = 0.10;
+        p_bounce.bounce.velocity_loss = 0.25;
+        p_bounce.bounce.humanization = 0.0;
+        p_bounce.bounce.max_bounces = 5;
+
+        let mut s_single = PianoSynthEngine::new(sr);
+        let mut s_bounce = PianoSynthEngine::new(sr);
+
+        s_single.note_on(60, 115, &p_single, &inst, &pedals);
+        s_bounce.note_on(60, 115, &p_bounce, &inst, &pedals);
+
+        // Render 1.2s (57600 samples)
+        let b_single = render_mono(&mut s_single, 57600, 256, &p_single, &pedals);
+        let b_bounce = render_mono(&mut s_bounce, 57600, 256, &p_bounce, &pedals);
+
+        // Before bounce 1 (120ms = 5760 samples), signals must match identically
+        let pre_bounce_diff = b_bounce[..5750]
+            .iter()
+            .zip(b_single[..5750].iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(pre_bounce_diff < 1e-6, "unexpected signal diff before bounce 1: {}", pre_bounce_diff);
+
+        // Overall late tail energy is strongly sustained/re-excited by bounces
+        let w_single_tail = rms(&b_single[20000..]);
+        let w_bounce_tail = rms(&b_bounce[20000..]);
+        assert!(
+            w_bounce_tail > w_single_tail * 1.4,
+            "bounce strikes should re-excite tail vs single strike: bounce={}, single={}",
+            w_bounce_tail,
+            w_single_tail
+        );
+
+        // Isolate attack transient bursts at bounce timestamps (120ms=5760, 228ms=10944, 325.2ms=15610)
+        let hp_burst_rms = |buf: &[f32], start: usize| -> f32 {
+            let hp: Vec<f32> = buf[start..start + 256]
+                .windows(2)
+                .map(|w| w[1] - w[0])
+                .collect();
+            rms(&hp)
+        };
+        let t0 = hp_burst_rms(&b_bounce, 0);
+        let t1 = hp_burst_rms(&b_bounce, 5760);
+        let t2 = hp_burst_rms(&b_bounce, 10944);
+        let t3 = hp_burst_rms(&b_bounce, 15610);
+        let single_late_hp = hp_burst_rms(&b_single, 10944);
+
+        assert!(t2 > single_late_hp * 2.0, "bounce transient should exceed decayed single tail");
+        assert!(
+            t0 > t1 && t1 > t2 && t2 > t3,
+            "mallet bounce strike transients should decay monotonically: t0={}, t1={}, t2={}, t3={}",
+            t0,
+            t1,
+            t2,
+            t3
+        );
+    }
+
+    #[test]
+    fn test_notefx_lfo_vibrato_tremolo_and_smear() {
+        let sr = 48000.0_f32;
+        let inst = test_instrument();
+        let pedals = PedalState::default();
+
+        // 1. Vibrato
+        let p_dry = clean_params();
+        let mut p_vib = clean_params();
+        p_vib.note_fx.vibrato_cents = 50.0;
+        p_vib.note_fx.lfo_rate_hz = 6.0;
+        p_vib.note_fx.onset_duration_ms = 0.0;
+
+        let mut s_dry = PianoSynthEngine::new(sr);
+        let mut s_vib = PianoSynthEngine::new(sr);
+        s_dry.note_on(69, 100, &p_dry, &inst, &pedals);
+        s_vib.note_on(69, 100, &p_vib, &inst, &pedals);
+        let b_dry = render_mono(&mut s_dry, 16384, 256, &p_dry, &pedals);
+        let b_vib = render_mono(&mut s_vib, 16384, 256, &p_vib, &pedals);
+        let vib_diff: Vec<f32> = b_vib.iter().zip(b_dry.iter()).map(|(a, b)| a - b).collect();
+        assert!(rms(&vib_diff) > 0.01, "vibrato should modulate phase increments: {}", rms(&vib_diff));
+
+        // 2. Stereo Tremolo (depth + phase offset)
+        let mut p_trem = clean_params();
+        p_trem.note_fx.tremolo_depth_db = 12.0;
+        p_trem.note_fx.tremolo_phase = 1.0; // 180-deg L/R stereo offset
+        p_trem.note_fx.lfo_rate_hz = 5.0;
+        p_trem.note_fx.onset_duration_ms = 0.0;
+
+        let mut s_trem = PianoSynthEngine::new(sr);
+        s_trem.note_on(60, 100, &p_trem, &inst, &pedals); // Center-panned C4
+        let mut l = vec![0.0_f32; 12000];
+        let mut r = vec![0.0_f32; 12000];
+        s_trem.process_block(&mut l, &mut r, &p_trem, &pedals);
+        let lr_diff: Vec<f32> = l.iter().zip(r.iter()).map(|(a, b)| a - b).collect();
+        assert!(rms(&lr_diff) > 0.005, "stereo tremolo phase offset should create L/R difference: {}", rms(&lr_diff));
+
+        // 3. Smear stereo spread & attack_envelope
+        let mut p_smear = clean_params();
+        p_smear.note_fx.smear = 0.9;
+        p_smear.note_fx.attack_envelope = 1.0;
+
+        let mut s_smear = PianoSynthEngine::new(sr);
+        s_smear.note_on(60, 100, &p_smear, &inst, &pedals);
+        let mut sl = vec![0.0_f32; 4096];
+        let mut sr_buf = vec![0.0_f32; 4096];
+        s_smear.process_block(&mut sl, &mut sr_buf, &p_smear, &pedals);
+        let smear_lr: Vec<f32> = sl.iter().zip(sr_buf.iter()).map(|(a, b)| a - b).collect();
+        assert!(rms(&smear_lr) > 1e-4, "smear should introduce stereo partial spread");
+        assert!(rms(&sl[..256]) < rms(&sl[2048..4096]) * 0.5, "slow attack_envelope=1.0 should ramp onset");
+    }
+
+    #[test]
+    fn test_diatonic_harp_pedals_and_guitar_mode() {
+        let sr = 48000.0_f32;
+        let inst = test_instrument();
+        let pedals = PedalState::default();
+
+        // 1. Diatonic Harp: C pedal +1 -> C4 shifts to C#4; E pedal -1 -> E4 shifts to Eb4
+        let base_params = clean_params();
+        let f_cs4 = compute_note_frequency(61, &base_params);
+        let f_eb4 = compute_note_frequency(63, &base_params);
+
+        let mut harp_params = clean_params();
+        harp_params.play_mode.mode = PlayMode::DiatonicHarp;
+        harp_params.play_mode.harp_pedals = [1, 0, -1, 0, 0, 0, 0]; // C# and Eb
+
+        assert!((compute_note_frequency(60, &harp_params) - f_cs4).abs() < 1e-3);
+        assert!((compute_note_frequency(64, &harp_params) - f_eb4).abs() < 1e-3);
+
+        let mut s_harp = PianoSynthEngine::new(sr);
+        s_harp.note_on(60, 100, &harp_params, &inst, &pedals);
+        let b_harp = render_mono(&mut s_harp, 8192, 256, &harp_params, &pedals);
+        let f_c4 = compute_note_frequency(60, &base_params);
+        assert!(
+            goertzel_power(&b_harp, sr, f_cs4) > goertzel_power(&b_harp, sr, f_c4) * 50.0,
+            "harp C pedal +1 should render audio at C#4"
+        );
+
+        // 2. Guitar Mode: capo/fret +5 shifts C4 to F4 (perfect fourth)
+        let f_f4 = compute_note_frequency(65, &base_params);
+        let mut gtr_params = clean_params();
+        gtr_params.play_mode.mode = PlayMode::Guitar;
+        gtr_params.play_mode.guitar_fret = 5;
+        gtr_params.play_mode.guitar_body = 0.85;
+        gtr_params.play_mode.guitar_legato = true;
+
+        assert!((compute_note_frequency(60, &gtr_params) - f_f4).abs() < 1e-3);
+
+        let mut s_gtr = PianoSynthEngine::new(sr);
+        s_gtr.note_on(60, 100, &gtr_params, &inst, &pedals);
+        let b_gtr = render_mono(&mut s_gtr, 8192, 256, &gtr_params, &pedals);
+        assert!(
+            goertzel_power(&b_gtr, sr, f_f4) > goertzel_power(&b_gtr, sr, f_c4) * 50.0,
+            "guitar fret +5 should render audio at F4"
+        );
     }
 }
