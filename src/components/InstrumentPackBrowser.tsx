@@ -53,7 +53,7 @@ export const PIANOTEQ_PACKS: PackDefinition[] = [
     id: "bechstein-dg",
     title: "BechsteinDG Instrument Pack",
     column: 1,
-    match: (i) => textIncludesAny(i, ["bechstein", "d 282", "berlin concert"]),
+    match: (i) => textIncludesAny(i, ["bechstein-dg", "bechstein dg", "d 282", "berlin concert"]),
   },
   {
     id: "petrof",
@@ -111,6 +111,7 @@ export const PIANOTEQ_PACKS: PackDefinition[] = [
     title: "Electric Instrument Pack",
     column: 2,
     match: (i) =>
+      !textIncludesAny(i, ["kivir", "cp80", "cp-80"]) &&
       textIncludesAny(i, ["tines", "reeds", "rhodes", "wurlitzer", "mk1", "mk2"]),
   },
   {
@@ -135,7 +136,8 @@ export const PIANOTEQ_PACKS: PackDefinition[] = [
     id: "celeste",
     title: "Celeste Instrument Pack",
     column: 2,
-    match: (i) => textIncludesAny(i, ["celesta", "celeste", "glockenspiel", "toy-piano", "toy piano"]),
+    match: (i) =>
+      textIncludesAny(i, ["celesta", "celeste", "glockenspiel", "toy-piano", "toy piano", "kalimba"]),
   },
   {
     id: "xylo",
@@ -147,13 +149,14 @@ export const PIANOTEQ_PACKS: PackDefinition[] = [
     id: "steelpans",
     title: "Steelpans Instrument Pack",
     column: 2,
-    match: (i) => textIncludesAny(i, ["steel-drum", "steel drum", "steelpan", "kalimba"]),
+    match: (i) =>
+      textIncludesAny(i, ["steel-drum", "steel drum", "steelpan", "spacedrum", "hand-pan", "hand pan", "tank-drum", "tank drum"]),
   },
   {
     id: "harpsichord",
     title: "Harpsichord Instrument Pack",
     column: 2,
-    match: (i) => textIncludesAny(i, ["harpsichord", "ruckers", "blanchet", "neupert"]),
+    match: (i) => textIncludesAny(i, ["ruckers"]),
   },
 
   // Column 3 (6 packs)
@@ -169,19 +172,31 @@ export const PIANOTEQ_PACKS: PackDefinition[] = [
     title: "Karsten Instrument Pack",
     column: 3,
     match: (i) =>
-      textIncludesAny(i, ["karsten", "wiener-pianoforte", "pianoforte", "walter", "graf", "broadwood"]),
+      !textIncludesAny(i, ["kivir", "walter"]) &&
+      textIncludesAny(i, [
+        "karsten",
+        "salodiensis",
+        "giusti",
+        "schmidt",
+        "weimes",
+        "wiener-pianoforte",
+        "ny-steinway-square",
+        "steinway square",
+      ]),
   },
   {
     id: "kremsegg1",
     title: "Kremsegg1 Instrument Pack",
     column: 3,
-    match: (i) => textIncludesAny(i, ["kremsegg1", "erard", "érard", "1849"]),
+    match: (i) =>
+      textIncludesAny(i, ["kremsegg1", "dohnal", "besendorfer-1829", "erard", "érard", "streicher"]),
   },
   {
     id: "kremsegg2",
     title: "Kremsegg2 Instrument Pack",
     column: 3,
-    match: (i) => textIncludesAny(i, ["kremsegg2", "czapka", "streicher", "fuchs"]),
+    match: (i) =>
+      textIncludesAny(i, ["kremsegg2", "broadwood", "pleyel", "frenzel", "bechstein-1899", "bechstein (1899)"]),
   },
   {
     id: "morphing-layers",
@@ -195,7 +210,18 @@ export const PIANOTEQ_PACKS: PackDefinition[] = [
     column: 3,
     match: (i) =>
       i.category === "Prepared" ||
-      textIncludesAny(i, ["kivir", "bell", "carillon", "cimbalom", "prepared"]),
+      textIncludesAny(i, [
+        "kivir",
+        "clavichord",
+        "cymbalum",
+        "cimbalom",
+        "walter",
+        "cp80",
+        "cp-80",
+        "bell",
+        "carillon",
+        "prepared",
+      ]),
   },
 ];
 
