@@ -1,13 +1,9 @@
 # Current State (`CURRENT_STATE.md`)
 
 - **Última atualização**: 2026-11-20
-- **Estado atual da aplicação**: Todas as 7 branches dos subagentes integradas ao `main`. App Tauri 2 recompilado automaticamente e executando ao vivo (`target/debug/piano-tect-tauri` + Vite `:1430` em `pts/1`).
-- **Funcionalidades `APPROVED` (13/17)**: `SYNTH-001`, `SYNTH-004`, `SYNTH-005`, `SYNTH-006`, `INST-001`, `INST-002`, `MIDI-002`, `AUDIO-001`, `AUDIO-002`, `FX-002`, `UI-001`, `UI-002`, `REA-001`.
-- **Funcionalidades `TESTING` / `IMPLEMENTED` (4/17)**: `SYNTH-002` (`IMPLEMENTED`), `SYNTH-003` (`TESTING`), `MIDI-001` (`TESTING`), `FX-001` (`TESTING`).
-- **Testes aprovados**: 39/39 testes Rust (`cargo test`), 23/23 testes Vitest (`npm test`), `npm run build` OK, `validate-features.mjs --strict` OK.
-- **Testes reprovados**: 0.
+- **Estado atual da aplicação**: **Ciclo 1 e Ciclo 2 concluídos e integrados no `main`**. Aplicativo Tauri 2 compilado, testado e rodando ao vivo (`pts/1`, Vite `:1430`) com tema escuro corrigido nos `<select>` do WebKitGTK.
+- **Funcionalidades `APPROVED` (21/21)**: `SYNTH-001..009`, `INST-001..002`, `MIDI-001..003`, `AUDIO-001..002`, `FX-001..002`, `UI-001..002`, `REA-001`.
+- **Funcionalidades pendentes / reprovadas**: 0.
+- **Testes aprovados**: **51/51** testes Rust (`cargo test`), **31/31** testes Vitest (`npm test`), `npm run build` OK, `validate-features.mjs --strict` OK.
 - **Bloqueios**: Nenhum.
-- **Último commit de código**: `1be1299` (seguido pelo commit de atualização da matriz/docs).
-- **Próximas ações**:
-  1. Adicionar testes unitários dedicados para `SYNTH-002` (sympathetic/duplex), `SYNTH-003` (hammer/damper/pedal noise), `FX-001` (lid/binaural) e testar loopback virtual ALSA MIDI (`MIDI-001`).
-  2. Implementar recursos avançados mapeados em `docs/REFERENCE_PARAMETERS.json`: Mallet Bounce (`paramgroup_bounce`), Note Effects LFO/Vibrato/Tremolo/Smear (`paramgroup_notefx`), modo Guitar/Harp diatônico e reprodutor de arquivos MIDI no frontend/backend.
+- **Próximas ações (Ciclo 3 opcional)**: Suporte a importação de arquivos microtonais externos `.scl`/`.kbm`, carregamento de impulsos `.wav` customizados na reverberação e geração de pacotes Linux (`.deb`/`.AppImage`).

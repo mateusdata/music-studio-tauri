@@ -1,34 +1,31 @@
 # Test Results (`TEST_RESULTS.md`)
 
-Registro objetivo de execuções reais após integração no `main` (`1be1299`).
+Registro objetivo de execuções reais após a conclusão e integração do **Ciclo 2**.
 
-## Execução Integrada — 2026-11-20 (Pós-Merge das 7 Branches)
+## Execução Integrada — 2026-11-20 (Ciclo 2 Completo no `main`)
 
 ### 1. Rust Backend & DSP (`./scripts/with-sysroot.sh cargo test --manifest-path src-tauri/Cargo.toml`)
-- **Status**: **PASSED (39 passed, 0 failed, 0 ignored)** em `1.79s`
-- **Cobertura observada**:
-  - `synthesis::tests` (12 testes): `test_diapason_and_a4_tuning_accuracy`, `test_all_8_temperaments_a4_and_intervals`, `test_velocity_dynamics_monotonicity`, `test_soft_pedal_reduces_level_and_brightness`, `test_key_release_mechanical_noise`, `test_pro_note_edit_per_key_offsets`, `test_sample_rate_and_dynamic_buffer_sizes`, `test_rattle_pedal_buzz_and_threshold`, `test_harmonic_pedal_damps_fundamental_sustains_overtones`, `test_sostenuto_pedal_selective_hold`, `test_sustain_and_reversed_sustain_pedals`, `test_64_voice_polyphony_stress`.
-  - `audio::tests` (4 testes): `test_render_dsp_slice_64_voice_polyphony_and_dynamic_buffers`, `test_audio_manager_pedals_and_preset_morph`, `test_offline_wav_export_via_hound`, `test_offline_wav_export_with_selected_instrument`.
-  - `instruments::tests` (4 testes): `factory_instrument_count_and_unique_metadata` (32 modelos), `all_eight_instrument_categories_covered`, `physical_parameter_sanity_bounds`, `acoustic_differentiation_across_families`.
-  - `effects::tests` (7 testes): `test_mic_spatializer_level_and_delay_compensation`, `test_delay_echo_tail`, `test_brickwall_limiter_and_zero_nan_inf`, `test_compressor_gain_reduction`, `test_eq_boost_and_cut_spectral_rms`, `test_chorus_and_tremolo_modulation`, `test_reverb_tail_predelay_and_early_reflections`.
-  - `presets::tests` (2 testes): `test_preset_morph_ab_linearity`, `test_factory_presets_and_json_roundtrip`.
-  - `midi::tests` (10 testes): `parse_note_on_and_vel_zero_note_off`, `parse_control_change_pedals_and_channel_messages`, `parse_invalid_or_truncated_midi_returns_none`, `velocity_curve_interpolation_and_monotonicity`, `transpose_and_key_range_clamping`, `microtonal_16_channel_offset_and_bijection`, `cc_mapping_evaluation`, `demo_midi_sequence_is_well_formed`, `port_hotplug_diff_detection`, `midi_port_discovery_and_missing_port_connect_error`.
+- **Status**: **PASSED (51 passed, 0 failed, 0 ignored)** em `2.19s`
+- **Cobertura observada por módulo**:
+  - `synthesis::tests` (17 testes): inclui `test_sympathetic_and_duplex_scale_resonance_isolation`, `test_hammer_damper_and_pedal_mechanical_noises_isolation`, `test_mallet_bounce_multi_strike_decay`, `test_notefx_lfo_vibrato_tremolo_and_smear`, `test_diatonic_harp_pedals_and_guitar_mode`, além dos 12 testes do Ciclo 1 (diapasão, 8 temperamentos, velocidade, 5 testes de pedais, PRO note edit, sample rate/buffers, polifonia 64 vozes).
+  - `audio::tests` (5 testes): inclui `test_midi_transport_recorder_and_cc_learn`, `test_render_dsp_slice_64_voice_polyphony_and_dynamic_buffers`, `test_audio_manager_pedals_and_preset_morph`, `test_offline_wav_export_via_hound`, `test_offline_wav_export_with_selected_instrument`.
+  - `effects::tests` (10 testes): inclui `test_lid_position_spectral_attenuation`, `test_stereo_width_mono_to_wide_separation`, `test_binaural_mode_interaural_crossfeed_and_head_angle`, além dos 7 testes de microfones, EQ, Delay, Chorus/Tremolo, Compressor, Reverb e Limiter.
+  - `midi::tests` (13 testes): inclui `test_smf_midi_file_roundtrip`, `test_smf_format1_running_status_tempo_and_errors`, `test_live_or_loopback_midi_stream_dispatch`, além dos 10 testes de parsing, curva de velocity, transposição, microtonalidade 16ch, CC mapping e hot-plug diff.
+  - `instruments::tests` (4 testes): 32 modelos, 8 categorias, limites físicos e diferenciação acústica.
+  - `presets::tests` (2 testes): morphing A/B (incluindo `bounce`, `note_fx` e `guitar_body`) e round-trip JSON.
 
 ### 2. Frontend React/TS & Contratos (`npm test` via Vitest v3.2.7)
-- **Status**: **PASSED (23 passed, 0 failed)** em `1.45s`
+- **Status**: **PASSED (31 passed, 0 failed)** em `1.73s`
 - **Arquivos**:
-  - `tests/unit/engine_contracts.test.ts`: 10/10 aprovados.
+  - `tests/unit/engine_contracts.test.ts`: 16/16 aprovados (contratos Ciclo 1 + Ciclo 2, matemática de harpa 7 pedais e decaimento geométrico de Mallet Bounce).
   - `tests/ui/app.test.tsx`: 7/7 aprovados.
-  - `src/components/StudioComponents.test.tsx`: 6/6 aprovados.
+  - `src/components/StudioComponents.test.tsx`: 8/8 aprovados (incluindo `BounceAndNoteFxPanel` e `MidiTransportBar`).
 
 ### 3. Build de Produção (`npm run build` via `tsc && vite build`)
-- **Status**: **PASSED** (`exit 0`, 1597 módulos transformados em `860ms`).
+- **Status**: **PASSED** (`exit 0`, 1599 módulos transformados em `999ms`; CSS final `15.14 kB` com `color-scheme: dark` e `appearance: none` no `<select>`).
 
 ### 4. Validador da Matriz (`node scripts/validate-features.mjs --strict`)
-- **Status**: **PASSED** (`17 features checked, 0 warnings, 0 schema errors`).
+- **Status**: Pendente reexecução logo após a gravação deste documento (ver saída do comando abaixo).
 
 ### 5. Execução Ao Vivo (Tauri 2 Desktop)
-- **Status**: Processo `target/debug/piano-tect-tauri` (PID `318486`) e servidor Vite (`vite` porta `1430`, PID `275777`) recompilados e ativos após o merge em `pts/1`.
-- **Pendências de Teste (Explícitas)**:
-  - Teste manual/hardware de entrada MIDI com controlador físico ou porta virtual ALSA (`MIDI-001` em `TESTING`).
-  - Testes unitários isolados de ressonância simpática/duplex (`SYNTH-002`), ruído de martelo/abafador (`SYNTH-003`) e atenuação de tampo/binaural (`FX-001`).
+- **Status**: Processo `target/debug/piano-tect-tauri` e servidor Vite (`vite` porta `1430`) em execução contínua em `pts/1` com hot reload das alterações do Ciclo 2.

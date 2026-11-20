@@ -6,45 +6,25 @@ Desenvolver o **Piano Tect Tauri**, um software de piano virtual profissional pa
 ## 2. Arquitetura Atual
 - **Sysroot Linux**: `.sysroot/` gerado por `scripts/setup-dev-sysroot.sh`. Sempre executar comandos Rust/Tauri com `./scripts/with-sysroot.sh ...`.
 - **Backend Rust (`src-tauri/src/`)**:
-  - `contracts.rs`: contratos compartilhados (`EngineParams`, `InstrumentModel`, `PresetData`, `MidiConfig`, `EngineTelemetry`).
-  - `synthesis/mod.rs`: motor físico polifônico (128 vozes, 8 parciais inarmônicos, martelo por velocity, strike point, 8 temperamentos, pedais sustain/sostenuto/soft/harmonic/rattle, PRO note edit, ruídos mecânicos).
+  - `contracts.rs`: contratos compartilhados (`EngineParams`, `BounceParams`, `NoteFxParams`, `PlayModeParams`, `MidiTransportState`, `InstrumentModel`, `PresetData`, `MidiConfig`, `EngineTelemetry`).
+  - `synthesis/mod.rs`: motor físico polifônico (128 vozes, 8 parciais inarmônicos, martelo por velocity, strike point, 8 temperamentos, 7+ pedais, PRO Note Edit, Mallet Bounce, Per-Note LFO/Vibrato/Tremolo/Smear, modo Harpa Diatônica 7 pedais & Guitarra, ruídos mecânicos, ressonância simpática & duplex).
   - `instruments/mod.rs`: 32 modelos fisicamente calibrados em 8 categorias (96 presets de fábrica).
-  - `effects/mod.rs`: palco virtual 3-mic (compensação nível/delay), lid, largura estéreo, modo binaural, EQ 3 bandas, FX1..3 (Delay, PEQ, Chorus, Tremolo, Compressor), Reverb (pre-delay, early reflections, room size, tone, highpass), Limiter brickwall.
-  - `audio/mod.rs`: stream `cpal` (PipeWire/ALSA/JACK + fallback headless) e exportação WAV `hound`.
-  - `midi/mod.rs`: parser MIDI, `midir`, curva de velocity multi-ponto, transposição, 61/88/105 teclas, microtonalidade 16ch, CC mapping, sequência demo e diff hot-plug.
-  - `presets/mod.rs`: 96 presets de fábrica, morphing linear A/B e persistência JSON XDG.
-- **Frontend (`src/`)**: `App.tsx`, `VirtualKeyboard.tsx`, `ParameterSlider.tsx`, `VelocityCurveEditor.tsx`, `MicStageEditor.tsx`, `NoteEditPanel.tsx`, `SavePresetPopover.tsx`.
+  - `effects/mod.rs`: palco virtual 3-mic (compensação nível/delay), filtro passa-baixas do tampo (`lid_position`), largura estéreo, binaural ITD + head-shadow, EQ 3 bandas, FX1..3 (Delay, PEQ, Chorus, Tremolo, Compressor), Reverb (pre-delay, early reflections, room size, tone, highpass), Limiter brickwall.
+  - `audio/mod.rs`: stream `cpal` (PipeWire/ALSA/JACK + fallback headless), transporte MIDI em thread dedicada com velocidade `0.25x..2.0x`, gravador, CC Learn ao vivo, microtonalidade 16ch e exportação WAV `hound`.
+  - `midi/mod.rs`: parser/escritor SMF `.mid` (Format 0/1), `midir`, curva de velocity multi-ponto, transposição, 61/88/105 teclas, microtonalidade 16ch, CC mapping, sequência demo e diff hot-plug.
+  - `presets/mod.rs`: 96 presets de fábrica, morphing linear A/B completo e persistência JSON XDG.
+- **Frontend (`src/`)**: `App.tsx`, `VirtualKeyboard.tsx`, `ParameterSlider.tsx`, `VelocityCurveEditor.tsx`, `MicStageEditor.tsx`, `NoteEditPanel.tsx`, `SavePresetPopover.tsx`, `BounceAndNoteFxPanel.tsx`, `MidiTransportBar.tsx` + tema escuro WebKitGTK corrigido em `src/styles/app.css`.
 
 ## 3. Resumo do Progresso
-- Ciclo 1 (7 subagentes em worktrees isolados) concluído e integrado no `main`.
-- **13/17 funcionalidades `APPROVED`**, **3 `TESTING`**, **1 `IMPLEMENTED`** (ver `docs/features.json`).
-- **39/39 testes Rust** + **23/23 testes Vitest** + `npm run build` + `validate-features.mjs --strict` aprovados.
+- **Ciclo 1 e Ciclo 2 concluídos**: **21/21 funcionalidades `APPROVED`**.
+- **51/51 testes Rust** + **31/31 testes Vitest** + `npm run build` + `validate-features.mjs --strict` aprovados.
 
-## 4. Decisões Importantes
-- Ver `docs/DECISIONS.md` (ADR-001 a ADR-004).
-- Worktrees isolados em `.worktrees/` podem ser limpos ou atualizados com `git merge main` antes do próximo ciclo paralelo.
-
-## 5. Dependências Instaladas
-- Rust: `tauri 2`, `serde`, `serde_json`, `cpal 0.15`, `midir 0.10`, `hound 3.5`, `parking_lot 0.12`.
-- Node: `react 18`, `vite 6`, `@tauri-apps/api 2`, `@tauri-apps/cli 2`, `vitest 3`, `@testing-library/react 16`, `lucide-react`.
-
-## 6. Comandos de Execução
-- Dev app ao vivo (porta `1430`): `DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 ./scripts/with-sysroot.sh npm run tauri dev` (já ativo em `pts/1`).
+## 4. Comandos de Execução
+- Dev app ao vivo (porta `1430`): `DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 ./scripts/with-sysroot.sh npm run tauri dev`
 - Testes Rust: `./scripts/with-sysroot.sh cargo test --manifest-path src-tauri/Cargo.toml`
 - Testes Frontend: `npm test`
 - Build Frontend: `npm run build`
 - Validação de Matriz: `node scripts/validate-features.mjs --strict`
 
-## 7. Estado dos Testes
-- Ver `docs/TEST_RESULTS.md` (39 Rust + 23 Vitest + build + validador aprovados).
-
-## 8. Tarefa Interrompida
-- Nenhuma (Ciclo 1 finalizado de forma limpa).
-
-## 9. Próxima Ação Exata
-- Ler `docs/NEXT_TASK.md` e executar o Ciclo 2 (fechar testes dos 4 itens restantes `SYNTH-002`, `SYNTH-003`, `MIDI-001`, `FX-001` e adicionar Mallet Bounce / Note Effects / MIDI Player).
-
-## 10. Cuidados para Evitar Regressões
-- Nunca iniciar uma segunda instância de `npm run tauri dev` se uma já estiver rodando na porta `1430`.
-- Sempre sincronizar os worktrees (`.worktrees/*`) com `main` antes de disparar novos subagentes.
-- Nunca promover item para `APPROVED` em `docs/features.json` sem teste real executado após a última edição.
+## 5. Próxima Ação Exata
+- Consultar `docs/NEXT_TASK.md` para o Ciclo 3 opcional (`.scl`/`.kbm`, impulsos `.wav` customizados, `.mid` file picker, empacotamento Linux).
