@@ -16,9 +16,12 @@ import {
 import { MidiTransportBar } from "./components/MidiTransportBar";
 import type {
   EffectSlot,
+  EffectType,
   EngineParams,
   EngineSnapshot,
   EngineTelemetry,
+  InstrumentCategory,
+  InstrumentModel,
   MidiConfig,
   MidiPortInfo,
   PresetData,
@@ -65,6 +68,56 @@ const HISTORICAL_PEDALS: [PedalId, string][] = [
   ["celeste", "Celeste"],
   ["buff_stop", "Buff Stop"],
   ["rattle", "Rattle"],
+];
+
+const INSTRUMENT_CATEGORY_GROUPS: { category: InstrumentCategory; label: string }[] = [
+  { category: "GrandPiano", label: "Grand Pianos" },
+  { category: "UprightPiano", label: "Upright Pianos" },
+  { category: "ElectricPiano", label: "Electric Pianos" },
+  { category: "Historical", label: "Historical Collection" },
+  { category: "Mallet", label: "Mallets & Percussion" },
+  { category: "Plucked", label: "Plucked (Guitar & Harps)" },
+  { category: "Prepared", label: "Prepared & Experimental" },
+  { category: "Synthesizer", label: "Synthesizer" },
+];
+
+const EFFECT_OPTIONS: { type: EffectType; label: string }[] = [
+  { type: "Delay", label: "Delay" },
+  { type: "Chorus", label: "Chorus" },
+  { type: "Flanger", label: "Flanger" },
+  { type: "Phaser", label: "Phaser" },
+  { type: "Tremolo", label: "Tremolo" },
+  { type: "Wah", label: "Wah" },
+  { type: "Fuzz", label: "Fuzz" },
+  { type: "Amp", label: "Amp" },
+  { type: "Compressor", label: "Compressor" },
+  { type: "ParametricEq", label: "Parametric EQ" },
+];
+
+const FX_PARAM_LABELS: Record<EffectType, [string, string, string, string]> = {
+  Delay: ["Time", "Feedback", "Tone", "Stereo Ping-Pong"],
+  Chorus: ["Rate", "Depth", "Delay", "Stereo"],
+  Flanger: ["Rate", "Depth", "Feedback", "Stereo"],
+  Phaser: ["Rate", "Intensity", "Feedback", "Center"],
+  Tremolo: ["Rate", "Shape", "Stereo Phase", "Depth"],
+  Wah: ["Wah Pedal", "Auto-Wah Sens", "Sweep Depth", "Q"],
+  Fuzz: ["Drive", "Tone", "Grit", "Level"],
+  Amp: ["Preamp Drive", "Tone Stack", "Cabinet", "Presence"],
+  Compressor: ["Threshold", "Ratio", "Attack", "Release"],
+  ParametricEq: ["Frequency", "Gain", "Q", "Mode"],
+};
+
+const REVERB_ENVIRONMENTS: string[] = [
+  "Concert Hall",
+  "Cathedral",
+  "Studio",
+  "Chamber",
+  "Taj Mahal",
+  "Plate",
+  "Spring",
+  "Speakers",
+  "Broceliande",
+  "Club",
 ];
 
 function createDefaultParams(): EngineParams {
@@ -498,6 +551,28 @@ export function App() {
     [snapshot],
   );
 
+  const groupedInstruments = useMemo(() => {
+    const instruments = snapshot?.instruments ?? [];
+    const byCat = new Map<string, InstrumentModel[]>();
+    for (const inst of instruments) {
+      const list = byCat.get(inst.category) ?? [];
+      list.push(inst);
+      byCat.set(inst.category, list);
+    }
+    const groups = INSTRUMENT_CATEGORY_GROUPS.map(({ category, label }) => ({
+      category,
+      label,
+      items: byCat.get(category) ?? [],
+    })).filter((g) => g.items.length > 0);
+
+    const known = new Set<string>(INSTRUMENT_CATEGORY_GROUPS.map((g) => g.category));
+    const other = instruments.filter((i) => !known.has(i.category));
+    if (other.length > 0) {
+      groups.push({ category: "GrandPiano", label: "Other", items: other });
+    }
+    return groups;
+  }, [snapshot?.instruments]);
+
   const params = snapshot?.params;
   const peakPct = Math.min(
     100,
@@ -524,10 +599,14 @@ export function App() {
             value={snapshot?.active_instrument_id ?? ""}
             onChange={(e) => handleInstrumentChange(e.target.value)}
           >
-            {snapshot?.instruments.map((inst) => (
-              <option key={inst.id} value={inst.id}>
-                {inst.name}
-              </option>
+            {groupedInstruments.map((group) => (
+              <optgroup key={group.label} label={group.label}>
+                {group.items.map((inst) => (
+                  <option key={inst.id} value={inst.id}>
+                    {inst.name}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
 
@@ -899,12 +978,13 @@ export function App() {
 
             {activeTab === "effects" && (
               <>
-                <section className="panel-card">
+                <section className="panel-card" data-testid="reverb-panel">
                   <div className="panel-title">
-                    <span>Reverb & Limiter</span>
+                    <span>Reverb</span>
                     <label className="check-inline">
                       <input
                         type="checkbox"
+                        aria-label="Reverb Enabled"
                         checked={params.reverb.enabled}
                         onChange={(e) =>
                           updateParams((d) => {
@@ -912,45 +992,101 @@ export function App() {
                           })
                         }
                       />
-                      <span>Reverb</span>
+                      <span>Enabled</span>
                     </label>
                   </div>
+                  <label className="control-row">
+                    <span className="control-label">Reverb Environment</span>
+                    <select
+                      aria-label="Reverb Environment"
+                      className="studio-select"
+                      value={params.reverb.preset_name}
+                      onChange={(e) =>
+                        updateParams((d) => {
+                          d.reverb.preset_name = e.target.value;
+                        })
+                      }
+                    >
+                      {!REVERB_ENVIRONMENTS.includes(params.reverb.preset_name) &&
+                        params.reverb.preset_name && (
+                          <option value={params.reverb.preset_name}>
+                            {params.reverb.preset_name}
+                          </option>
+                        )}
+                      {REVERB_ENVIRONMENTS.map((envName) => (
+                        <option key={envName} value={envName}>
+                          {envName}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="two-col-mini">
+                    <ParameterSlider
+                      label="Mix"
+                      value={params.reverb.mix}
+                      min={0}
+                      max={0.8}
+                      step={0.01}
+                      onChange={(v) => updateParams((d) => { d.reverb.mix = v; })}
+                    />
+                    <ParameterSlider
+                      label="Duration"
+                      value={params.reverb.duration_s}
+                      min={0.3}
+                      max={5.0}
+                      step={0.1}
+                      unit="s"
+                      onChange={(v) => updateParams((d) => { d.reverb.duration_s = v; })}
+                    />
+                    <ParameterSlider
+                      label="Room Size"
+                      value={params.reverb.room_size_m}
+                      min={3}
+                      max={60}
+                      step={0.5}
+                      unit="m"
+                      onChange={(v) => updateParams((d) => { d.reverb.room_size_m = v; })}
+                    />
+                    <ParameterSlider
+                      label="Pre-delay"
+                      value={params.reverb.pre_delay_ms}
+                      min={0}
+                      max={100}
+                      step={1}
+                      unit="ms"
+                      onChange={(v) => updateParams((d) => { d.reverb.pre_delay_ms = v; })}
+                    />
+                    <ParameterSlider
+                      label="Early Reflections"
+                      value={params.reverb.early_reflections}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      onChange={(v) => updateParams((d) => { d.reverb.early_reflections = v; })}
+                    />
+                    <ParameterSlider
+                      label="Tone"
+                      value={params.reverb.tone}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      onChange={(v) => updateParams((d) => { d.reverb.tone = v; })}
+                    />
+                  </div>
                   <ParameterSlider
-                    label="Reverb Mix"
-                    value={params.reverb.mix}
-                    min={0}
-                    max={0.8}
-                    onChange={(v) => updateParams((d) => { d.reverb.mix = v; })}
-                  />
-                  <ParameterSlider
-                    label="Reverb Duration"
-                    value={params.reverb.duration_s}
-                    min={0.3}
-                    max={5.0}
-                    step={0.1}
-                    unit="s"
-                    onChange={(v) => updateParams((d) => { d.reverb.duration_s = v; })}
-                  />
-                  <ParameterSlider
-                    label="Reverb Tone"
-                    value={params.reverb.tone}
-                    min={0}
-                    max={1}
-                    onChange={(v) => updateParams((d) => { d.reverb.tone = v; })}
-                  />
-                  <ParameterSlider
-                    label="Limiter Threshold"
-                    value={params.limiter.threshold_db}
-                    min={-12}
-                    max={0}
-                    step={0.2}
-                    unit="dB"
-                    onChange={(v) => updateParams((d) => { d.limiter.threshold_db = v; })}
+                    label="Highpass Cutoff"
+                    value={params.reverb.highpass_hz}
+                    min={20}
+                    max={600}
+                    step={5}
+                    unit="Hz"
+                    onChange={(v) => updateParams((d) => { d.reverb.highpass_hz = v; })}
                   />
                 </section>
+
                 <section className="panel-card">
                   <div className="panel-title">
-                    <span>3-Band Parametric EQ</span>
+                    <span>3-Band Parametric EQ & Limiter</span>
                     <label className="check-inline">
                       <input
                         type="checkbox"
@@ -961,7 +1097,7 @@ export function App() {
                           })
                         }
                       />
-                      <span>Enabled</span>
+                      <span>EQ Enabled</span>
                     </label>
                   </div>
                   {params.eq_bands.map((band, idx) => (
@@ -980,56 +1116,133 @@ export function App() {
                       }
                     />
                   ))}
+                  <ParameterSlider
+                    label="Limiter Threshold"
+                    value={params.limiter.threshold_db}
+                    min={-12}
+                    max={0}
+                    step={0.2}
+                    unit="dB"
+                    onChange={(v) => updateParams((d) => { d.limiter.threshold_db = v; })}
+                  />
+                  <ParameterSlider
+                    label="Post Effect Gain"
+                    value={params.post_effect_gain_db}
+                    min={-12}
+                    max={12}
+                    step={0.5}
+                    unit="dB"
+                    onChange={(v) => updateParams((d) => { d.post_effect_gain_db = v; })}
+                  />
                 </section>
-                <section className="panel-card">
-                  <div className="panel-title">FX Chain Slots</div>
-                  {params.fx.map((slot, idx) => (
-                    <div key={idx} className="fx-slot-row">
-                      <div className="fx-slot-head">
-                        <label className="check-inline">
-                          <input
-                            type="checkbox"
-                            checked={slot.enabled}
-                            onChange={(e) =>
-                              updateParams((d) => {
-                                d.fx[idx].enabled = e.target.checked;
-                              })
-                            }
-                          />
-                          <span>Slot {idx + 1}</span>
-                        </label>
-                        <select
-                          className="studio-select studio-select-sm"
-                          aria-label={`FX Slot ${idx + 1} Type`}
-                          value={slot.effect_type}
-                          onChange={(e) =>
-                            updateParams((d) => {
-                              d.fx[idx].effect_type = e.target
-                                .value as EffectSlot["effect_type"];
-                            })
-                          }
-                        >
-                          <option value="Delay">Delay</option>
-                          <option value="Chorus">Chorus</option>
-                          <option value="Tremolo">Tremolo</option>
-                          <option value="Compressor">Compressor</option>
-                          <option value="ParametricEq">Parametric EQ</option>
-                        </select>
-                      </div>
-                      <ParameterSlider
-                        label="Mix"
-                        value={slot.mix}
-                        min={0}
-                        max={1}
-                        step={0.01}
-                        onChange={(v) =>
-                          updateParams((d) => {
-                            d.fx[idx].mix = v;
-                          })
-                        }
-                      />
-                    </div>
-                  ))}
+
+                <section className="panel-card panel-card-wide" data-testid="fx-chain-panel">
+                  <div className="panel-title">FX Chain Slots (10 Pianoteq 9 Processors)</div>
+                  <div className="fx-slots-grid">
+                    {params.fx.map((slot, idx) => {
+                      const paramLabels =
+                        FX_PARAM_LABELS[slot.effect_type] ??
+                        ["Param 1", "Param 2", "Param 3", "Param 4"];
+                      return (
+                        <div key={idx} className="fx-slot-row" data-testid={`fx-slot-${idx}`}>
+                          <div className="fx-slot-head">
+                            <label className="check-inline">
+                              <input
+                                type="checkbox"
+                                aria-label={`Enable FX Slot ${idx + 1}`}
+                                checked={slot.enabled}
+                                onChange={(e) =>
+                                  updateParams((d) => {
+                                    d.fx[idx].enabled = e.target.checked;
+                                  })
+                                }
+                              />
+                              <span>Slot {idx + 1}</span>
+                            </label>
+                            <select
+                              className="studio-select studio-select-sm"
+                              aria-label={`FX Slot ${idx + 1} Type`}
+                              value={slot.effect_type}
+                              onChange={(e) =>
+                                updateParams((d) => {
+                                  d.fx[idx].effect_type = e.target
+                                    .value as EffectSlot["effect_type"];
+                                })
+                              }
+                            >
+                              {EFFECT_OPTIONS.map((opt) => (
+                                <option key={opt.type} value={opt.type}>
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="fx-slot-sliders">
+                            <ParameterSlider
+                              label="Mix"
+                              value={slot.mix}
+                              min={0}
+                              max={1}
+                              step={0.01}
+                              onChange={(v) =>
+                                updateParams((d) => {
+                                  d.fx[idx].mix = v;
+                                })
+                              }
+                            />
+                            <ParameterSlider
+                              label={paramLabels[0]}
+                              value={slot.param_1}
+                              min={0}
+                              max={1}
+                              step={0.01}
+                              onChange={(v) =>
+                                updateParams((d) => {
+                                  d.fx[idx].param_1 = v;
+                                })
+                              }
+                            />
+                            <ParameterSlider
+                              label={paramLabels[1]}
+                              value={slot.param_2}
+                              min={0}
+                              max={1}
+                              step={0.01}
+                              onChange={(v) =>
+                                updateParams((d) => {
+                                  d.fx[idx].param_2 = v;
+                                })
+                              }
+                            />
+                            <ParameterSlider
+                              label={paramLabels[2]}
+                              value={slot.param_3}
+                              min={0}
+                              max={1}
+                              step={0.01}
+                              onChange={(v) =>
+                                updateParams((d) => {
+                                  d.fx[idx].param_3 = v;
+                                })
+                              }
+                            />
+                            <ParameterSlider
+                              label={paramLabels[3]}
+                              value={slot.param_4}
+                              min={0}
+                              max={1}
+                              step={0.01}
+                              onChange={(v) =>
+                                updateParams((d) => {
+                                  d.fx[idx].param_4 = v;
+                                })
+                              }
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </section>
               </>
             )}

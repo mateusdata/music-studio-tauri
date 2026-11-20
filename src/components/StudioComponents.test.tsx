@@ -16,6 +16,7 @@ import { MidiTransportBar } from "./MidiTransportBar";
 import type {
   EngineParams,
   EngineSnapshot,
+  InstrumentCategory,
   MidiConfig,
   MidiTransportState,
   OutputStageParams,
@@ -704,5 +705,176 @@ describe("Studio UI components", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /MIDI CC Learn/i }));
     await waitFor(() => expect(learnSpy).toHaveBeenLastCalledWith(null));
+  });
+
+  it("groups instruments by category with optgroup, exposes all 10 FX processors with dynamic labels, and exposes 10 reverb environments", async () => {
+    const snap = makeSnapshot();
+    const categories: [InstrumentCategory, string, string][] = [
+      ["GrandPiano", "grand-ny-d", "Grand Concert NY D"],
+      ["UprightPiano", "upright-u4", "Studio Upright U4"],
+      ["ElectricPiano", "vintage-tines-mk2", "Vintage Tines MKII"],
+      ["Historical", "ruckers-harpsichord", "Flemish Harpsichord II"],
+      ["Mallet", "vibraphone-vb", "Concert Vibraphone V-B"],
+      ["Plucked", "concert-harp", "Grand Concert Harp"],
+      ["Prepared", "prepared-grand", "Prepared Grand"],
+      ["Synthesizer", "synth-pad", "FM Hybrid Piano"],
+    ];
+    snap.instruments = categories.map(([category, id, name]) => ({
+      id,
+      name,
+      category,
+      exciter: "FeltHammer",
+      description: name,
+      inharmonicity_base: 0.00018,
+      decay_scale: 1.0,
+      default_params: snap.params,
+    }));
+
+    vi.spyOn(engineClient, "isTauri").mockReturnValue(true);
+    vi.spyOn(engineClient, "getSnapshot").mockResolvedValue(snap);
+    vi.spyOn(engineClient, "listMidiDevices").mockResolvedValue([]);
+    vi.spyOn(engineClient, "getTelemetry").mockResolvedValue({
+      sample_rate: 48000,
+      buffer_size: 256,
+      latency_ms: 5.3,
+      active_voices: 0,
+      max_polyphony: 128,
+      cpu_load_pct: 1.5,
+      peak_l: 0,
+      peak_r: 0,
+      rms_l: 0,
+      rms_r: 0,
+      audio_backend: "PipeWire",
+      audio_active: true,
+      midi_connected: false,
+      midi_port_name: null,
+      last_midi_note: null,
+      last_midi_velocity: null,
+      active_notes: [],
+      pedals: {
+        sustain: 0,
+        soft: 0,
+        sostenuto: 0,
+        harmonic: 0,
+        celeste: 0,
+        buff_stop: 0,
+        rattle: 0,
+        super_sostenuto: false,
+        reversed_sustain: false,
+      },
+    });
+    const updateParamsSpy = vi.spyOn(engineClient, "updateParams").mockResolvedValue();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Instrument Selector")).toHaveValue("grand-ny-d");
+    });
+
+    // Verify all 8 category optgroups
+    const instSelect = screen.getByLabelText("Instrument Selector");
+    const optgroups = Array.from(instSelect.querySelectorAll("optgroup")).map((g) => g.label);
+    expect(optgroups).toEqual([
+      "Grand Pianos",
+      "Upright Pianos",
+      "Electric Pianos",
+      "Historical Collection",
+      "Mallets & Percussion",
+      "Plucked (Guitar & Harps)",
+      "Prepared & Experimental",
+      "Synthesizer",
+    ]);
+
+    // Switch to EQ, FX & Reverb tab
+    fireEvent.click(screen.getByRole("button", { name: "EQ, FX & Reverb" }));
+
+    // Verify all 10 Reverb environments + parameters
+    const reverbSelect = screen.getByLabelText("Reverb Environment") as HTMLSelectElement;
+    const reverbEnvs = Array.from(reverbSelect.options).map((o) => o.value);
+    expect(reverbEnvs).toEqual([
+      "Concert Hall",
+      "Cathedral",
+      "Studio",
+      "Chamber",
+      "Taj Mahal",
+      "Plate",
+      "Spring",
+      "Speakers",
+      "Broceliande",
+      "Club",
+    ]);
+
+    fireEvent.change(reverbSelect, { target: { value: "Taj Mahal" } });
+    expect(updateParamsSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        reverb: expect.objectContaining({ preset_name: "Taj Mahal" }),
+      }),
+    );
+
+    const reverbPanel = screen.getByTestId("reverb-panel");
+    fireEvent.change(within(reverbPanel).getByLabelText(/Room Size/i), {
+      target: { value: "42" },
+    });
+    expect(updateParamsSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        reverb: expect.objectContaining({ room_size_m: 42 }),
+      }),
+    );
+    fireEvent.click(within(reverbPanel).getByLabelText("Reverb Enabled"));
+    expect(updateParamsSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        reverb: expect.objectContaining({ enabled: false }),
+      }),
+    );
+
+    // Verify all 10 FX types exist in Slot 1 & check dynamic labels across Wah, Phaser, Flanger, Fuzz, Amp
+    const slot1Type = screen.getByLabelText("FX Slot 1 Type") as HTMLSelectElement;
+    const fxOptions = Array.from(slot1Type.options).map((o) => o.value);
+    expect(fxOptions).toEqual([
+      "Delay",
+      "Chorus",
+      "Flanger",
+      "Phaser",
+      "Tremolo",
+      "Wah",
+      "Fuzz",
+      "Amp",
+      "Compressor",
+      "ParametricEq",
+    ]);
+
+    const slot0 = screen.getByTestId("fx-slot-0");
+
+    fireEvent.change(slot1Type, { target: { value: "Wah" } });
+    expect(within(slot0).getByText("Wah Pedal")).toBeInTheDocument();
+    expect(within(slot0).getByText("Auto-Wah Sens")).toBeInTheDocument();
+    expect(within(slot0).getByText("Sweep Depth")).toBeInTheDocument();
+    expect(within(slot0).getByText("Q")).toBeInTheDocument();
+    fireEvent.change(within(slot0).getByLabelText(/Wah Pedal/i), { target: { value: "0.82" } });
+    expect(updateParamsSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        fx: expect.arrayContaining([
+          expect.objectContaining({ effect_type: "Wah", param_1: 0.82 }),
+        ]),
+      }),
+    );
+
+    fireEvent.change(slot1Type, { target: { value: "Phaser" } });
+    expect(within(slot0).getByText("Intensity")).toBeInTheDocument();
+    expect(within(slot0).getByText("Center")).toBeInTheDocument();
+
+    fireEvent.change(slot1Type, { target: { value: "Flanger" } });
+    expect(within(slot0).getByText("Depth")).toBeInTheDocument();
+    expect(within(slot0).getByText("Stereo")).toBeInTheDocument();
+
+    fireEvent.change(slot1Type, { target: { value: "Fuzz" } });
+    expect(within(slot0).getByText("Drive")).toBeInTheDocument();
+    expect(within(slot0).getByText("Grit")).toBeInTheDocument();
+
+    fireEvent.change(slot1Type, { target: { value: "Amp" } });
+    expect(within(slot0).getByText("Preamp Drive")).toBeInTheDocument();
+    expect(within(slot0).getByText("Tone Stack")).toBeInTheDocument();
+    expect(within(slot0).getByText("Cabinet")).toBeInTheDocument();
+    expect(within(slot0).getByText("Presence")).toBeInTheDocument();
   });
 });

@@ -1029,3 +1029,16 @@ input[type="range"].studio-range::-webkit-slider-thumb {
   font-size: 10px;
   color: var(--text-secondary);
 }
+
+/* FX Chain 10-Processor Grid */
+.fx-slots-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+}
+
+.fx-slot-sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
