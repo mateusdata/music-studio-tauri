@@ -1,11 +1,12 @@
 use crate::contracts::{
-    EngineParams, EngineSnapshot, EngineTelemetry, InstrumentModel, MidiConfig,
-    MidiTransportState, PedalState, PresetData,
+    EngineParams, EngineSnapshot, EngineTelemetry, InstrumentModel, MidiCcMapping, MidiConfig,
+    MidiTransportState, NoteEditOffset, PedalState, PresetData,
 };
 use crate::effects::EffectsChain;
 use crate::instruments::build_factory_instruments;
 use crate::midi::{
-    apply_transpose_and_range, apply_velocity_curve, connect_midi_port, list_midi_input_ports,
+    apply_transpose_and_range, apply_velocity_curve, compute_microtonal_channel_offset,
+    connect_midi_port, evaluate_cc_mapping, generate_demo_midi_sequence, list_midi_input_ports,
     MidiConnectionHandle, MidiEngineEvent,
 };
 use crate::presets::{build_factory_presets, load_user_presets, morph_engine_params, save_user_preset};
@@ -46,12 +47,193 @@ pub struct AudioEngineManager {
     cmd_tx: Mutex<Sender<AudioCommand>>,
     midi_handle: Mutex<Option<MidiConnectionHandle>>,
     midi_tx: Mutex<Sender<MidiEngineEvent>>,
+    recorded_events: Arc<RwLock<Vec<(u64, MidiEngineEvent)>>>,
+    record_start: Arc<Mutex<Option<Instant>>>,
+    playback_cancel: Mutex<Option<Arc<AtomicBool>>>,
     _keep_alive: Arc<AtomicBool>,
 }
 
 impl Drop for AudioEngineManager {
     fn drop(&mut self) {
         self._keep_alive.store(false, Ordering::Relaxed);
+        if let Some(cancel) = self.playback_cancel.lock().take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
+fn default_cc_range(param_path: &str) -> (f32, f32) {
+    match param_path {
+        "volume_db" => (-48.0, 6.0),
+        "morphing" => (0.0, 1.0),
+        "reverb.mix" => (0.0, 1.0),
+        "dynamics_db" => (10.0, 80.0),
+        "diapason_hz" => (415.0, 466.0),
+        "stereo_width" => (0.0, 1.0),
+        _ => (0.0, 1.0),
+    }
+}
+
+fn apply_cc_param(params: &mut EngineParams, path: &str, val: f32) -> bool {
+    if !val.is_finite() {
+        return false;
+    }
+    match path {
+        "volume_db" => {
+            params.volume_db = val.clamp(-60.0, 12.0);
+            true
+        }
+        "morphing" => {
+            params.morphing = val.clamp(0.0, 1.0);
+            true
+        }
+        "reverb.mix" => {
+            params.reverb.mix = val.clamp(0.0, 1.0);
+            true
+        }
+        "dynamics_db" => {
+            params.dynamics_db = val.clamp(5.0, 100.0);
+            true
+        }
+        "diapason_hz" => {
+            params.tuning.diapason_hz = val.clamp(380.0, 500.0);
+            true
+        }
+        "stereo_width" => {
+            params.output.stereo_width = val.clamp(0.0, 1.0);
+            true
+        }
+        _ => false,
+    }
+}
+
+fn dispatch_midi_event_to_audio(
+    ev: &MidiEngineEvent,
+    shared: &Arc<SharedAudioState>,
+    cmd_tx: &Sender<AudioCommand>,
+    allow_cc_learn: bool,
+) {
+    let mut cfg = shared.midi_config.read().clone();
+    match ev {
+        MidiEngineEvent::NoteOn { note, velocity, channel } => {
+            if cfg.channel != 0 && cfg.channel != *channel && !cfg.microtonal_multichannel {
+                return;
+            }
+            let (raw_note, channel_delta) = if cfg.microtonal_multichannel {
+                let offset = compute_microtonal_channel_offset(*note, *channel, cfg.channel);
+                let delta = (offset - (*note & 0x7F) as i32) / 128;
+                (offset.rem_euclid(128) as u8, delta)
+            } else {
+                (*note, 0)
+            };
+            if let Some(mapped_note) = apply_transpose_and_range(raw_note, &cfg) {
+                if cfg.microtonal_multichannel && channel_delta != 0 {
+                    let mut params = shared.params.write();
+                    let entry = params
+                        .note_edit
+                        .entry(mapped_note)
+                        .or_insert_with(NoteEditOffset::default);
+                    entry.detune_cents = (channel_delta as f32) * (100.0 / 16.0);
+                    let _ = cmd_tx.send(AudioCommand::UpdateParams(Box::new(params.clone())));
+                }
+                let mapped_vel = apply_velocity_curve(*velocity, &cfg.velocity_curve);
+                {
+                    let mut t = shared.telemetry.write();
+                    t.last_midi_note = Some(mapped_note);
+                    t.last_midi_velocity = Some(mapped_vel);
+                }
+                let _ = cmd_tx.send(AudioCommand::NoteOn {
+                    note: mapped_note,
+                    velocity: mapped_vel,
+                });
+            }
+        }
+        MidiEngineEvent::NoteOff { note, channel } => {
+            if cfg.channel != 0 && cfg.channel != *channel && !cfg.microtonal_multichannel {
+                return;
+            }
+            let raw_note = if cfg.microtonal_multichannel {
+                compute_microtonal_channel_offset(*note, *channel, cfg.channel).rem_euclid(128) as u8
+            } else {
+                *note
+            };
+            if let Some(mapped_note) = apply_transpose_and_range(raw_note, &cfg) {
+                let _ = cmd_tx.send(AudioCommand::NoteOff { note: mapped_note });
+            }
+        }
+        MidiEngineEvent::ControlChange { cc, value, .. } => {
+            if allow_cc_learn && shared.telemetry.read().midi_learn_target.is_some() {
+                if let Some(param_path) = shared.telemetry.write().midi_learn_target.take() {
+                    let (min, max) = default_cc_range(&param_path);
+                    let mut cfg_w = shared.midi_config.write();
+                    cfg_w.cc_mappings.retain(|m| m.param_path != param_path);
+                    cfg_w.cc_mappings.push(MidiCcMapping {
+                        cc: *cc,
+                        param_path,
+                        min,
+                        max,
+                    });
+                    cfg = cfg_w.clone();
+                }
+            }
+
+            let norm = (*value as f32 / 127.0).clamp(0.0, 1.0);
+            match *cc {
+                64 => {
+                    apply_pedal_value(&mut shared.pedals.write(), "sustain", norm);
+                    let _ = cmd_tx.send(AudioCommand::SetPedal {
+                        pedal: "sustain".to_string(),
+                        value: norm,
+                    });
+                }
+                66 => {
+                    apply_pedal_value(&mut shared.pedals.write(), "sostenuto", norm);
+                    let _ = cmd_tx.send(AudioCommand::SetPedal {
+                        pedal: "sostenuto".to_string(),
+                        value: norm,
+                    });
+                }
+                67 => {
+                    apply_pedal_value(&mut shared.pedals.write(), "soft", norm);
+                    let _ = cmd_tx.send(AudioCommand::SetPedal {
+                        pedal: "soft".to_string(),
+                        value: norm,
+                    });
+                }
+                69 => {
+                    apply_pedal_value(&mut shared.pedals.write(), "harmonic", norm);
+                    let _ = cmd_tx.send(AudioCommand::SetPedal {
+                        pedal: "harmonic".to_string(),
+                        value: norm,
+                    });
+                }
+                120 | 123 => {
+                    let _ = cmd_tx.send(AudioCommand::AllNotesOff);
+                }
+                _ => {
+                    let mapped = evaluate_cc_mapping(*cc, *value, &cfg.cc_mappings);
+                    if !mapped.is_empty() {
+                        let mut params = shared.params.write();
+                        let mut changed = false;
+                        for (path, val) in mapped {
+                            if apply_cc_param(&mut params, &path, val) {
+                                changed = true;
+                            }
+                        }
+                        if changed {
+                            let _ = cmd_tx.send(AudioCommand::UpdateParams(Box::new(params.clone())));
+                        }
+                    }
+                }
+            }
+        }
+        MidiEngineEvent::PitchBend { value_14bit, .. } => {
+            let norm = (*value_14bit as f32 - 8192.0) / 8192.0;
+            let mut params = shared.params.write();
+            params.tuning.pitch_bend_semitones = norm * 2.0;
+            let _ = cmd_tx.send(AudioCommand::UpdateParams(Box::new(params.clone())));
+        }
+        _ => {}
     }
 }
 
@@ -143,12 +325,16 @@ impl AudioEngineManager {
         });
 
         let keep_alive = Arc::new(AtomicBool::new(true));
+        let recorded_events = Arc::new(RwLock::new(Vec::new()));
+        let record_start = Arc::new(Mutex::new(None));
 
         // MIDI event bridge thread -> dispatches into AudioCommand & SharedAudioState
         let midi_shared = Arc::clone(&shared);
         let midi_cmd_tx = cmd_tx.clone();
+        let midi_rec_events = Arc::clone(&recorded_events);
+        let midi_rec_start = Arc::clone(&record_start);
         std::thread::spawn(move || {
-            Self::midi_router_loop(midi_rx, midi_shared, midi_cmd_tx);
+            Self::midi_router_loop(midi_rx, midi_shared, midi_cmd_tx, midi_rec_events, midi_rec_start);
         });
 
         // Start real-time cpal audio output or fallback headless DSP thread on an audio supervisor thread
@@ -166,6 +352,9 @@ impl AudioEngineManager {
             cmd_tx: Mutex::new(cmd_tx),
             midi_handle: Mutex::new(None),
             midi_tx: Mutex::new(midi_tx),
+            recorded_events,
+            record_start,
+            playback_cancel: Mutex::new(None),
             _keep_alive: keep_alive,
         };
 
@@ -182,90 +371,33 @@ impl AudioEngineManager {
         midi_rx: Receiver<MidiEngineEvent>,
         shared: Arc<SharedAudioState>,
         cmd_tx: Sender<AudioCommand>,
+        recorded_events: Arc<RwLock<Vec<(u64, MidiEngineEvent)>>>,
+        record_start: Arc<Mutex<Option<Instant>>>,
     ) {
         while let Ok(ev) = midi_rx.recv() {
-            let cfg = shared.midi_config.read().clone();
-            match ev {
-                MidiEngineEvent::NoteOn { note, velocity, channel } => {
-                    if cfg.channel != 0 && cfg.channel != channel && !cfg.microtonal_multichannel {
-                        continue;
-                    }
-                    if let Some(mapped_note) = apply_transpose_and_range(note, &cfg) {
-                        let mapped_vel = apply_velocity_curve(velocity, &cfg.velocity_curve);
-                        {
-                            let mut t = shared.telemetry.write();
-                            t.last_midi_note = Some(mapped_note);
-                            t.last_midi_velocity = Some(mapped_vel);
-                        }
-                        let _ = cmd_tx.send(AudioCommand::NoteOn {
-                            note: mapped_note,
-                            velocity: mapped_vel,
-                        });
-                    }
-                }
-                MidiEngineEvent::NoteOff { note, channel } => {
-                    if cfg.channel != 0 && cfg.channel != channel && !cfg.microtonal_multichannel {
-                        continue;
-                    }
-                    if let Some(mapped_note) = apply_transpose_and_range(note, &cfg) {
-                        let _ = cmd_tx.send(AudioCommand::NoteOff { note: mapped_note });
-                    }
-                }
-                MidiEngineEvent::ControlChange { cc, value, .. } => {
-                    let norm = value as f32 / 127.0;
-                    match cc {
-                        64 => {
-                            let _ = cmd_tx.send(AudioCommand::SetPedal {
-                                pedal: "sustain".to_string(),
-                                value: norm,
-                            });
-                        }
-                        66 => {
-                            let _ = cmd_tx.send(AudioCommand::SetPedal {
-                                pedal: "sostenuto".to_string(),
-                                value: norm,
-                            });
-                        }
-                        67 => {
-                            let _ = cmd_tx.send(AudioCommand::SetPedal {
-                                pedal: "soft".to_string(),
-                                value: norm,
-                            });
-                        }
-                        69 => {
-                            let _ = cmd_tx.send(AudioCommand::SetPedal {
-                                pedal: "harmonic".to_string(),
-                                value: norm,
-                            });
-                        }
-                        120 | 123 => {
-                            let _ = cmd_tx.send(AudioCommand::AllNotesOff);
-                        }
-                        _ => {
-                            // Check CC mappings
-                            for m in &cfg.cc_mappings {
-                                if m.cc == cc {
-                                    let val = m.min + (m.max - m.min) * norm;
-                                    let mut params = shared.params.write();
-                                    if m.param_path == "volume_db" {
-                                        params.volume_db = val;
-                                    } else if m.param_path == "morphing" {
-                                        params.morphing = val;
-                                    }
-                                    let _ = cmd_tx.send(AudioCommand::UpdateParams(Box::new(params.clone())));
-                                }
-                            }
-                        }
-                    }
-                }
-                MidiEngineEvent::PitchBend { value_14bit, .. } => {
-                    let norm = (value_14bit as f32 - 8192.0) / 8192.0;
-                    let mut params = shared.params.write();
-                    params.tuning.pitch_bend_semitones = norm * 2.0;
-                    let _ = cmd_tx.send(AudioCommand::UpdateParams(Box::new(params.clone())));
-                }
-                _ => {}
+            let is_recording = shared.telemetry.read().midi_transport.is_recording;
+            if is_recording
+                && matches!(
+                    ev,
+                    MidiEngineEvent::NoteOn { .. }
+                        | MidiEngineEvent::NoteOff { .. }
+                        | MidiEngineEvent::ControlChange { .. }
+                )
+            {
+                let ts_ms = {
+                    let mut guard = record_start.lock();
+                    let start = guard.get_or_insert_with(Instant::now);
+                    start.elapsed().as_millis() as u64
+                };
+                let count = {
+                    let mut list = recorded_events.write();
+                    list.push((ts_ms, ev.clone()));
+                    list.len()
+                };
+                shared.telemetry.write().midi_transport.recorded_events_count = count;
             }
+
+            dispatch_midi_event_to_audio(&ev, &shared, &cmd_tx, true);
         }
     }
 
@@ -642,33 +774,124 @@ impl AudioEngineManager {
         *self.shared.midi_config.write() = cfg;
     }
 
+    fn start_midi_playback(
+        &self,
+        track_name: &str,
+        mut events: Vec<(u64, MidiEngineEvent)>,
+    ) -> MidiTransportState {
+        if let Some(prev_cancel) = self.playback_cancel.lock().take() {
+            prev_cancel.store(true, Ordering::Relaxed);
+        }
+        let _ = self.cmd_tx.lock().send(AudioCommand::AllNotesOff);
+
+        if events.is_empty() {
+            let mut t = self.shared.telemetry.write();
+            t.midi_transport.is_playing = false;
+            t.midi_transport.current_track_name = None;
+            return t.midi_transport.clone();
+        }
+
+        events.sort_by_key(|(ts, _)| *ts);
+        let cancel = Arc::new(AtomicBool::new(false));
+        *self.playback_cancel.lock() = Some(Arc::clone(&cancel));
+
+        let state_snapshot = {
+            let mut t = self.shared.telemetry.write();
+            t.midi_transport.is_playing = true;
+            t.midi_transport.current_track_name = Some(track_name.to_string());
+            t.midi_transport.clone()
+        };
+
+        let shared = Arc::clone(&self.shared);
+        let cmd_tx = self.cmd_tx.lock().clone();
+        let keep_alive = Arc::clone(&self._keep_alive);
+
+        std::thread::spawn(move || {
+            let mut prev_ts = 0_u64;
+            for (ts_ms, ev) in events {
+                let delta_ms = ts_ms.saturating_sub(prev_ts);
+                prev_ts = ts_ms;
+
+                if delta_ms > 0 {
+                    let mut remaining_track_ms = delta_ms as f64;
+                    while remaining_track_ms > 0.25 {
+                        if cancel.load(Ordering::Relaxed) || !keep_alive.load(Ordering::Relaxed) {
+                            let _ = cmd_tx.send(AudioCommand::AllNotesOff);
+                            return;
+                        }
+                        let speed = shared
+                            .telemetry
+                            .read()
+                            .midi_transport
+                            .playback_speed
+                            .clamp(0.25, 2.0) as f64;
+                        let real_wait_ms = (remaining_track_ms / speed).min(10.0);
+                        std::thread::sleep(std::time::Duration::from_secs_f64(real_wait_ms * 0.001));
+                        remaining_track_ms -= real_wait_ms * speed;
+                    }
+                }
+
+                if cancel.load(Ordering::Relaxed) || !keep_alive.load(Ordering::Relaxed) {
+                    let _ = cmd_tx.send(AudioCommand::AllNotesOff);
+                    return;
+                }
+                dispatch_midi_event_to_audio(&ev, &shared, &cmd_tx, false);
+            }
+
+            if !cancel.load(Ordering::Relaxed) && keep_alive.load(Ordering::Relaxed) {
+                let mut t = shared.telemetry.write();
+                t.midi_transport.is_playing = false;
+                t.midi_transport.current_track_name = None;
+            }
+        });
+
+        state_snapshot
+    }
+
     pub fn play_demo_midi(&self) -> MidiTransportState {
-        let mut t = self.shared.telemetry.write();
-        t.midi_transport.is_playing = true;
-        t.midi_transport.current_track_name = Some("Demo Prelude".to_string());
-        t.midi_transport.clone()
+        let events = generate_demo_midi_sequence();
+        self.start_midi_playback("Demo Prelude", events)
     }
 
     pub fn stop_midi_transport(&self) -> MidiTransportState {
+        if let Some(cancel) = self.playback_cancel.lock().take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        *self.record_start.lock() = None;
+        let _ = self.cmd_tx.lock().send(AudioCommand::AllNotesOff);
         let mut t = self.shared.telemetry.write();
         t.midi_transport.is_playing = false;
         t.midi_transport.is_recording = false;
+        t.midi_transport.current_track_name = None;
         t.midi_transport.clone()
     }
 
     pub fn toggle_midi_record(&self) -> MidiTransportState {
         let mut t = self.shared.telemetry.write();
-        t.midi_transport.is_recording = !t.midi_transport.is_recording;
+        let next_rec = !t.midi_transport.is_recording;
+        t.midi_transport.is_recording = next_rec;
+        if next_rec {
+            self.recorded_events.write().clear();
+            *self.record_start.lock() = Some(Instant::now());
+            t.midi_transport.recorded_events_count = 0;
+        } else {
+            *self.record_start.lock() = None;
+        }
         t.midi_transport.clone()
     }
 
     pub fn play_recorded_midi(&self) -> MidiTransportState {
-        self.shared.telemetry.read().midi_transport.clone()
+        let events = self.recorded_events.read().clone();
+        self.start_midi_playback("Recorded Take", events)
     }
 
     pub fn set_midi_playback_speed(&self, speed: f32) -> MidiTransportState {
         let mut t = self.shared.telemetry.write();
-        t.midi_transport.playback_speed = speed.clamp(0.25, 2.0);
+        t.midi_transport.playback_speed = if speed.is_finite() {
+            speed.clamp(0.25, 2.0)
+        } else {
+            1.0
+        };
         t.midi_transport.clone()
     }
 
@@ -956,5 +1179,111 @@ mod tests {
             sr,
         );
         assert_eq!(shared.telemetry.read().active_voices, 0);
+    }
+
+    #[test]
+    fn test_midi_transport_recorder_and_cc_learn() {
+        let mgr = AudioEngineManager::start();
+
+        // 1. Arm MIDI CC Learn and learn CC 74 -> "reverb.mix"
+        let armed = mgr.arm_midi_cc_learn(Some("reverb.mix".to_string()));
+        assert_eq!(armed.as_deref(), Some("reverb.mix"));
+        {
+            let midi_tx = mgr.midi_tx.lock().clone();
+            midi_tx
+                .send(MidiEngineEvent::ControlChange {
+                    cc: 74,
+                    value: 127,
+                    channel: 1,
+                })
+                .unwrap();
+        }
+        for _ in 0..40 {
+            if mgr.shared.telemetry.read().midi_learn_target.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(mgr.shared.telemetry.read().midi_learn_target.is_none());
+        assert!(
+            mgr.shared
+                .midi_config
+                .read()
+                .cc_mappings
+                .iter()
+                .any(|m| m.cc == 74 && m.param_path == "reverb.mix"),
+            "CC 74 should be bound to reverb.mix"
+        );
+        assert!((mgr.shared.params.read().reverb.mix - 1.0).abs() < 1e-4);
+
+        // 2. MIDI Recording via toggle_midi_record
+        let rec_on = mgr.toggle_midi_record();
+        assert!(rec_on.is_recording);
+        assert_eq!(rec_on.recorded_events_count, 0);
+        {
+            let midi_tx = mgr.midi_tx.lock().clone();
+            midi_tx
+                .send(MidiEngineEvent::NoteOn {
+                    note: 60,
+                    velocity: 100,
+                    channel: 1,
+                })
+                .unwrap();
+            midi_tx
+                .send(MidiEngineEvent::ControlChange {
+                    cc: 64,
+                    value: 127,
+                    channel: 1,
+                })
+                .unwrap();
+            midi_tx
+                .send(MidiEngineEvent::NoteOff {
+                    note: 60,
+                    channel: 1,
+                })
+                .unwrap();
+        }
+        for _ in 0..40 {
+            if mgr.shared.telemetry.read().midi_transport.recorded_events_count == 3 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(
+            mgr.shared.telemetry.read().midi_transport.recorded_events_count,
+            3
+        );
+        let rec_off = mgr.toggle_midi_record();
+        assert!(!rec_off.is_recording);
+
+        // 3. Recorded take playback & stop
+        let play_rec = mgr.play_recorded_midi();
+        assert!(play_rec.is_playing);
+        assert_eq!(play_rec.current_track_name.as_deref(), Some("Recorded Take"));
+        let stopped_rec = mgr.stop_midi_transport();
+        assert!(!stopped_rec.is_playing);
+
+        // 4. Playback speed clamping & Demo MIDI transport start/stop
+        assert!((mgr.set_midi_playback_speed(5.0).playback_speed - 2.0).abs() < 1e-6);
+        assert!((mgr.set_midi_playback_speed(0.1).playback_speed - 0.25).abs() < 1e-6);
+        assert!((mgr.set_midi_playback_speed(1.5).playback_speed - 1.5).abs() < 1e-6);
+
+        let demo = mgr.play_demo_midi();
+        assert!(demo.is_playing);
+        assert_eq!(demo.current_track_name.as_deref(), Some("Demo Prelude"));
+
+        // Wait briefly for initial demo events (CC 64 + NoteOn 36 at 20ms / 1.5)
+        for _ in 0..30 {
+            if mgr.shared.telemetry.read().last_midi_note == Some(36) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(mgr.shared.telemetry.read().last_midi_note, Some(36));
+
+        let stopped = mgr.stop_midi_transport();
+        assert!(!stopped.is_playing);
+        assert!(!stopped.is_recording);
+        assert!(stopped.current_track_name.is_none());
     }
 }
