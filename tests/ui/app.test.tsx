@@ -137,6 +137,36 @@ function buildMockEngineParams(): EngineParams {
       gain_db: 0.0,
     },
     note_edit: {},
+    bounce: {
+      enabled: false,
+      delay_ms: 120.0,
+      sync_tempo: false,
+      velocity_sensitivity: 0.5,
+      delay_loss: 0.15,
+      velocity_loss: 0.35,
+      humanization: 0.1,
+      max_bounces: 6,
+    },
+    note_fx: {
+      lfo_shape: 0.5,
+      lfo_skew: 0.5,
+      lfo_rate_hz: 5.2,
+      lfo_phase_locked: false,
+      onset_duration_ms: 80.0,
+      vibrato_cents: 0.0,
+      vibrato_offset_cents: 0.0,
+      tremolo_depth_db: 0.0,
+      tremolo_phase: 0.0,
+      attack_envelope: 0.5,
+      smear: 0.0,
+    },
+    play_mode: {
+      mode: "Standard",
+      harp_pedals: [0, 0, 0, 0, 0, 0, 0],
+      guitar_fret: 0,
+      guitar_legato: false,
+      guitar_body: 0.5,
+    },
   };
 }
 
@@ -294,6 +324,14 @@ describe("Piano Tect Tauri App UI", () => {
         super_sostenuto: false,
         reversed_sustain: false,
       },
+      midi_transport: {
+        is_playing: false,
+        is_recording: false,
+        playback_speed: 1.0,
+        recorded_events_count: 0,
+        current_track_name: null,
+      },
+      midi_learn_target: null,
     };
 
     vi.spyOn(engineClient, "isTauri").mockReturnValue(true);
