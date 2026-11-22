@@ -158,7 +158,8 @@ export const VirtualKeyboard: React.FC<VirtualKeyboardProps> = ({
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.repeat) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA"
+        || (e.target as HTMLElement | null)?.closest?.('[role="dialog"]')) return;
       const k = e.key.toLowerCase();
       const midi = COMPUTER_KEY_MAP[k];
       if (midi !== undefined && !heldComputerKeys.current.has(k)) {

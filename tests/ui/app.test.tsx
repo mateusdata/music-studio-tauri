@@ -284,6 +284,30 @@ afterEach(() => {
 });
 
 describe("Music Studio Tauri Arranger App UI", () => {
+  it("edits velocity without touching other MIDI settings and saves after queued writes", async () => {
+    setupTauriStateMocks([], buildMockArrangerState());
+    const snapshot = buildMockSnapshot();
+    snapshot.midi_config.selected_port = "Current MIDI";
+    snapshot.midi_config.transpose = 3;
+    vi.mocked(engineClient.getSnapshot).mockResolvedValue(snapshot);
+    const update = vi.spyOn(engineClient, "updateMidiConfig").mockResolvedValue(undefined);
+    const save = vi.spyOn(engineClient, "saveCurrentConfiguration").mockResolvedValue(undefined);
+    render(<App />);
+    fireEvent.click(screen.getByLabelText("Ferramentas"));
+    const open = screen.getByRole("button", { name: "Curva de velocidade" });
+    await waitFor(() => expect(open).not.toBeDisabled());
+    fireEvent.click(open);
+    const dialog = screen.getByRole("dialog", { name: "Curva de velocidade" });
+    expect(update).not.toHaveBeenCalled();
+    fireEvent.change(within(dialog).getByLabelText("Modo da curva de velocidade"), { target: { value: "fixed" } });
+    fireEvent.change(within(dialog).getByRole("slider", { name: "Velocidade fixa" }), { target: { value: "70" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Fechar curva de velocidade" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar configuração atual" }));
+    await waitFor(() => expect(save).toHaveBeenCalledOnce());
+    expect(update).toHaveBeenLastCalledWith({ ...snapshot.midi_config, velocity_curve: [[0,.7],[1,.7]] });
+    expect(update.mock.invocationCallOrder[update.mock.invocationCallOrder.length - 1]).toBeLessThan(save.mock.invocationCallOrder[0]);
+  });
+
   it("renders slim arranger header, searchable selectors, LCD screen, quick chords, and virtual keyboard in preview mode", () => {
     render(<App />);
 
@@ -813,13 +837,17 @@ describe("Music Studio Tauri Arranger App UI", () => {
     expect(bassSelect).toHaveValue("3");
 
     fireEvent.click(screen.getByRole("button", { name: "Importar .STY" }));
+    expect(screen.queryByText(/Importador de ritmos \.STY disponível/i)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Logs" }));
     expect(screen.getByText(/Importador de ritmos \.STY disponível no aplicativo desktop Tauri/i)).toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("button", { name: "Fechar logs" }));
     fireEvent.click(screen.getByRole("button", { name: "Importar SoundFont .SF2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Logs" }));
     expect(screen.getByText(/Importador de SoundFont \.SF2 disponível no aplicativo desktop Tauri/i)).toBeInTheDocument();
   });
 
-  it("renders STY expansion-kit and AASM audio warnings with diagnostics tooltip when sty_warnings are present", async () => {
+  it("keeps STY warnings and import diagnostics in logs, off the main screen", async () => {
     const expWarning = "Expansion Kit voice bank detected (MSB 63) — remapped to GM/SF2";
     const audioWarning = "Live Audio Style chunks (AASM/AFil/AWav) detected — audio stems skipped";
     const diagnosticsSummary = "CFF2 | Expansion Kit MSB 63 | Audio chunks: AASM, AFil, AWav";
@@ -836,14 +864,15 @@ describe("Music Studio Tauri Arranger App UI", () => {
     setupTauriStateMocks([], initialArr);
 
     render(<App />);
-    const banner = await screen.findByTestId("sty-warning-banner");
-    expect(banner).toHaveAttribute("role", "status");
-    expect(banner).toHaveAttribute("title", diagnosticsSummary);
+    expect(screen.queryByTestId("sty-warning-banner")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Logs" }));
+    const banner = await screen.findByRole("dialog", { name: "Logs" });
+    await waitFor(() => expect(banner).toHaveTextContent(diagnosticsSummary));
     expect(banner).toHaveTextContent(expWarning);
     expect(banner).toHaveTextContent(audioWarning);
   });
 
-  it("renders fallback STY warning banner from boolean flags when sty_warnings is empty", async () => {
+  it("records fallback STY notices from boolean flags in logs", async () => {
     const flagOnlyArr = buildMockArrangerState({
       source_format: "sty",
       file_name: "Expansion_Only.sty",
@@ -856,10 +885,12 @@ describe("Music Studio Tauri Arranger App UI", () => {
     setupTauriStateMocks([], flagOnlyArr);
 
     render(<App />);
-    const fallbackBanner = await screen.findByTestId("sty-warning-banner");
-    expect(fallbackBanner).toHaveTextContent(/Expansion Kit/i);
+    expect(screen.queryByTestId("sty-warning-banner")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Logs" }));
+    const fallbackBanner = await screen.findByRole("dialog", { name: "Logs" });
+    await waitFor(() => expect(fallbackBanner).toHaveTextContent(/Expansion Kit/i));
     expect(fallbackBanner).toHaveTextContent(/AASM\/AFil\/AWav/i);
-    expect(fallbackBanner.getAttribute("title")).toContain("\n");
+
   });
 
   it("hides sty-warning-banner when sty_warnings is empty in .Music mode", async () => {
@@ -951,8 +982,8 @@ describe("Startup, audio negotiation, and maintenance", () => {
     const buffer = screen.getByLabelText("Audio Buffer Size");
     expect(buffer).toHaveValue("256");
     expect(within(buffer).getAllByRole("option").map((option) => option.getAttribute("value")))
-      .toEqual(["128", "150", "190", "210", "256", "512", "1024"]);
-    expect(screen.getByText("-- ms")).toBeInTheDocument();
+      .toEqual(["64", "128", "256", "512", "1024"]);
+    expect(screen.getByText("— ms")).toBeInTheDocument();
     const footer = screen.getByRole("contentinfo");
     expect(within(footer).queryByText(/MIDI desconectado/)).not.toBeInTheDocument();
     expect(within(footer).queryByText(/Carregado/)).not.toBeInTheDocument();
@@ -970,7 +1001,7 @@ describe("Startup, audio negotiation, and maintenance", () => {
     const imported = buildMockArrangerState({ file_name: "New.Music", file_path: "/music/New.Music" });
     vi.spyOn(engineClient, "pickMusicPackageDialog").mockResolvedValue(imported);
     render(<App />);
-    await waitFor(() => expect(screen.getByText("256 real")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("5.3 ms")).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: /Importar .Music/ }));
     await waitFor(() => expect(screen.getByLabelText("Music Package Selector Trigger")).toHaveTextContent("New.Music"));
     await act(async () => {
@@ -983,31 +1014,75 @@ describe("Startup, audio negotiation, and maintenance", () => {
 
   it("keeps requested and observed callback sizes distinct and serializes changes", async () => {
     setupTauriStateMocks([], buildMockArrangerState());
-    vi.mocked(engineClient.getTelemetry).mockResolvedValue({ ...buildMockTelemetry(), requested_buffer_size: 190, buffer_size: 256 });
+    vi.mocked(engineClient.getTelemetry).mockResolvedValue({ ...buildMockTelemetry(), requested_buffer_size: 128, buffer_size: 256 });
     let resolveChange!: (value: EngineTelemetry) => void;
     const change = vi.spyOn(engineClient, "setAudioBufferSize").mockReturnValue(new Promise((resolve) => { resolveChange = resolve; }));
     render(<App />);
     const buffer = screen.getByLabelText("Audio Buffer Size");
-    await waitFor(() => expect(buffer).toHaveValue("190"));
-    expect(screen.getByText("256 real")).toBeInTheDocument();
-    fireEvent.change(buffer, { target: { value: "150" } });
+    await waitFor(() => expect(buffer).toHaveValue("128"));
+    expect(screen.getByText("5.3 ms")).toBeInTheDocument();
+    fireEvent.change(buffer, { target: { value: "64" } });
     expect(buffer).toBeDisabled();
-    fireEvent.change(buffer, { target: { value: "210" } });
+    fireEvent.change(buffer, { target: { value: "512" } });
     expect(change).toHaveBeenCalledTimes(1);
-    await act(async () => resolveChange({ ...buildMockTelemetry(), requested_buffer_size: 150, buffer_size: 0, latency_ms: 0, audio_active: false }));
+    await act(async () => resolveChange({ ...buildMockTelemetry(), requested_buffer_size: 64, buffer_size: 0, latency_ms: 0, audio_active: false }));
     expect(buffer).not.toBeDisabled();
-    expect(buffer).toHaveValue("150");
-    expect(screen.getByText("-- real")).toBeInTheDocument();
-    expect(screen.getByText("-- ms")).toBeInTheDocument();
+    expect(buffer).toHaveValue("64");
+    expect(screen.getByText("— ms")).toBeInTheDocument();
   });
 
-  it("shows persistent audio/configuration errors, not a loaded success banner", async () => {
+  it("shows only measured block duration when driver timing is zero, with details in logs", async () => {
+    setupTauriStateMocks([], buildMockArrangerState());
+    vi.mocked(engineClient.getTelemetry).mockResolvedValue({ ...buildMockTelemetry(), output_latency_ms: 0, latency_ms: 99 });
+    render(<App />);
+    const readout = await screen.findByText("5.3 ms");
+    expect(readout).toHaveAttribute("title", expect.stringContaining("256 frames ÷ 48000 Hz"));
+    expect(screen.queryByText(/saída est\./)).not.toBeInTheDocument();
+    expect(screen.queryByText(/callback ·/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Logs" }));
+    expect(screen.getByRole("dialog", { name: "Logs" })).toHaveTextContent("indisponível");
+  });
+
+  it("keeps rejected strict 128 selected, reports the error, then permits explicit 64", async () => {
+    setupTauriStateMocks([], buildMockArrangerState());
+    vi.mocked(engineClient.getTelemetry).mockResolvedValue({ ...buildMockTelemetry(), requested_buffer_size: 256 });
+    const change = vi.spyOn(engineClient, "setAudioBufferSize")
+      .mockRejectedValueOnce(new Error("Exact buffer rejected"))
+      .mockResolvedValueOnce({ ...buildMockTelemetry(), requested_buffer_size: 64, buffer_size: 16, latency_ms: 1 / 3 });
+    render(<App />);
+    await screen.findByText("5.3 ms");
+    const buffer = screen.getByLabelText("Audio Buffer Size");
+    fireEvent.change(buffer, { target: { value: "128" } });
+    const logs = await screen.findByRole("dialog", { name: "Logs" });
+    expect(logs).toHaveTextContent("Exact buffer rejected");
+    expect(buffer).toHaveValue("128");
+    expect(change).toHaveBeenCalledTimes(1);
+    expect(change).toHaveBeenNthCalledWith(1, 128);
+    fireEvent.click(screen.getByRole("button", { name: "Fechar logs" }));
+    fireEvent.change(buffer, { target: { value: "64" } });
+    await waitFor(() => expect(buffer).not.toBeDisabled());
+    expect(change).toHaveBeenNthCalledWith(2, 64);
+    expect(buffer).toHaveValue("64");
+  });
+
+  it("keeps audio/configuration diagnostics only in closable logs and allows clearing", async () => {
     setupTauriStateMocks([], buildMockArrangerState());
     vi.mocked(engineClient.getTelemetry).mockResolvedValue({ ...buildMockTelemetry(), audio_error: "Output disconnected", configuration_error: "Saved configuration invalid" });
     render(<App />);
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("Output disconnected");
-    expect(alert).toHaveTextContent("Saved configuration invalid");
+    await waitFor(() => expect(screen.getByText("5.3 ms")).toBeInTheDocument());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText("Output disconnected")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Logs" }));
+    const dialog = await screen.findByRole("dialog", { name: "Logs" });
+    expect(dialog).toHaveTextContent("Output disconnected");
+    expect(dialog).toHaveTextContent("Saved configuration invalid");
+    expect(dialog).toHaveTextContent("256 ÷ 48000 × 1000 = 5.33 ms");
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Logs" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Logs" }));
+    expect(screen.getByRole("dialog", { name: "Logs" })).toHaveTextContent("Output disconnected");
+    fireEvent.click(screen.getByRole("button", { name: "Limpar logs" }));
+    expect(screen.queryByText("Output disconnected")).not.toBeInTheDocument();
     expect(screen.queryByText(/^Carregado /)).not.toBeInTheDocument();
   });
 

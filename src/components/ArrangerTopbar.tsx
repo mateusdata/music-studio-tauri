@@ -36,6 +36,9 @@ export interface ArrangerTopbarProps {
   onPickStyFolderDialog: () => void;
   onMidiConnect: (portName: string) => void;
   onExportWav: () => void;
+  onOpenLogs: () => void;
+  onVelocitySettings: () => void;
+  velocitySettingsReady: boolean;
   onResetInstruments: () => void;
   onSaveConfiguration: () => void;
   onClearConfiguration: () => void;
@@ -96,6 +99,9 @@ export function ArrangerTopbar({
   onPickStyFolderDialog,
   onMidiConnect,
   onExportWav,
+  onOpenLogs,
+  onVelocitySettings,
+  velocitySettingsReady,
   onResetInstruments,
   onSaveConfiguration,
   onClearConfiguration,
@@ -230,6 +236,8 @@ export function ArrangerTopbar({
         <details className="tools-menu">
           <summary className="btn" aria-label="Ferramentas"><Settings2 size={14} /> Opções</summary>
           <div className="tools-menu-content">
+            <button type="button" className="btn" onClick={onOpenLogs}>Logs</button>
+            <button type="button" className="btn" disabled={!velocitySettingsReady} onClick={onVelocitySettings}>Curva de velocidade</button>
             <button type="button" className="btn" disabled={toolsBusy} onClick={onResetInstruments}>Resetar timbres</button>
             <button type="button" className="btn" disabled={toolsBusy} onClick={onSaveConfiguration}>Salvar configuração atual</button>
             <button type="button" className="btn" disabled={toolsBusy} onClick={onClearConfiguration}>Remover configuração salva</button>
@@ -275,21 +283,16 @@ export function ArrangerTopbar({
             disabled={bufferBusy}
             value={String(bufferSize)}
             onChange={(e) => onBufferSizeChange(Number(e.target.value))}
-            title="Buffer solicitado em frames; o dispositivo pode negociar outro tamanho"
+            title="Buffer estrito em frames: sem dobrar, arredondar ou tentar outro tamanho. Se rejeitado, a saída fica parada com erro nos Logs."
           >
+            <option value="64">64 buf</option>
             <option value="128">128 buf</option>
-            <option value="150">150 buf</option>
-            <option value="190">190 buf</option>
-            <option value="210">210 buf</option>
             <option value="256">256 buf</option>
             <option value="512">512 buf</option>
             <option value="1024">1024 buf</option>
           </select>
-          <span className="latency-readout" title="Período observado do callback de áudio, não latência total de saída">
-            {telemetry?.buffer_size ? `${telemetry.latency_ms.toFixed(1)} ms` : "-- ms"}
-          </span>
-          <span className="actual-buffer-readout" title={`Buffer solicitado: ${bufferSize} frames; real: ${telemetry?.buffer_size || "aguardando áudio"}`}>
-            {telemetry?.buffer_size ? `${telemetry.buffer_size} real` : "-- real"}
+          <span className="latency-readout" title={`Duração do callback observado: ${telemetry?.buffer_size ?? 0} frames ÷ ${telemetry?.sample_rate ?? 0} Hz × 1000. Não mede latência total tecla → som. Detalhes em Opções → Logs.`}>
+            {telemetry?.audio_active && telemetry.buffer_size > 0 && telemetry.sample_rate > 0 ? `${(telemetry.buffer_size / telemetry.sample_rate * 1000).toFixed(1)} ms` : "— ms"}
           </span>
         </div>
 

@@ -264,6 +264,7 @@ export interface EngineTelemetry {
   audio_error?: string | null;
   configuration_error?: string | null;
   latency_ms: number;
+  output_latency_ms?: number | null;
   active_voices: number;
   max_polyphony: number;
   cpu_load_pct: number;

@@ -22,33 +22,28 @@ pub fn apply_velocity_curve(raw_vel: u8, curve: &[[f32; 2]]) -> u8 {
     if curve.is_empty() {
         return clamped_vel;
     }
-    let mut pts: Vec<[f32; 2]> = curve
-        .iter()
-        .copied()
-        .filter(|p| p[0].is_finite() && p[1].is_finite())
-        .collect();
-    if pts.is_empty() {
-        return clamped_vel;
+    // Select the bracketing points in one pass, without allocating/sorting
+    // on each note. Equal-x ties match the previous stable sorted evaluation.
+    let x = clamped_vel as f32 / 127.0;
+    let mut first: Option<[f32; 2]> = None;
+    let mut last: Option<[f32; 2]> = None;
+    let mut below: Option<[f32; 2]> = None;
+    let mut above: Option<[f32; 2]> = None;
+    for &point in curve {
+        if !point[0].is_finite() || !point[1].is_finite() { continue; }
+        if first.map(|p| point[0] < p[0]).unwrap_or(true) { first = Some(point); }
+        if last.map(|p| point[0] >= p[0]).unwrap_or(true) { last = Some(point); }
+        if point[0] < x {
+            if below.map(|p| point[0] >= p[0]).unwrap_or(true) { below = Some(point); }
+        } else if above.map(|p| point[0] < p[0]).unwrap_or(true) { above = Some(point); }
     }
-
-    let x = (clamped_vel as f32 / 127.0).clamp(0.0, 1.0);
-    pts.sort_by(|a, b| a[0].total_cmp(&b[0]));
-
-    if x <= pts[0][0] {
-        return (pts[0][1].clamp(0.01, 1.0) * 127.0).round() as u8;
-    }
-    for w in pts.windows(2) {
-        let (x0, y0) = (w[0][0], w[0][1]);
-        let (x1, y1) = (w[1][0], w[1][1]);
-        if x <= x1 {
-            let span = (x1 - x0).max(1e-5);
-            let t = (x - x0) / span;
-            let y = y0 + (y1 - y0) * t;
-            return (y.clamp(0.01, 1.0) * 127.0).round() as u8;
-        }
-    }
-    let last_y = pts.last().map(|p| p[1]).unwrap_or(1.0);
-    (last_y.clamp(0.01, 1.0) * 127.0).round() as u8
+    let Some(first) = first else { return clamped_vel; };
+    let y = if x <= first[0] { first[1] }
+        else if let (Some(lower), Some(upper)) = (below, above) {
+            let t = (x - lower[0]) / (upper[0] - lower[0]).max(1e-5);
+            lower[1] + (upper[1] - lower[1]) * t
+        } else { last.unwrap_or(first)[1] };
+    (y.clamp(0.01, 1.0) * 127.0).round() as u8
 }
 
 /// Applies semitone transposition (-36..=+36) and keyboard range clamping/filtering.
@@ -805,6 +800,54 @@ mod tests {
     }
 
     #[test]
+    fn sensitive_default_boosts_midi_but_preserves_dynamics_and_noteoff() {
+        let curve = MidiConfig::default().velocity_curve;
+        assert_eq!(apply_velocity_curve(0, &curve), 0);
+        assert!((95..=97).contains(&apply_velocity_curve(64, &curve)));
+        assert!(apply_velocity_curve(32, &curve) > 50);
+        assert!(apply_velocity_curve(32, &curve) < apply_velocity_curve(64, &curve));
+        assert!(apply_velocity_curve(64, &curve) < apply_velocity_curve(96, &curve));
+        assert_eq!(apply_velocity_curve(127, &curve), 127);
+    }
+
+    #[test]
+    fn flat_velocity_and_three_node_shaping_preserve_note_off() {
+        for percent in [0.0_f32, 0.25, 0.5, 0.713, 1.0] {
+            let curve = [[0.0, percent], [0.5, percent], [1.0, percent]];
+            assert_eq!(apply_velocity_curve(0, &curve), 0);
+            let expected = (percent.clamp(0.01, 1.0) * 127.0).round() as u8;
+            for input in 1..=127 { assert_eq!(apply_velocity_curve(input, &curve), expected); }
+        }
+        assert_eq!(apply_velocity_curve(1, &[[0.0, 0.8], [0.5, 0.5], [1.0, 0.2]]), 101);
+        assert_eq!(apply_velocity_curve(127, &[[0.0, 0.8], [0.5, 0.5], [1.0, 0.2]]), 25);
+    }
+
+    #[test]
+    fn allocation_free_velocity_matches_legacy_mapping() {
+        let curves = [MidiConfig::default().velocity_curve,
+            vec![[1.0,0.7],[0.0,0.2],[0.5,0.3],[0.5,0.8]],
+            vec![[0.5,0.8],[f32::NAN,0.2],[1.0,0.1]],
+            vec![[0.2,0.8],[0.2,0.4]], vec![]];
+        for curve in curves {
+            let mut pts:Vec<_> = curve.iter().copied().filter(|p|p[0].is_finite() && p[1].is_finite()).collect();
+            pts.sort_by(|a,b|a[0].total_cmp(&b[0]));
+            for v in 1..=127_u8 {
+                let x=v as f32/127.0;
+                let expected = if pts.is_empty() {v} else {
+                    let mut y=pts.last().unwrap()[1];
+                    if x<=pts[0][0] {y=pts[0][1];} else {
+                        for w in pts.windows(2) {
+                            if x<=w[1][0] {y=w[0][1]+(w[1][1]-w[0][1])*((x-w[0][0])/(w[1][0]-w[0][0]).max(1e-5));break;}
+                        }
+                    }
+                    (y.clamp(0.01,1.0)*127.0).round() as u8
+                };
+                assert_eq!(apply_velocity_curve(v,&curve),expected,"v={v} curve={curve:?}");
+            }
+        }
+    }
+
+    #[test]
     fn transpose_and_key_range_clamping() {
         let mut cfg = MidiConfig::default();
         assert_eq!(cfg.key_range_mode, KeyRangeMode::Full88);
@@ -1295,7 +1338,7 @@ mod tests {
 
         assert_eq!(notes_on.len(), 1);
         assert_eq!(notes_on[0].0, 72); // C4 (60) + 12 = C5 (72)
-        assert!(notes_on[0].1 >= 95 && notes_on[0].1 <= 105);
+        assert_eq!(notes_on[0].1, 118); // Reinforced factory curve: input velocity 100.
         assert_eq!(notes_off, vec![72]);
         assert_eq!(sustain_values, vec![127]);
         assert_eq!(cc_updates.len(), 2);

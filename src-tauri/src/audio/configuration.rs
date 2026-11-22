@@ -59,7 +59,7 @@ pub(super) struct SavedConfiguration {
 }
 
 pub(super) fn valid_buffer_size(size: u32) -> bool {
-    matches!(size, 128 | 150 | 190 | 210 | 256 | 512 | 1024)
+    matches!(size, 64 | 128 | 256 | 512 | 1024)
 }
 
 pub(super) fn default_configuration_path() -> PathBuf {
@@ -150,7 +150,7 @@ mod tests {
         SavedConfiguration {
             version: VERSION, params: instruments[0].default_params.clone(),
             instrument_id: instruments[0].id.clone(), preset_id: "test".into(), preset_b_id: None,
-            midi_config: MidiConfig::default(), requested_buffer_size: 150,
+            midi_config: MidiConfig::default(), requested_buffer_size: 256,
             arranger: MusicPackageSummary::default(), package_sources: Vec::new(), instrument_names: Vec::new(), soundfont: None, imports: Vec::new(), package_uses_soundfont: false,
         }
     }
@@ -166,7 +166,7 @@ mod tests {
         saved.params.volume_db = -7.5;
         write_atomic(&path, &saved).unwrap();
         let restored = read(&path).unwrap().unwrap();
-        assert_eq!(restored.requested_buffer_size, 150);
+        assert_eq!(restored.requested_buffer_size, 256);
         assert_eq!(restored.params.volume_db, -7.5);
         assert!(!restored.arranger.rhythm_playing);
         let json = std::fs::read_to_string(&path).unwrap();

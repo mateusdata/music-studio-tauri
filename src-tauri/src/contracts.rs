@@ -587,9 +587,9 @@ impl Default for MidiConfig {
             key_range_mode: KeyRangeMode::Full88,
             velocity_curve: vec![
                 [0.0, 0.0],
-                [0.25, 0.22],
-                [0.5, 0.5],
-                [0.75, 0.78],
+                [0.25, 0.45],
+                [0.5, 0.75],
+                [0.75, 0.92],
                 [1.0, 1.0],
             ],
             cc_mappings: vec![
@@ -648,6 +648,8 @@ pub struct EngineTelemetry {
     #[serde(default)]
     pub configuration_error: Option<String>,
     pub latency_ms: f32,
+    #[serde(default)]
+    pub output_latency_ms: Option<f32>,
     pub active_voices: usize,
     pub max_polyphony: usize,
     pub cpu_load_pct: f32,

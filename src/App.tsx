@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { engineClient } from "./services/engineClient";
 import { ArrangerTopbar } from "./components/ArrangerTopbar";
 import { MixerPanel } from "./components/MixerPanel";
-import { LcdPanel } from "./components/LcdPanel";
+import { LogsDialog, type StudioLogEntry } from "./components/LogsDialog";
+import { LcdPanel, resolveStyWarnings } from "./components/LcdPanel";
 import { VoicesSplitPanel } from "./components/VoicesSplitPanel";
+import { DEFAULT_VELOCITY_CURVE, VelocitySettings } from "./components/VelocitySettings";
 import { VirtualKeyboard } from "./components/VirtualKeyboard";
 import type {
   CleanupReport,
@@ -11,6 +13,7 @@ import type {
   EngineParams,
   EngineSnapshot,
   EngineTelemetry,
+  MidiConfig,
   MidiPortInfo,
   MusicPackageEntry,
   MusicPackageSummary,
@@ -188,14 +191,29 @@ export function App() {
   const [telemetry, setTelemetry] = useState<EngineTelemetry | null>(null);
   const [midiPorts, setMidiPorts] = useState<MidiPortInfo[]>([]);
   const [selectedMidiPort, setSelectedMidiPort] = useState<string>("");
+  const [velocityOpen, setVelocityOpen] = useState(false);
+  const [midiConfig, setMidiConfig] = useState<MidiConfig>({
+    selected_port: null, channel: 0, microtonal_multichannel: false, transpose: 0,
+    key_range_mode: "Full88", velocity_curve: DEFAULT_VELOCITY_CURVE.map(([x, y]) => [x, y]), cc_mappings: [],
+  });
+  const midiConfigRef = useRef(midiConfig);
+  const midiWriteQueue = useRef<Promise<void>>(Promise.resolve());
+  const [midiConfigReady, setMidiConfigReady] = useState(() => !engineClient.isTauri());
   const [sustainOn, setSustainOn] = useState(false);
   const [masterVolumeDb, setMasterVolumeDb] = useState<number>(-4.0);
   const [bufferSize, setBufferSize] = useState<number>(256);
-  const [statusMsg, setStatusMsg] = useState<string>(() =>
-    engineClient.isTauri()
-      ? "Pronto"
-      : "Modo preview (execute com Tauri para carregar .Music e áudio nativo)",
-  );
+  const [logsOpen, setLogsOpen] = useState(false);
+  const [logs, setLogs] = useState<StudioLogEntry[]>([]);
+  const logSequence = useRef(0);
+  const appendLog = useCallback((message: string, source = "Aplicativo") => {
+    if (!message.trim()) return;
+    const entry: StudioLogEntry = {
+      id: ++logSequence.current, time: new Date().toLocaleTimeString(), source, message,
+      level: /erro|falha|invalid|disconnected|failed/i.test(message) ? "error" : "info",
+    };
+    setLogs((current) => [...current.slice(-199), entry]);
+  }, []);
+  const setStatusMsg = useCallback((message: string) => appendLog(message), [appendLog]);
 
   const [bufferBusy, setBufferBusy] = useState(false);
   const bufferPending = useRef(false);
@@ -230,7 +248,12 @@ export function App() {
         if (!alive) return;
         setSnapshot((current) => paramsEdited.current && current ? current : snap);
         if (!paramsEdited.current) setMasterVolumeDb(snap.params.volume_db);
-        if (!midiEdited.current) setSelectedMidiPort(snap.midi_config.selected_port ?? "");
+        if (!midiEdited.current) {
+          midiConfigRef.current = snap.midi_config;
+          setMidiConfig(snap.midi_config);
+          setSelectedMidiPort(snap.midi_config.selected_port ?? "");
+        }
+        setMidiConfigReady(true);
       }).catch((err) => startupError("configuração", err))
         .finally(() => { snapshotPending = false; });
     };
@@ -271,12 +294,16 @@ export function App() {
     };
   }, []);
 
-  // Routine success is transient; errors stay visible until the next action.
   useEffect(() => {
-    if (!statusMsg || /erro|falha|aviso|recupera/i.test(statusMsg)) return;
-    const timeout = setTimeout(() => setStatusMsg(""), 4500);
-    return () => clearTimeout(timeout);
-  }, [statusMsg]);
+    if (telemetry?.audio_error) appendLog(telemetry.audio_error, "Áudio");
+  }, [telemetry?.audio_error, appendLog]);
+  useEffect(() => {
+    if (telemetry?.configuration_error) appendLog(telemetry.configuration_error, "Configuração");
+  }, [telemetry?.configuration_error, appendLog]);
+  const importDiagnostics = [...resolveStyWarnings(arranger), arranger.sty_diagnostics_summary].filter(Boolean).join("\n");
+  useEffect(() => {
+    if (importDiagnostics) appendLog(`${arranger.file_name}\n${importDiagnostics}`, "Importação");
+  }, [arranger.file_path, importDiagnostics, appendLog]);
 
   const updateParams = useCallback(
     (mutator: (draft: EngineParams) => void) => {
@@ -460,11 +487,12 @@ export function App() {
   );
 
   const handleBufferSizeChange = useCallback(async (nextSize: number) => {
-    if (bufferPending.current || ![128, 150, 190, 210, 256, 512, 1024].includes(nextSize)) return;
+    if (bufferPending.current || ![64, 128, 256, 512, 1024].includes(nextSize)) return;
     if (!engineClient.isTauri()) {
       setBufferSize(nextSize);
       return;
     }
+    setBufferSize(nextSize);
     bufferPending.current = true;
     bufferRevision.current++;
     setBufferBusy(true);
@@ -472,9 +500,12 @@ export function App() {
       const nextTelemetry = await engineClient.setAudioBufferSize(nextSize);
       setTelemetry(nextTelemetry);
       setBufferSize(nextTelemetry.requested_buffer_size ?? nextSize);
-      setStatusMsg(nextTelemetry.audio_error ? `Erro de áudio: ${nextTelemetry.audio_error}` : "");
+      setStatusMsg(`Buffer estrito aceito pelo backend: ${nextSize} frames. Sem tamanho alternativo; o callback observado e a estimativa de saída são mostrados separadamente.`);
+
     } catch (err) {
-      setStatusMsg(`Falha ao configurar buffer: ${String(err)}`);
+      setTelemetry((current) => current ? { ...current, requested_buffer_size: nextSize, buffer_size: 0, latency_ms: 0, output_latency_ms: null, audio_active: false } : current);
+      setStatusMsg(`Falha ao configurar buffer estrito ${nextSize}: ${String(err)}. Nenhum buffer alternativo foi solicitado.`);
+      setLogsOpen(true);
     } finally {
       bufferPending.current = false;
       setBufferBusy(false);
@@ -704,17 +735,46 @@ export function App() {
     }
   }, []);
 
-  const handleMidiConnect = useCallback(async (portName: string) => {
+  const commitMidiConfig = useCallback((next: MidiConfig) => {
     midiEdited.current = true;
-    setSelectedMidiPort(portName);
-    if (!portName || !engineClient.isTauri()) return;
-    try {
-      const msg = await engineClient.connectMidiDevice(portName);
-      setStatusMsg(`MIDI conectado: ${msg}`);
-    } catch (err) {
-      setStatusMsg(`Erro MIDI: ${String(err)}`);
-    }
+    midiConfigRef.current = next;
+    setMidiConfig(next);
+    setSnapshot((current) => current ? { ...current, midi_config: next } : current);
   }, []);
+
+  const handleVelocityCurve = useCallback((curve: [number, number][]) => {
+    const previous = midiConfigRef.current;
+    const next = { ...previous, velocity_curve: curve };
+    commitMidiConfig(next);
+    if (!engineClient.isTauri()) return;
+    // Serialize full-config writes with port connection, so neither can restore stale fields.
+    midiWriteQueue.current = midiWriteQueue.current.then(() => engineClient.updateMidiConfig(next)).catch((err) => {
+      if (midiConfigRef.current === next) commitMidiConfig(previous);
+      setStatusMsg(`Erro ao ajustar curva de velocidade: ${String(err)}`);
+    });
+  }, [commitMidiConfig]);
+
+  const handleMidiConnect = useCallback((portName: string) => {
+    const previous = midiConfigRef.current;
+    const next = { ...previous, selected_port: portName || null };
+    commitMidiConfig(next);
+    setSelectedMidiPort(portName);
+    if (!engineClient.isTauri()) return;
+    midiWriteQueue.current = midiWriteQueue.current.then(async () => {
+      if (portName) {
+        const msg = await engineClient.connectMidiDevice(portName);
+        setStatusMsg(`MIDI conectado: ${msg}`);
+      } else {
+        await engineClient.updateMidiConfig(next);
+      }
+    }).catch((err) => {
+      if (midiConfigRef.current === next) {
+        commitMidiConfig(previous);
+        setSelectedMidiPort(previous.selected_port ?? "");
+      }
+      setStatusMsg(`Erro MIDI: ${String(err)}`);
+    });
+  }, [commitMidiConfig]);
 
   const handleToggleSustain = () => {
     const next = !sustainOn;
@@ -764,6 +824,7 @@ export function App() {
     setStatusMsg("Timbres restaurados aos padrões do pacote.");
   });
   const handleSaveConfiguration = () => runTool(async () => {
+    await midiWriteQueue.current;
     await engineClient.saveCurrentConfiguration();
     setStatusMsg("Configuração atual salva.");
   });
@@ -797,7 +858,6 @@ export function App() {
       setStatusMsg("");
     });
   };
-  const importantErrors = [telemetry?.audio_error, telemetry?.configuration_error].filter(Boolean);
 
   const activeStyle = arranger.styles[arranger.active_style_index] ?? arranger.styles[0] ?? null;
   const availableSections = useMemo(
@@ -823,6 +883,9 @@ export function App() {
         onPickStyDialog={handlePickStyDialog}
         onPickStyFolderDialog={handlePickStyFolderDialog}
         onMidiConnect={handleMidiConnect}
+        onOpenLogs={() => setLogsOpen(true)}
+        onVelocitySettings={() => setVelocityOpen(true)}
+        velocitySettingsReady={midiConfigReady}
         onExportWav={handleExportWav}
         onResetInstruments={handleResetInstruments}
         onSaveConfiguration={handleSaveConfiguration}
@@ -834,6 +897,8 @@ export function App() {
         onBufferSizeChange={handleBufferSizeChange}
       />
 
+      {logsOpen && <LogsDialog entries={logs} telemetry={telemetry} onClear={() => setLogs([])} onClose={() => setLogsOpen(false)} />}
+      {velocityOpen && <VelocitySettings config={midiConfig} onChange={handleVelocityCurve} onClose={() => setVelocityOpen(false)} />}
       <main className="arranger-workspace">
         {/* ROW 1: 3-Column Hardware Arranger Console (Mixer | LCD & Chords | Voices & Split/Scan) */}
         <div className="arranger-console-grid">
@@ -923,10 +988,6 @@ export function App() {
         </section>
       </main>
 
-      {importantErrors.length > 0 && (
-        <div className="status-banner status-error" role="alert">{importantErrors.join(" • ")}</div>
-      )}
-      {statusMsg && <div className={`status-banner ${/erro|falha|aviso|recupera/i.test(statusMsg) ? "status-error" : ""}`} role="status">{statusMsg}</div>}
       {duplicateScan && (
         <section className="library-action-panel" role="dialog" aria-label="Confirmar limpeza de ritmos">
           <strong>{duplicateScan.redundant_files} arquivo(s) redundante(s) por conteúdo idêntico</strong>

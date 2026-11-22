@@ -2100,7 +2100,7 @@ pub fn build_sty_package(
                         } else {
                             None
                         };
-                        let events = tr
+                        let mut events: Vec<RhythmNoteEvent> = tr
                             .events
                             .iter()
                             .map(|ev| RhythmNoteEvent {
@@ -2115,6 +2115,7 @@ pub fn build_sty_package(
                                 duration_ticks: ev.duration_ticks,
                             })
                             .collect();
+                        events.sort_by_key(|event| event.start_tick);
                         RhythmTrack {
                             track_type: sty_slot_name(tr.track_slot).to_string(),
                             track_slot: tr.track_slot.min(7),
@@ -2987,54 +2988,56 @@ fn collect_section_events(
                 continue;
             }
         }
-        for ev in &track.events {
-            let t = ev.start_tick as f64;
-            if t >= win_start && t < win_end {
-                let target_note = if let Some(ref rule) = track.casm_rule {
-                    if effective_is_drum || slot <= 1 {
-                        ev.midi_note
-                    } else {
-                        let shifted = (ev.midi_note as i16
-                            + track.key_move as i16
-                            + (track.octave_shift * 12) as i16)
-                            .clamp(0, 127) as u8;
-                        match rule.transpose_note(shifted, target_spec, effective_is_drum, is_bass)
-                        {
-                            Some(n) => n,
-                            None => continue,
-                        }
-                    }
-                } else if effective_is_drum || slot <= 1 {
+        // Both package importers sort by tick once, outside the audio callback.
+        // Search only this block's events instead of rescanning a multi-bar
+        // pattern from the beginning on every small audio buffer.
+        let start = track.events.partition_point(|ev| (ev.start_tick as f64) < win_start);
+        let end = track.events.partition_point(|ev| (ev.start_tick as f64) < win_end);
+        for ev in &track.events[start..end] {
+            let target_note = if let Some(ref rule) = track.casm_rule {
+                if effective_is_drum || slot <= 1 {
                     ev.midi_note
                 } else {
                     let shifted = (ev.midi_note as i16
                         + track.key_move as i16
                         + (track.octave_shift * 12) as i16)
-                        .clamp(12, 115) as u8;
-                    transpose_note_for_chord(
-                        shifted,
-                        detected_chord_root,
-                        detected_chord_quality,
-                        is_bass,
-                    )
-                };
-                let dur_samples = if effective_is_drum {
-                    None
-                } else {
-                    let dur_sec =
-                        (ev.duration_ticks.max(30) as f64 / 500.0) * (60.0 / bpm.max(40.0) as f64);
-                    Some(((dur_sec * sr as f64) as usize).max(256))
-                };
-                out.push(PendingTrigger {
-                    inst_idx: effective_inst_idx,
-                    midi_note: target_note,
-                    velocity: ev.velocity,
-                    vol,
-                    pan: track.pan,
-                    fine_tune: track.fine_tune,
-                    dur_samples,
-                });
-            }
+                        .clamp(0, 127) as u8;
+                    match rule.transpose_note(shifted, target_spec, effective_is_drum, is_bass)
+                    {
+                        Some(n) => n,
+                        None => continue,
+                    }
+                }
+            } else if effective_is_drum || slot <= 1 {
+                ev.midi_note
+            } else {
+                let shifted = (ev.midi_note as i16
+                    + track.key_move as i16
+                    + (track.octave_shift * 12) as i16)
+                    .clamp(12, 115) as u8;
+                transpose_note_for_chord(
+                    shifted,
+                    detected_chord_root,
+                    detected_chord_quality,
+                    is_bass,
+                )
+            };
+            let dur_samples = if effective_is_drum {
+                None
+            } else {
+                let dur_sec =
+                    (ev.duration_ticks.max(30) as f64 / 500.0) * (60.0 / bpm.max(40.0) as f64);
+                Some(((dur_sec * sr as f64) as usize).max(256))
+            };
+            out.push(PendingTrigger {
+                inst_idx: effective_inst_idx,
+                midi_note: target_note,
+                velocity: ev.velocity,
+                vol,
+                pan: track.pan,
+                fine_tune: track.fine_tune,
+                dur_samples,
+            });
         }
     }
 }
@@ -4450,6 +4453,31 @@ mod tests {
             for _ in 0..(48000 / frames + 3) { engine.process_block(&mut l, &mut r); }
             assert_eq!(engine.active_section, "Variation 1");
             assert!(l.iter().chain(r.iter()).all(|x| x.is_finite()));
+        }
+    }
+
+    #[test]
+    fn indexed_event_windows_match_full_scan_at_every_buffer_boundary() {
+        let package = performance_fixture();
+        let mut section = package.styles[0].sections[0].clone();
+        section.tracks[0].events = (0..20000).map(|tick| RhythmNoteEvent {
+            midi_note: 48 + (tick % 12) as u8, velocity: 40 + (tick % 80) as u8,
+            start_tick: tick * 3, duration_ticks: 100,
+        }).collect();
+        for frames in [128,150,190,210,256,512,1024] {
+            let step = frames as f64 * 2.0 * 500.0 / 48000.0;
+            let mut tick = 0.0;
+            for _ in 0..512 {
+                let mut indexed = Vec::new();
+                collect_section_events(&section, &package.instruments, &[1.0;8], &[None;8],
+                    0,ChordQuality::Major,120.0,48000.0,tick,tick+step,&mut indexed);
+                let expected:Vec<_> = section.tracks[0].events.iter()
+                    .filter(|event| (event.start_tick as f64)>=tick && (event.start_tick as f64)<tick+step)
+                    .map(|event|(event.midi_note,event.velocity)).collect();
+                let actual:Vec<_> = indexed.iter().map(|event|(event.midi_note,event.velocity)).collect();
+                assert_eq!(actual,expected,"frames={frames} tick={tick}");
+                tick+=step;
+            }
         }
     }
 

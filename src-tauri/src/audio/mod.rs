@@ -29,19 +29,26 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Instant;
 
-// Non-power-of-two requests are not universally accepted by ALSA. Exhaust
-// bounded fixed alternatives before considering a backend's high-latency default.
+// Strict policy: one exact backend buffer request; never double, round or fall back.
 fn fixed_buffer_candidates(requested: u32, range: Option<(u32, u32)>) -> Vec<u32> {
-    let mut candidates = vec![requested, requested.next_power_of_two(), requested.saturating_mul(2)];
-    let mut nearby = vec![128_u32, 256, 512, 1024];
-    nearby.sort_by_key(|size| size.abs_diff(requested));
-    candidates.extend(nearby);
-    let mut result = Vec::new();
-    for size in candidates {
-        if range.map(|(min, max)| size >= min && size <= max).unwrap_or(true)
-            && !result.contains(&size) { result.push(size); }
-    }
-    result
+    if range.map(|(min, max)| requested >= min && requested <= max).unwrap_or(true) {
+        vec![requested]
+    } else { Vec::new() }
+}
+
+fn virtual_note_command(note: u8, raw_velocity: u8, curve: &[[f32; 2]]) -> AudioCommand {
+    if raw_velocity == 0 { return AudioCommand::NoteOff { note }; }
+    const HISTORICAL_DEFAULT: [[f32; 2]; 5] = [
+        [0.0, 0.0], [0.25, 0.22], [0.5, 0.5], [0.75, 0.78], [1.0, 1.0],
+    ];
+    // Preserve the virtual keyboard's original fixed velocity for the default
+    // curve; explicit custom/fixed curves apply once, as they do to MIDI input.
+    const SENSITIVE_DEFAULT: [[f32; 2]; 5] = [
+        [0.0, 0.0], [0.25, 0.45], [0.5, 0.75], [0.75, 0.92], [1.0, 1.0],
+    ];
+    let velocity = if curve == HISTORICAL_DEFAULT || curve == SENSITIVE_DEFAULT { raw_velocity.min(127) }
+        else { apply_velocity_curve(raw_velocity, curve) };
+    AudioCommand::NoteOn { note, velocity }
 }
 
 fn is_sty_path(path: &Path) -> bool {
@@ -556,6 +563,7 @@ impl AudioEngineManager {
                 audio_error: None,
                 configuration_error: None,
                 latency_ms: 0.0,
+                output_latency_ms: None,
                 active_voices: 0,
                 max_polyphony: MAX_POLYPHONY,
                 cpu_load_pct: 0.0,
@@ -726,6 +734,11 @@ impl AudioEngineManager {
     }
 
     fn restore_configuration(&self, mut setup: configuration::SavedConfiguration, revision: u64) -> Result<(), String> {
+        // Upgrade only the exact historical factory curve; never user custom/fixed curves.
+        if setup.midi_config.velocity_curve == [[0.0,0.0],[0.25,0.22],[0.5,0.5],[0.75,0.78],[1.0,1.0]] {
+            setup.midi_config.velocity_curve = MidiConfig::default().velocity_curve;
+        }
+
         let paths: Vec<_> = setup.package_sources.iter().map(|asset| asset.path.clone()).collect();
         let sf2 = setup.soundfont.as_ref().map(|asset| asset.path.as_path());
         let mut package = if paths.is_empty() { None }
@@ -894,18 +907,18 @@ impl AudioEngineManager {
             if let Ok(default_cfg) = device.default_output_config() {
                 let sr = default_cfg.sample_rate().0;
                 let runtime_slot = Arc::new(Mutex::new(Some(Self::make_runtime(&shared, cmd_rx, sr as f32))));
-                let mut active_target = requested_buffer_size.load(Ordering::Relaxed);
-                let start_stream = |frames, allow_default| -> Result<Stream, String> {
-                    let stream = Self::build_cpal_stream(&device, &default_cfg, Arc::clone(&shared), frames, Arc::clone(&runtime_slot), allow_default)?;
+                let active_target = requested_buffer_size.load(Ordering::Relaxed);
+                let start_stream = |frames| -> Result<Stream, String> {
+                    let stream = Self::build_cpal_stream(&device, &default_cfg, Arc::clone(&shared), frames, Arc::clone(&runtime_slot))?;
                     shared.telemetry.write().audio_active = true;
                     Ok(stream)
                 };
-                let mut active_stream = match start_stream(active_target, true) {
+                let mut active_stream = match start_stream(active_target) {
                     Ok(stream) => Some(stream),
                     Err(error) => {
                         shared.telemetry.write().audio_error = Some(error);
-                        Self::spawn_headless_fallback(shared, runtime_slot.lock().take(), requested_buffer_size, keep_alive);
-                        return;
+                        // Keep the supervisor available for another explicit user selection.
+                        None
                     }
                 };
                 while keep_alive.load(Ordering::Relaxed) {
@@ -913,27 +926,18 @@ impl AudioEngineManager {
                         Ok(request) => {
                             // cpal owns the non-cloneable runtime; return it before reopening the device.
                             drop(active_stream.take());
-                            let result = match start_stream(request.frames, false) {
-                                Ok(stream) => {
-                                    active_stream = Some(stream);
-                                    active_target = request.frames;
-                                    requested_buffer_size.store(active_target, Ordering::Relaxed);
-                                    let mut t = shared.telemetry.write();
-                                    t.requested_buffer_size = active_target as usize;
-                                    Ok(())
-                                }
+                            requested_buffer_size.store(request.frames, Ordering::Relaxed);
+                            shared.telemetry.write().requested_buffer_size = request.frames as usize;
+                            let result = match start_stream(request.frames) {
+                                Ok(stream) => { active_stream = Some(stream); Ok(()) }
                                 Err(error) => {
-                                    // Failed changes must not permanently discard a working output.
-                                    match start_stream(active_target, true) {
-                                        Ok(stream) => active_stream = Some(stream),
-                                        Err(rollback) => {
-                                            shared.telemetry.write().audio_error = Some(format!("{error}; rollback failed: {rollback}"));
-                                            let _ = request.reply.send(Err(error));
-                                            Self::spawn_headless_fallback(shared, runtime_slot.lock().take(), requested_buffer_size, keep_alive);
-                                            return;
-                                        }
-                                    }
-                                    shared.telemetry.write().audio_error = Some(error.clone());
+                                    // Strict means silence/error, not resuming a different buffer.
+                                    let mut t = shared.telemetry.write();
+                                    t.audio_active = false;
+                                    t.buffer_size = 0;
+                                    t.latency_ms = 0.0;
+                                    t.output_latency_ms = None;
+                                    t.audio_error = Some(error.clone());
                                     Err(error)
                                 }
                             };
@@ -963,6 +967,7 @@ impl AudioEngineManager {
             t.audio_active = false;
             t.buffer_size = 0;
             t.latency_ms = 0.0;
+            t.output_latency_ms = None;
             if t.audio_error.is_none() { t.audio_error = Some("No working audio output device".into()); }
         }
         std::thread::spawn(move || {
@@ -1033,13 +1038,13 @@ impl AudioEngineManager {
         shared: Arc<SharedAudioState>,
         target_buffer_frames: u32,
         runtime_slot: Arc<Mutex<Option<AudioDspRuntime>>>,
-        allow_default: bool,
     ) -> Result<Stream, String> {
         let sr = default_cfg.sample_rate().0;
         {
             let mut telemetry = shared.telemetry.write();
             telemetry.buffer_size = 0;
             telemetry.latency_ms = 0.0;
+            telemetry.output_latency_ms = None;
             telemetry.audio_active = false;
         }
         let channels = default_cfg.channels().max(2) as usize;
@@ -1049,11 +1054,11 @@ impl AudioEngineManager {
             cpal::SupportedBufferSize::Range { min, max } => Some((*min, *max)),
             cpal::SupportedBufferSize::Unknown => None,
         };
-        let mut modes: Vec<_> = fixed_buffer_candidates(target_buffer_frames, range)
+        let modes: Vec<_> = fixed_buffer_candidates(target_buffer_frames, range)
             .into_iter().map(cpal::BufferSize::Fixed).collect();
-        // On a user change, preserve the previous output rather than silently
-        // jumping to ALSA's potentially 25 ms default period.
-        if allow_default { modes.push(cpal::BufferSize::Default); }
+        if modes.is_empty() {
+            return Err(format!("Buffer estrito {target_buffer_frames} frames fora da faixa do dispositivo {range:?}. Sem arredondamento ou alternativa."));
+        }
         let telemetry_interval_frames = (sr as usize / 25).max(512);
         let mut failures = Vec::new();
         for buf_mode in modes {
@@ -1077,26 +1082,25 @@ impl AudioEngineManager {
 
             let attempt = device.build_output_stream(
                 &config,
-                move |output: &mut [f32], _| {
+                move |output: &mut [f32], info| {
                     let Some(rt) = guard.runtime.as_mut() else {
                         output.fill(0.0);
                         return;
                     };
+                    let timestamp = info.timestamp();
+                    let output_latency_ms = timestamp.playback.duration_since(&timestamp.callback)
+                        .map(|delay| delay.as_secs_f32() * 1000.0);
                     let start = Instant::now();
                     let frames = output.len() / channels;
                     if frames != last_observed_frames {
                         if let Some(mut t) = cb_shared.telemetry.try_write() {
                             t.buffer_size = frames;
                             t.latency_ms = frames as f32 / sr as f32 * 1000.0;
+                            t.output_latency_ms = output_latency_ms;
                             t.audio_active = true;
                             last_observed_frames = frames;
                         }
                     }
-                    if frames > rt.buf_l.len() {
-                        rt.buf_l.resize(frames, 0.0);
-                        rt.buf_r.resize(frames, 0.0);
-                    }
-
                     while let Ok(cmd) = rt.cmd_rx.try_recv() {
                         process_audio_command(
                             cmd,
@@ -1109,34 +1113,34 @@ impl AudioEngineManager {
                         );
                     }
 
-                    let slice_l = &mut rt.buf_l[..frames];
-                    let slice_r = &mut rt.buf_r[..frames];
-                    if rt.arranger.has_loaded_package() {
-                        rt.arranger.process_block(slice_l, slice_r);
-                    } else {
-                        rt.synth.process_block(slice_l, slice_r, &rt.params, &rt.pedals);
-                        rt.fx.process_block(slice_l, slice_r, &rt.params);
-                    }
-
                     let mut peak_l = 0.0_f32;
                     let mut peak_r = 0.0_f32;
                     let mut sq_l = 0.0_f32;
                     let mut sq_r = 0.0_f32;
-
-                    for f in 0..frames {
-                        let l = slice_l[f];
-                        let r = slice_r[f];
-                        peak_l = peak_l.max(l.abs());
-                        peak_r = peak_r.max(r.abs());
-                        sq_l += l * l;
-                        sq_r += r * r;
-                        let base = f * channels;
-                        output[base] = l;
-                        if channels > 1 {
-                            output[base + 1] = r;
+                    // Backend periods may exceed the requested ring. Reuse scratch
+                    // storage in chunks instead of growing vectors on the audio thread.
+                    let capacity = rt.buf_l.len().min(rt.buf_r.len());
+                    for offset in (0..frames).step_by(capacity) {
+                        let count = (frames - offset).min(capacity);
+                        let slice_l = &mut rt.buf_l[..count];
+                        let slice_r = &mut rt.buf_r[..count];
+                        if rt.arranger.has_loaded_package() {
+                            rt.arranger.process_block(slice_l, slice_r);
+                        } else {
+                            rt.synth.process_block(slice_l, slice_r, &rt.params, &rt.pedals);
+                            rt.fx.process_block(slice_l, slice_r, &rt.params);
                         }
-                        for ch in 2..channels {
-                            output[base + ch] = 0.0;
+                        for frame in 0..count {
+                            let l = slice_l[frame];
+                            let r = slice_r[frame];
+                            peak_l = peak_l.max(l.abs());
+                            peak_r = peak_r.max(r.abs());
+                            sq_l += l * l;
+                            sq_r += r * r;
+                            let base = (offset + frame) * channels;
+                            output[base] = l;
+                            if channels > 1 { output[base + 1] = r; }
+                            for channel in 2..channels { output[base + channel] = 0.0; }
                         }
                     }
 
@@ -1149,6 +1153,7 @@ impl AudioEngineManager {
                         if let Some(mut t) = cb_shared.telemetry.try_write() {
                             t.buffer_size = frames;
                             t.latency_ms = (frames as f32 / sr as f32) * 1000.0;
+                            t.output_latency_ms = output_latency_ms;
                             if rt.arranger.has_loaded_package() {
                                 t.active_voices = rt.arranger.active_voice_count();
                                 rt.arranger.fill_active_notes(&mut t.active_notes);
@@ -1176,13 +1181,14 @@ impl AudioEngineManager {
                     t.audio_active = false;
                     t.buffer_size = 0;
                     t.latency_ms = 0.0;
+                    t.output_latency_ms = None;
                 },
                 None,
             );
 
             if let Ok(stream) = attempt {
                 // Some backends only reject a fixed size when starting the stream.
-                // Drop and return the runtime before trying their default configuration.
+                // Return the runtime on failure; strict mode has no alternative size.
                 if let Err(error) = stream.play() {
                     failures.push(format!("{buf_mode:?}: {error}"));
                     drop(stream);
@@ -1191,18 +1197,14 @@ impl AudioEngineManager {
                 let mut t = shared.telemetry.write();
                 t.sample_rate = sr;
                 t.audio_backend = format!("PipeWire/ALSA ({})", dev_name);
-                t.audio_error = match buf_mode {
-                    cpal::BufferSize::Fixed(size) if size == target_buffer_frames => None,
-                    cpal::BufferSize::Fixed(size) => Some(format!("Requested {target_buffer_frames} frames; opened fixed buffer candidate {size} frames. On ALSA this is ring capacity, not callback period or total latency.")),
-                    cpal::BufferSize::Default => Some(format!("Requested {target_buffer_frames} frames; all viable fixed buffers failed. Using backend default; callback period may be larger. Reported ms is callback duration, not total latency.")),
-                };
+                t.audio_error = None;
                 return Ok(stream);
             } else if let Err(error) = attempt {
                 failures.push(format!("{buf_mode:?}: {error}"));
             }
         }
 
-        Err(format!("Failed to negotiate audio output: {}", failures.join("; ")))
+        Err(format!("Buffer estrito {target_buffer_frames} frames rejeitado: {}. Nenhum tamanho alternativo foi tentado.", failures.join("; ")))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1274,7 +1276,8 @@ impl AudioEngineManager {
     }
 
     pub fn note_on(&self, note: u8, velocity: u8) {
-        let _ = self.cmd_tx.lock().send(AudioCommand::NoteOn { note, velocity });
+        let command = virtual_note_command(note, velocity, &self.shared.midi_config.read().velocity_curve);
+        let _ = self.cmd_tx.lock().send(command);
     }
 
     pub fn note_off(&self, note: u8) {
@@ -1793,10 +1796,7 @@ impl AudioEngineManager {
 
     pub fn set_audio_buffer_size(&self, buffer_size: u32) -> Result<EngineTelemetry, String> {
         if !configuration::valid_buffer_size(buffer_size) {
-            return Err(format!("Tamanho de buffer inválido: {buffer_size} (use 128, 150, 190, 210, 256, 512 ou 1024)"));
-        }
-        if !self.shared.telemetry.read().audio_active {
-            return Err("Audio output is unavailable; buffer was not changed".into());
+            return Err(format!("Tamanho de buffer inválido: {buffer_size} (use 64, 128, 256, 512 ou 1024)"));
         }
         let (reply, response) = mpsc::channel();
         self.reconfigure_tx.lock().send(BufferRequest { frames: buffer_size, reply })
@@ -2165,6 +2165,7 @@ mod tests {
                 audio_error: None,
                 configuration_error: None,
                 latency_ms: 0.0,
+                output_latency_ms: None,
                 active_voices: 0,
                 max_polyphony: MAX_POLYPHONY,
                 cpu_load_pct: 0.0,
@@ -2499,6 +2500,25 @@ mod tests {
     }
 
     #[test]
+    fn saved_velocity_upgrades_only_historical_factory_curve() {
+        let manager = isolated_manager();
+        manager.save_current_configuration().unwrap();
+        let historical = vec![[0.0, 0.0], [0.25, 0.22], [0.5, 0.5], [0.75, 0.78], [1.0, 1.0]];
+        let custom = vec![[0.0, 0.2], [0.5, 0.6], [1.0, 0.9]];
+        let fixed = vec![[0.0, 0.7], [1.0, 0.7]];
+        for curve in [historical.clone(), custom, fixed] {
+            let mut saved = configuration::read(&manager.configuration_path).unwrap().unwrap();
+            saved.midi_config.velocity_curve = curve.clone();
+            let revision = manager.asset_revision.load(Ordering::SeqCst);
+            manager.restore_configuration(saved, revision).unwrap();
+            let expected = if curve == historical { MidiConfig::default().velocity_curve } else { curve };
+            assert_eq!(manager.shared.midi_config.read().velocity_curve, expected);
+        }
+        manager.clear_saved_configuration().unwrap();
+        let _ = std::fs::remove_dir(manager.configuration_path.parent().unwrap());
+    }
+
+    #[test]
     fn test_stale_configuration_cannot_overwrite_explicit_state() {
         let manager = isolated_manager();
         manager.save_current_configuration().unwrap();
@@ -2527,28 +2547,73 @@ mod tests {
     }
 
     #[test]
-    fn test_fixed_buffer_candidates_precede_backend_default() {
-        for request in [150, 190, 210] {
-            let candidates = fixed_buffer_candidates(request, None);
-            assert_eq!(&candidates[..2], &[request, 256]);
-            assert!(candidates.contains(&(request * 2)));
-            assert!(candidates.contains(&128));
-            assert!(candidates.contains(&512));
-            assert!(candidates.contains(&1024));
-            assert_eq!(candidates.iter().filter(|&&size| size == 256).count(), 1);
+    fn test_virtual_custom_velocity_once_default_unchanged_and_zero_noteoff() {
+        let config = MidiConfig::default();
+        for velocity in [1_u8, 88, 96, 127] {
+            assert!(matches!(virtual_note_command(60, velocity, &config.velocity_curve), AudioCommand::NoteOn { velocity: value, .. } if value == velocity));
         }
-        assert_eq!(fixed_buffer_candidates(128, None)[0], 128);
-        assert_eq!(fixed_buffer_candidates(256, None)[0], 256);
-        let ranged = fixed_buffer_candidates(210, Some((256, 512)));
-        assert_eq!(ranged[0], 256);
-        assert!(ranged.iter().all(|&size| (256..=512).contains(&size)));
-        assert!(fixed_buffer_candidates(210, Some((2048, 4096))).is_empty());
+        let custom = [[0.0, 0.1], [1.0, 0.5]];
+        let expected = apply_velocity_curve(96, &custom);
+        assert!(matches!(virtual_note_command(60, 96, &custom), AudioCommand::NoteOn { velocity, .. } if velocity == expected));
+        assert_ne!(expected, apply_velocity_curve(expected, &custom));
+        assert!(matches!(virtual_note_command(60, 0, &custom), AudioCommand::NoteOff { note: 60 }));
+    }
+
+    #[test]
+    fn test_buffer_partition_preserves_rendered_audio_for_same_event_samples() {
+        fn render(block: usize) -> Vec<f32> {
+            let shared = make_test_shared();
+            let mut synth = PianoSynthEngine::new(48000.0);
+            let mut arranger = MusicStudioArrangerEngine::new(48000.0);
+            let mut fx = EffectsChain::new(48000.0);
+            let mut params = shared.params.read().clone();
+            let mut pedals = PedalState::default();
+            let mut instrument = shared.active_instrument.read().clone();
+            let events = [(0, true, 60, 96), (257, true, 64, 88), (773, false, 60, 0), (1401, false, 64, 0)];
+            let mut event = 0;
+            let mut position = 0;
+            let mut result = Vec::new();
+            let mut left = vec![0.0; block];
+            let mut right = vec![0.0; block];
+            while position < 2048 {
+                while event < events.len() && events[event].0 == position {
+                    let (_, on, note, velocity) = events[event];
+                    let command = if on { AudioCommand::NoteOn { note, velocity } } else { AudioCommand::NoteOff { note } };
+                    process_audio_command(command, &mut synth, &mut arranger, &mut params, &mut pedals, &mut instrument, &shared);
+                    event += 1;
+                }
+                let next_event = events.get(event).map(|event| event.0).unwrap_or(2048);
+                let count = block.min(next_event - position).min(2048 - position);
+                AudioEngineManager::render_dsp_slice(count, &mut left, &mut right, &mut synth, &mut arranger, &mut fx, &mut params, &mut pedals, &mut instrument, &shared, None, 48000.0);
+                for sample in 0..count { result.push(left[sample]); result.push(right[sample]); }
+                position += count;
+            }
+            result
+        }
+        let reference = render(64);
+        assert!(reference.iter().any(|sample| sample.abs() > 0.01));
+        for block in [128, 256, 512, 2048] {
+            let actual = render(block);
+            assert_eq!(reference.len(), actual.len());
+            let difference = reference.iter().zip(&actual).map(|(a, b)| (a - b).abs()).fold(0.0_f32, f32::max);
+            assert!(difference < 1e-6, "block {block}: max difference {difference}");
+        }
+    }
+
+    #[test]
+    fn test_strict_buffer_never_doubles_rounds_or_uses_alternatives() {
+        for request in [64_u32, 128, 256, 512, 1024] {
+            assert_eq!(fixed_buffer_candidates(request, None), vec![request]);
+            assert_eq!(fixed_buffer_candidates(request, Some((24, 1024))), vec![request]);
+        }
+        assert!(fixed_buffer_candidates(24, Some((64, 1024))).is_empty());
+        assert!(fixed_buffer_candidates(128, Some((256, 4096))).is_empty());
     }
 
     #[test]
     fn test_set_audio_buffer_size() {
-        for size in [128, 150, 190, 210, 256, 512, 1024] { assert!(configuration::valid_buffer_size(size)); }
-        for size in [0, 99, 192, 2048] { assert!(!configuration::valid_buffer_size(size)); }
+        for size in [64, 128, 256, 512, 1024] { assert!(configuration::valid_buffer_size(size)); }
+        for size in [0, 24, 99, 150, 190, 192, 210, 2048] { assert!(!configuration::valid_buffer_size(size)); }
         let mgr = isolated_manager();
         mgr.shared.telemetry.write().audio_active = false;
         assert!(mgr.set_audio_buffer_size(99).is_err());
