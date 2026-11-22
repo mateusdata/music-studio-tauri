@@ -295,6 +295,7 @@ export interface MusicPackageEntry {
   file_path: string;
   size_mb: number;
   version: string;
+  format?: "music" | "sty" | string;
 }
 
 export interface MusicInstrumentSummary {
@@ -312,11 +313,21 @@ export interface MusicStyleSummary {
   sections: string[];
 }
 
+export interface OtsPresetSummary {
+  index: number;
+  name: string;
+  upper1_instrument: number;
+  upper2_instrument: number | null;
+  lower_instrument: number | null;
+}
+
 export interface MusicPackageSummary {
   loaded: boolean;
   file_name: string;
   file_path: string;
   version: string;
+  source_format?: "music" | "sty" | "sty_pack" | string;
+  soundfont_name?: string | null;
   instruments: MusicInstrumentSummary[];
   styles: MusicStyleSummary[];
   active_style_index: number;
@@ -341,5 +352,7 @@ export interface MusicPackageSummary {
   detected_chord: string;
   chord_mode?: "fingered_3_7" | "single_finger" | string;
   track_volumes: number[];
+  track_instruments?: (number | null)[];
+  ots_presets?: OtsPresetSummary[];
   beat_position: number;
 }

@@ -153,6 +153,8 @@ function buildMockArrangerState(overrides?: Partial<MusicPackageSummary>): Music
     file_name: "Josiran_Pisadinha_GR.Music",
     file_path: "/music/Josiran_Pisadinha_GR.Music",
     version: "1.4.4",
+    source_format: "music",
+    soundfont_name: "FluidR3_GM.sf2",
     instruments: [
       { index: 1, name: "Strings (Stereo)", zone_count: 7, has_samples: true, is_drumkit: false },
       { index: 2, name: "BTR JOSIRAN PISADINHA", zone_count: 33, has_samples: true, is_drumkit: true },
@@ -188,8 +190,88 @@ function buildMockArrangerState(overrides?: Partial<MusicPackageSummary>): Music
     detected_chord: "C",
     chord_mode: "fingered_3_7",
     track_volumes: [1, 1, 1, 1, 1, 1, 1, 1],
+    track_instruments: [null, null, null, null, null, null, null, null],
+    ots_presets: [],
     beat_position: 0,
     ...overrides,
+  };
+}
+
+function buildMockSnapshot(): EngineSnapshot {
+  return {
+    active_instrument_id: "default",
+    active_preset_id: "default",
+    preset_b_id: null,
+    params: buildMockEngineParams(),
+    midi_config: {
+      selected_port: null,
+      channel: 0,
+      microtonal_multichannel: false,
+      transpose: 0,
+      key_range_mode: "Full88",
+      velocity_curve: [
+        [0, 0],
+        [1, 1],
+      ],
+      cc_mappings: [],
+    },
+    instruments: [],
+    presets: [],
+  };
+}
+
+function buildMockTelemetry(): EngineTelemetry {
+  return {
+    sample_rate: 48000,
+    buffer_size: 256,
+    latency_ms: 5.3,
+    active_voices: 4,
+    max_polyphony: 128,
+    cpu_load_pct: 3.1,
+    peak_l: 0.3,
+    peak_r: 0.3,
+    rms_l: 0.15,
+    rms_r: 0.15,
+    audio_backend: "PipeWire",
+    audio_active: true,
+    midi_connected: false,
+    midi_port_name: null,
+    last_midi_note: 60,
+    last_midi_velocity: 90,
+    active_notes: [60],
+    pedals: {
+      sustain: 0,
+      soft: 0,
+      sostenuto: 0,
+      harmonic: 0,
+      celeste: 0,
+      buff_stop: 0,
+      rattle: 0,
+      super_sostenuto: false,
+      reversed_sustain: false,
+    },
+  };
+}
+
+function setupTauriStateMocks(pkgList: MusicPackageEntry[], initialArr: MusicPackageSummary) {
+  let liveArr = initialArr;
+  const telemetry = buildMockTelemetry();
+  const snapshot = buildMockSnapshot();
+
+  vi.spyOn(engineClient, "isTauri").mockReturnValue(true);
+  vi.spyOn(engineClient, "listMusicPackages").mockResolvedValue(pkgList);
+  vi.spyOn(engineClient, "getArrangerState").mockImplementation(async () => liveArr);
+  vi.spyOn(engineClient, "getSnapshot").mockResolvedValue(snapshot);
+  vi.spyOn(engineClient, "listMidiDevices").mockResolvedValue([]);
+  vi.spyOn(engineClient, "getTelemetry").mockResolvedValue(telemetry);
+
+  return {
+    telemetry,
+    getLive: () => liveArr,
+    setLive: (next: MusicPackageSummary) => {
+      liveArr = next;
+      return liveArr;
+    },
   };
 }
 
@@ -253,7 +335,6 @@ describe("Music Studio Tauri Arranger App UI", () => {
   });
 
   it("wires Tauri arranger commands for package loading, chord switching, sections, transport, and sustain pedal", async () => {
-    const params = buildMockEngineParams();
     const pkgList: MusicPackageEntry[] = [
       {
         file_name: "Josiran_Pisadinha_GR.Music",
@@ -269,86 +350,61 @@ describe("Music Studio Tauri Arranger App UI", () => {
       },
     ];
     const initialArr = buildMockArrangerState();
-    const snapshot: EngineSnapshot = {
-      active_instrument_id: "default",
-      active_preset_id: "default",
-      preset_b_id: null,
-      params,
-      midi_config: {
-        selected_port: null,
-        channel: 0,
-        microtonal_multichannel: false,
-        transpose: 0,
-        key_range_mode: "Full88",
-        velocity_curve: [
-          [0, 0],
-          [1, 1],
-        ],
-        cc_mappings: [],
-      },
-      instruments: [],
-      presets: [],
-    };
-    const telemetry: EngineTelemetry = {
-      sample_rate: 48000,
-      buffer_size: 256,
-      latency_ms: 5.3,
-      active_voices: 4,
-      max_polyphony: 128,
-      cpu_load_pct: 3.1,
-      peak_l: 0.3,
-      peak_r: 0.3,
-      rms_l: 0.15,
-      rms_r: 0.15,
-      audio_backend: "PipeWire",
-      audio_active: true,
-      midi_connected: false,
-      midi_port_name: null,
-      last_midi_note: 60,
-      last_midi_velocity: 90,
-      active_notes: [60],
-      pedals: {
-        sustain: 0,
-        soft: 0,
-        sostenuto: 0,
-        harmonic: 0,
-        celeste: 0,
-        buff_stop: 0,
-        rattle: 0,
-        super_sostenuto: false,
-        reversed_sustain: false,
-      },
-    };
-
-    vi.spyOn(engineClient, "isTauri").mockReturnValue(true);
-    vi.spyOn(engineClient, "listMusicPackages").mockResolvedValue(pkgList);
-    vi.spyOn(engineClient, "getArrangerState").mockResolvedValue(initialArr);
-    vi.spyOn(engineClient, "getSnapshot").mockResolvedValue(snapshot);
-    vi.spyOn(engineClient, "listMidiDevices").mockResolvedValue([]);
-    vi.spyOn(engineClient, "getTelemetry").mockResolvedValue(telemetry);
+    const { telemetry, getLive, setLive } = setupTauriStateMocks(pkgList, initialArr);
 
     const chordSpy = vi
       .spyOn(engineClient, "setArrangerChord")
-      .mockResolvedValue(buildMockArrangerState({ detected_chord: "Am", detected_chord_root: 9, detected_chord_quality: "Minor" }));
+      .mockImplementation(async (rootPc, quality) =>
+        setLive({
+          ...getLive(),
+          detected_chord: quality === "Minor" ? "Am" : "C",
+          detected_chord_root: rootPc,
+          detected_chord_quality: quality,
+        }),
+      );
     const transportSpy = vi
       .spyOn(engineClient, "setArrangerTransport")
-      .mockResolvedValue(buildMockArrangerState({ rhythm_playing: true }));
+      .mockImplementation(async (playing, syncStart, bpm, autoFill, tempoLocked = null) =>
+        setLive({
+          ...getLive(),
+          rhythm_playing: playing,
+          ...(syncStart !== null ? { sync_start: syncStart } : {}),
+          ...(bpm !== null ? { bpm } : {}),
+          ...(autoFill !== null ? { auto_fill: autoFill } : {}),
+          ...(tempoLocked !== null ? { tempo_locked: tempoLocked } : {}),
+        }),
+      );
     const sectionSpy = vi
       .spyOn(engineClient, "setArrangerSection")
-      .mockResolvedValue(buildMockArrangerState({ active_section: "Variation 2" }));
+      .mockImplementation(async (sectionName) =>
+        setLive({ ...getLive(), active_section: sectionName }),
+      );
     const loadSpy = vi
       .spyOn(engineClient, "loadMusicPackage")
-      .mockResolvedValue(buildMockArrangerState({ file_name: "Arrasta_Pe_Forro_GR.Music", file_path: "/music/Arrasta_Pe_Forro_GR.Music" }));
+      .mockImplementation(async (path) =>
+        setLive({
+          ...getLive(),
+          file_name: path.split("/").pop() ?? path,
+          file_path: path,
+        }),
+      );
     const pickSpy = vi
       .spyOn(engineClient, "pickMusicPackageDialog")
-      .mockResolvedValue(buildMockArrangerState({ file_name: "Picked.Music", file_path: "/home/data/Documents/Ritmos_Forro_Music_Studio/Picked.Music" }));
+      .mockImplementation(async () =>
+        setLive({
+          ...getLive(),
+          file_name: "Picked.Music",
+          file_path: "/home/data/Documents/Ritmos_Forro_Music_Studio/Picked.Music",
+        }),
+      );
     const pickInstSpy = vi
       .spyOn(engineClient, "pickInstrumentDialog")
-      .mockResolvedValue(
-        buildMockArrangerState({
+      .mockImplementation(async () =>
+        setLive({
+          ...getLive(),
           upper1_instrument: 8,
           instruments: [
-            ...initialArr.instruments,
+            ...getLive().instruments,
             {
               index: 8,
               name: "ACORDION (ACORDION_MT)",
@@ -361,7 +417,31 @@ describe("Music Studio Tauri Arranger App UI", () => {
       );
     const voiceSpy = vi
       .spyOn(engineClient, "setArrangerKeyboardVoice")
-      .mockResolvedValue(buildMockArrangerState({ chord_scan_upper: true, split_enabled: false }));
+      .mockImplementation(
+        async (
+          slot,
+          instIdx,
+          splitKey,
+          splitEnabled,
+          chordScanLower,
+          chordScanUpper,
+          upperOctave,
+          transpose,
+          chordMode,
+        ) =>
+          setLive({
+            ...getLive(),
+            upper1_instrument:
+              slot === "upper1" && instIdx !== null ? instIdx : getLive().upper1_instrument,
+            split_key: splitKey ?? getLive().split_key,
+            split_enabled: splitEnabled ?? getLive().split_enabled,
+            chord_scan_lower: chordScanLower ?? getLive().chord_scan_lower,
+            chord_scan_upper: chordScanUpper ?? getLive().chord_scan_upper,
+            upper_octave: upperOctave ?? getLive().upper_octave,
+            transpose: transpose ?? getLive().transpose,
+            chord_mode: chordMode ?? getLive().chord_mode,
+          }),
+      );
     const bufSpy = vi
       .spyOn(engineClient, "setAudioBufferSize")
       .mockResolvedValue({ ...telemetry, buffer_size: 128, latency_ms: 2.7 });
@@ -370,7 +450,7 @@ describe("Music Studio Tauri Arranger App UI", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("Visor do Arranjador (.Music)")).toBeInTheDocument();
+    expect(await screen.findByText("Visor do Arranjador")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Caminho manual .Music" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Am" }));
@@ -450,6 +530,289 @@ describe("Music Studio Tauri Arranger App UI", () => {
     await waitFor(() => {
       expect(setPedalSpy).toHaveBeenCalledWith("sustain", 1.0);
     });
+  });
+
+  it("wires .STY file import, .STY folder import, and SoundFont .SF2 import in Tauri mode", async () => {
+    const pkgList: MusicPackageEntry[] = [
+      {
+        file_name: "Josiran_Pisadinha_GR.Music",
+        file_path: "/music/Josiran_Pisadinha_GR.Music",
+        size_mb: 23.4,
+        version: "1.4.4",
+        format: "music",
+      },
+    ];
+    const initialArr = buildMockArrangerState({ soundfont_name: null });
+    const { getLive, setLive } = setupTauriStateMocks(pkgList, initialArr);
+
+    const pickStySpy = vi.spyOn(engineClient, "pickStyDialog").mockImplementation(async () =>
+      setLive({
+        ...getLive(),
+        file_name: "Forro_Classico.sty",
+        file_path: "/styles/Forro_Classico.sty",
+        source_format: "sty",
+        styles: [
+          {
+            id: 10,
+            name: "Forró Clássico",
+            category: "Yamaha .STY",
+            sections: ["Intro 1", "Variation 1", "Variation 2", "Fill 1", "Ending 1"],
+          },
+        ],
+      }),
+    );
+
+    const pickStyFolderSpy = vi
+      .spyOn(engineClient, "pickStyFolderDialog")
+      .mockImplementation(async () =>
+        setLive({
+          ...getLive(),
+          file_name: "Pasta_Ritmos (2)",
+          file_path: "/styles",
+          source_format: "sty_pack",
+          styles: [
+            {
+              id: 10,
+              name: "Forró Clássico",
+              category: "Yamaha .STY",
+              sections: ["Intro 1", "Variation 1", "Ending 1"],
+            },
+            {
+              id: 11,
+              name: "Xote Alegre",
+              category: "Yamaha .STY",
+              sections: ["Intro 1", "Variation 1", "Ending 1"],
+            },
+          ],
+        }),
+      );
+
+    const pickSf2Spy = vi.spyOn(engineClient, "pickSoundfontDialog").mockImplementation(async () =>
+      setLive({
+        ...getLive(),
+        soundfont_name: "GeneralUser_GS.sf2",
+        instruments: [
+          ...getLive().instruments,
+          { index: 12, name: "Accordion SF2", zone_count: 16, has_samples: true, is_drumkit: false },
+        ],
+      }),
+    );
+
+    render(<App />);
+    expect(await screen.findByText("Visor do Arranjador")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Importar .STY" }));
+    await waitFor(() => {
+      expect(pickStySpy).toHaveBeenCalledTimes(1);
+    });
+    expect(await screen.findByText("YAMAHA .STY")).toBeInTheDocument();
+
+    // Imported .STY package should be merged into Music Package Selector
+    fireEvent.click(screen.getByLabelText("Music Package Selector Trigger"));
+    const pkgPopover = screen.getByTestId("music-package-selector-popover");
+    expect(within(pkgPopover).getByRole("option", { name: /Forro_Classico\.sty/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Music Package Selector Trigger"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Pasta .STY" }));
+    await waitFor(() => {
+      expect(pickStyFolderSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(await screen.findByText("MULTI .STY")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Importar SoundFont .SF2" }));
+    await waitFor(() => {
+      expect(pickSf2Spy).toHaveBeenCalledTimes(1);
+    });
+    expect(await screen.findAllByText("GeneralUser_GS.sf2")).toHaveLength(2);
+  });
+
+  it("wires per-track instrument override and One Touch Setting (OTS) presets in Tauri mode", async () => {
+    const initialArr = buildMockArrangerState({
+      source_format: "sty",
+      file_name: "Baião_Tradicional.sty",
+      file_path: "/styles/Baião_Tradicional.sty",
+      instruments: [
+        { index: 1, name: "Strings (Stereo)", zone_count: 7, has_samples: true, is_drumkit: false },
+        { index: 2, name: "BTR JOSIRAN PISADINHA", zone_count: 33, has_samples: true, is_drumkit: true },
+        { index: 7, name: "BANDONEON VA7 ST SOLO", zone_count: 12, has_samples: true, is_drumkit: false },
+        { index: 8, name: "Tenor Sax SF2", zone_count: 10, has_samples: true, is_drumkit: false },
+      ],
+      ots_presets: [
+        {
+          index: 0,
+          name: "Sanfona Solo",
+          upper1_instrument: 7,
+          upper2_instrument: null,
+          lower_instrument: null,
+        },
+        {
+          index: 1,
+          name: "Sax & Strings",
+          upper1_instrument: 8,
+          upper2_instrument: 1,
+          lower_instrument: null,
+        },
+      ],
+    });
+    const { getLive, setLive } = setupTauriStateMocks([], initialArr);
+
+    const trackInstSpy = vi
+      .spyOn(engineClient, "setArrangerTrackInstrument")
+      .mockImplementation(async (trackIndex, instrumentIndex) => {
+        const nextInsts = [...(getLive().track_instruments ?? Array(8).fill(null))];
+        nextInsts[trackIndex] = instrumentIndex;
+        return setLive({ ...getLive(), track_instruments: nextInsts });
+      });
+
+    const otsSpy = vi
+      .spyOn(engineClient, "applyArrangerOts")
+      .mockImplementation(async (otsIndex) => {
+        const preset = (getLive().ots_presets ?? []).find((p) => p.index === otsIndex);
+        if (!preset) return getLive();
+        return setLive({
+          ...getLive(),
+          upper1_instrument: preset.upper1_instrument,
+          upper2_instrument: preset.upper2_instrument,
+          lower_instrument: preset.lower_instrument,
+        });
+      });
+
+    render(<App />);
+    expect(await screen.findByText("Visor do Arranjador")).toBeInTheDocument();
+
+    const drumSelect = screen.getByLabelText("Drum Instrument");
+    fireEvent.change(drumSelect, { target: { value: "2" } });
+    await waitFor(() => {
+      expect(trackInstSpy).toHaveBeenCalledWith(0, 2);
+    });
+    expect(drumSelect).toHaveValue("2");
+
+    fireEvent.change(drumSelect, { target: { value: "" } });
+    await waitFor(() => {
+      expect(trackInstSpy).toHaveBeenCalledWith(0, null);
+    });
+    expect(drumSelect).toHaveValue("");
+
+    const ots2Btn = screen.getByRole("button", { name: "OTS 2: Sax & Strings" });
+    expect(ots2Btn).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(ots2Btn);
+
+    await waitFor(() => {
+      expect(otsSpy).toHaveBeenCalledWith(1);
+    });
+    expect(screen.getByRole("button", { name: "OTS 2: Sax & Strings" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByLabelText("Upper 1 Instrument Trigger")).toHaveTextContent("Tenor Sax SF2");
+    expect(screen.getByLabelText("Upper 2 Instrument Trigger")).toHaveTextContent("Strings (Stereo)");
+  });
+
+  it("filters Music Package Selector options with topbar format filter pills and loads .STY transparently", async () => {
+    const pkgList: MusicPackageEntry[] = [
+      {
+        file_name: "Josiran_Pisadinha_GR.Music",
+        file_path: "/music/Josiran_Pisadinha_GR.Music",
+        size_mb: 23.4,
+        version: "1.4.4",
+        format: "music",
+      },
+      {
+        file_name: "Arrasta_Pe_Forro_GR.Music",
+        file_path: "/music/Arrasta_Pe_Forro_GR.Music",
+        size_mb: 38.8,
+        version: "1.4.4",
+        format: "music",
+      },
+      {
+        file_name: "Vaneira_Sul.sty",
+        file_path: "/styles/Vaneira_Sul.sty",
+        size_mb: 0.08,
+        version: "STY",
+        format: "sty",
+      },
+      {
+        file_name: "Forro_Piseiro.sty",
+        file_path: "/styles/Forro_Piseiro.sty",
+        size_mb: 0.12,
+        version: "STY",
+      },
+    ];
+    const initialArr = buildMockArrangerState();
+    const { getLive, setLive } = setupTauriStateMocks(pkgList, initialArr);
+
+    const loadSpy = vi
+      .spyOn(engineClient, "loadMusicPackage")
+      .mockImplementation(async (path) =>
+        setLive({
+          ...getLive(),
+          file_name: path.split("/").pop() ?? path,
+          file_path: path,
+          source_format: path.toLowerCase().endsWith(".sty") ? "sty" : "music",
+        }),
+      );
+
+    render(<App />);
+    expect(await screen.findByText("Visor do Arranjador")).toBeInTheDocument();
+
+    const filterGroup = screen.getByRole("group", { name: "Filtro de formato da biblioteca" });
+    const allPill = within(filterGroup).getByRole("button", { name: "Todos" });
+    const musicPill = within(filterGroup).getByRole("button", { name: ".Music" });
+    const styPill = within(filterGroup).getByRole("button", { name: ".STY" });
+
+    expect(allPill).toHaveAttribute("aria-pressed", "true");
+
+    // Filter to .STY only
+    fireEvent.click(styPill);
+    expect(styPill).toHaveAttribute("aria-pressed", "true");
+    expect(allPill).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(screen.getByLabelText("Music Package Selector Trigger"));
+    const styPopover = screen.getByTestId("music-package-selector-popover");
+    expect(within(styPopover).getByRole("option", { name: /Vaneira_Sul\.sty/i })).toBeInTheDocument();
+    expect(within(styPopover).getByRole("option", { name: /Forro_Piseiro\.sty/i })).toBeInTheDocument();
+    expect(within(styPopover).queryByRole("option", { name: /Josiran_Pisadinha_GR\.Music/i })).not.toBeInTheDocument();
+
+    fireEvent.click(within(styPopover).getByRole("option", { name: /Vaneira_Sul\.sty/i }));
+    await waitFor(() => {
+      expect(loadSpy).toHaveBeenCalledWith("/styles/Vaneira_Sul.sty");
+    });
+
+    // Filter to .Music only
+    fireEvent.click(musicPill);
+    expect(musicPill).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByLabelText("Music Package Selector Trigger"));
+    const musicPopover = screen.getByTestId("music-package-selector-popover");
+    expect(within(musicPopover).getByRole("option", { name: /Josiran_Pisadinha_GR\.Music/i })).toBeInTheDocument();
+    expect(within(musicPopover).getByRole("option", { name: /Arrasta_Pe_Forro_GR\.Music/i })).toBeInTheDocument();
+    expect(within(musicPopover).queryByRole("option", { name: /Vaneira_Sul\.sty/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Music Package Selector Trigger"));
+
+    // Restore Todos
+    fireEvent.click(allPill);
+    fireEvent.click(screen.getByLabelText("Music Package Selector Trigger"));
+    const allPopover = screen.getByTestId("music-package-selector-popover");
+    expect(within(allPopover).getByRole("option", { name: /Josiran_Pisadinha_GR\.Music/i })).toBeInTheDocument();
+    expect(within(allPopover).getByRole("option", { name: /Vaneira_Sul\.sty/i })).toBeInTheDocument();
+  });
+
+  it("supports track instrument override, disabled OTS placeholders, and preview dialog fallbacks without Tauri", () => {
+    render(<App />);
+
+    expect(screen.getAllByText("FluidR3_GM.sf2")).toHaveLength(2);
+    for (const slot of [1, 2, 3, 4]) {
+      expect(screen.getByRole("button", { name: `OTS ${slot}` })).toBeDisabled();
+    }
+
+    const bassSelect = screen.getByLabelText("Bass Instrument");
+    fireEvent.change(bassSelect, { target: { value: "3" } });
+    expect(bassSelect).toHaveValue("3");
+
+    fireEvent.click(screen.getByRole("button", { name: "Importar .STY" }));
+    expect(screen.getByText(/Importador de ritmos \.STY disponível no aplicativo desktop Tauri/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Importar SoundFont .SF2" }));
+    expect(screen.getByText(/Importador de SoundFont \.SF2 disponível no aplicativo desktop Tauri/i)).toBeInTheDocument();
   });
 });
 

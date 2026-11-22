@@ -197,4 +197,38 @@ export const engineClient = {
   async setArrangerTrackVolume(trackIndex: number, volume: number): Promise<MusicPackageSummary> {
     return invoke<MusicPackageSummary>("set_arranger_track_volume", { trackIndex, volume });
   },
+
+  async loadStyFiles(paths: string[]): Promise<MusicPackageSummary> {
+    return invoke<MusicPackageSummary>("load_sty_files", { paths });
+  },
+
+  async pickStyDialog(): Promise<MusicPackageSummary | null> {
+    return invoke<MusicPackageSummary | null>("pick_sty_dialog");
+  },
+
+  async pickStyFolderDialog(): Promise<MusicPackageSummary | null> {
+    return invoke<MusicPackageSummary | null>("pick_sty_folder_dialog");
+  },
+
+  async loadSoundfontFile(path: string): Promise<MusicPackageSummary> {
+    return invoke<MusicPackageSummary>("load_soundfont_file", { path });
+  },
+
+  async pickSoundfontDialog(): Promise<MusicPackageSummary | null> {
+    return invoke<MusicPackageSummary | null>("pick_soundfont_dialog");
+  },
+
+  async setArrangerTrackInstrument(
+    trackIndex: number,
+    instrumentIndex: number | null,
+  ): Promise<MusicPackageSummary> {
+    return invoke<MusicPackageSummary>("set_arranger_track_instrument", {
+      trackIndex,
+      instrumentIndex,
+    });
+  },
+
+  async applyArrangerOts(otsIndex: number): Promise<MusicPackageSummary> {
+    return invoke<MusicPackageSummary>("apply_arranger_ots", { otsIndex });
+  },
 };

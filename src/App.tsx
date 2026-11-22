@@ -1,22 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Activity,
-  Cable,
-  Disc,
-  FolderOpen,
-  Lock,
-  Minus,
-  Music2,
-  Play,
-  Plus,
-  Sliders,
-  Square,
-  Unlock,
-  Volume2,
-} from "lucide-react";
+import { Cable, Play, Square } from "lucide-react";
 import { engineClient } from "./services/engineClient";
-import { SearchableSelect } from "./components/SearchableSelect";
-import { ParameterSlider } from "./components/ParameterSlider";
+import { ArrangerTopbar } from "./components/ArrangerTopbar";
+import { MixerPanel } from "./components/MixerPanel";
+import { LcdPanel } from "./components/LcdPanel";
+import { VoicesSplitPanel } from "./components/VoicesSplitPanel";
 import { VirtualKeyboard } from "./components/VirtualKeyboard";
 import type {
   EngineParams,
@@ -34,42 +22,14 @@ const SECTION_ROWS: { label: string; items: string[] }[] = [
   { label: "Ending", items: ["Ending 1", "Ending 2", "Ending 3"] },
 ];
 
-const QUICK_CHORDS: { label: string; root: number; quality: string }[] = [
-  { label: "C", root: 0, quality: "Major" },
-  { label: "Cm", root: 0, quality: "Minor" },
-  { label: "D", root: 2, quality: "Major" },
-  { label: "Dm", root: 2, quality: "Minor" },
-  { label: "E", root: 4, quality: "Major" },
-  { label: "Em", root: 4, quality: "Minor" },
-  { label: "F", root: 5, quality: "Major" },
-  { label: "Fm", root: 5, quality: "Minor" },
-  { label: "G", root: 7, quality: "Major" },
-  { label: "G7", root: 7, quality: "Dom7" },
-  { label: "Am", root: 9, quality: "Minor" },
-  { label: "A", root: 9, quality: "Major" },
-  { label: "Bb", root: 10, quality: "Major" },
-  { label: "B", root: 11, quality: "Major" },
-];
-
-const TRACK_LABELS = ["Drum", "Perc", "Bass", "Acc 1", "Acc 2", "Acc 3", "Acc 4", "Acc 5"];
-
-const SPLIT_POINTS: { value: string; label: string }[] = [
-  { value: "41", label: "1º Fá (F2 • MIDI 41)" },
-  { value: "48", label: "Dó 3 (C3 • MIDI 48)" },
-  { value: "53", label: "2º Fá (F3 • MIDI 53)" },
-  { value: "54", label: "2º Fá# (F#3 • Padrão)" },
-  { value: "55", label: "Sol 3 (G3 • MIDI 55)" },
-  { value: "59", label: "Si 3 (B3 • MIDI 59)" },
-  { value: "60", label: "Dó 4 (C4 • MIDI 60)" },
-  { value: "65", label: "Fá 4 (F4 • MIDI 65)" },
-];
-
 function createPreviewArrangerState(): MusicPackageSummary {
   return {
     loaded: true,
     file_name: "Josiran_Pisadinha_GR.Music",
     file_path: "preview://Josiran_Pisadinha_GR.Music",
     version: "1.4.4",
+    source_format: "music",
+    soundfont_name: "FluidR3_GM.sf2",
     instruments: [
       { index: 0, name: "Metronome / Internal FX", zone_count: 23, has_samples: true, is_drumkit: true },
       { index: 1, name: "Strings (Stereo)", zone_count: 7, has_samples: true, is_drumkit: false },
@@ -123,6 +83,46 @@ function createPreviewArrangerState(): MusicPackageSummary {
     detected_chord: "C",
     chord_mode: "fingered_3_7",
     track_volumes: [1, 1, 1, 1, 1, 1, 1, 1],
+    track_instruments: [null, null, null, null, null, null, null, null],
+    ots_presets: [],
+    beat_position: 0,
+  };
+}
+
+function createInitialTauriArrangerState(): MusicPackageSummary {
+  return {
+    loaded: false,
+    file_name: "",
+    file_path: "",
+    version: "",
+    source_format: "music",
+    soundfont_name: null,
+    instruments: [],
+    styles: [],
+    active_style_index: 0,
+    active_section: "Variation 1",
+    pending_section: null,
+    upper1_instrument: 0,
+    upper2_instrument: null,
+    lower_instrument: null,
+    split_key: 54,
+    split_enabled: true,
+    chord_scan_lower: true,
+    chord_scan_upper: false,
+    upper_octave: 0,
+    transpose: 0,
+    bpm: 120,
+    tempo_locked: false,
+    rhythm_playing: false,
+    sync_start: true,
+    auto_fill: true,
+    detected_chord_root: 0,
+    detected_chord_quality: "Major",
+    detected_chord: "C",
+    chord_mode: "fingered_3_7",
+    track_volumes: [1, 1, 1, 1, 1, 1, 1, 1],
+    track_instruments: [null, null, null, null, null, null, null, null],
+    ots_presets: [],
     beat_position: 0,
   };
 }
@@ -134,19 +134,42 @@ function createPreviewPackages(): MusicPackageEntry[] {
       file_path: "preview://Josiran_Pisadinha_GR.Music",
       size_mb: 23.4,
       version: "1.4.4",
+      format: "music",
     },
     {
       file_name: "Arrasta_Pe_Forro_GR.Music",
       file_path: "preview://Arrasta_Pe_Forro_GR.Music",
       size_mb: 38.8,
       version: "1.4.4",
+      format: "music",
     },
     {
       file_name: "Bonde_do_Brasil_TM.Music",
       file_path: "preview://Bonde_do_Brasil_TM.Music",
       size_mb: 72.5,
       version: "1.3.0",
+      format: "music",
     },
+  ];
+}
+
+function mergePackageEntry(
+  prev: MusicPackageEntry[],
+  summary: MusicPackageSummary,
+  format: "music" | "sty",
+): MusicPackageEntry[] {
+  if (!summary.file_path || prev.some((p) => p.file_path === summary.file_path)) {
+    return prev;
+  }
+  return [
+    {
+      file_name: summary.file_name,
+      file_path: summary.file_path,
+      size_mb: 0,
+      version: summary.version || (format === "sty" ? "STY" : ""),
+      format,
+    },
+    ...prev,
   ];
 }
 
@@ -156,37 +179,7 @@ export function App() {
   );
   const [arranger, setArranger] = useState<MusicPackageSummary>(() =>
     engineClient.isTauri()
-      ? {
-          loaded: false,
-          file_name: "",
-          file_path: "",
-          version: "",
-          instruments: [],
-          styles: [],
-          active_style_index: 0,
-          active_section: "Variation 1",
-          pending_section: null,
-          upper1_instrument: 0,
-          upper2_instrument: null,
-          lower_instrument: null,
-          split_key: 54,
-          split_enabled: true,
-          chord_scan_lower: true,
-          chord_scan_upper: false,
-          upper_octave: 0,
-          transpose: 0,
-          bpm: 120,
-          tempo_locked: false,
-          rhythm_playing: false,
-          sync_start: true,
-          auto_fill: true,
-          detected_chord_root: 0,
-          detected_chord_quality: "Major",
-          detected_chord: "C",
-          chord_mode: "fingered_3_7",
-          track_volumes: [1, 1, 1, 1, 1, 1, 1, 1],
-          beat_position: 0,
-        }
+      ? createInitialTauriArrangerState()
       : createPreviewArrangerState(),
   );
 
@@ -277,11 +270,22 @@ export function App() {
     if (!filePath) return;
     if (!engineClient.isTauri()) {
       const name = filePath.split("/").pop() ?? filePath;
-      setArranger((prev) => ({ ...prev, file_name: name, file_path: filePath }));
+      const lower = name.toLowerCase();
+      const isSty =
+        lower.endsWith(".sty") ||
+        lower.endsWith(".prs") ||
+        lower.endsWith(".sst") ||
+        lower.endsWith(".bcs");
+      setArranger((prev) => ({
+        ...prev,
+        file_name: name,
+        file_path: filePath,
+        source_format: isSty ? "sty" : "music",
+      }));
       setStatusMsg(`Preview selecionado: ${name}`);
       return;
     }
-    setStatusMsg("Importando pacote .Music...");
+    setStatusMsg("Importando pacote...");
     try {
       const nextState = await engineClient.loadMusicPackage(filePath);
       setArranger(nextState);
@@ -289,11 +293,11 @@ export function App() {
         `Carregado ${nextState.file_name}: ${nextState.instruments.length} timbres e ${nextState.styles.length} estilo(s)`,
       );
     } catch (err) {
-      setStatusMsg(`Falha ao carregar .Music: ${String(err)}`);
+      setStatusMsg(`Falha ao carregar pacote: ${String(err)}`);
     }
   }, []);
 
-  const handlePickFileDialog = async () => {
+  const handlePickFileDialog = useCallback(async () => {
     if (!engineClient.isTauri()) {
       setStatusMsg("Importador nativo disponível no aplicativo desktop Tauri");
       return;
@@ -306,25 +310,81 @@ export function App() {
         return;
       }
       setArranger(nextState);
-      setPackages((prev) => {
-        if (prev.some((p) => p.file_path === nextState.file_path)) return prev;
-        return [
-          {
-            file_name: nextState.file_name,
-            file_path: nextState.file_path,
-            size_mb: 0,
-            version: nextState.version,
-          },
-          ...prev,
-        ];
-      });
+      setPackages((prev) => mergePackageEntry(prev, nextState, "music"));
       setStatusMsg(
         `Carregado ${nextState.file_name}: ${nextState.instruments.length} timbres e ${nextState.styles.length} estilo(s)`,
       );
     } catch (err) {
       setStatusMsg(`Falha ao abrir arquivo .Music: ${String(err)}`);
     }
-  };
+  }, []);
+
+  const handlePickStyDialog = useCallback(async () => {
+    if (!engineClient.isTauri()) {
+      setStatusMsg("Importador de ritmos .STY disponível no aplicativo desktop Tauri");
+      return;
+    }
+    setStatusMsg("Selecionando arquivo(s) .STY...");
+    try {
+      const nextState = await engineClient.pickStyDialog();
+      if (!nextState) {
+        setStatusMsg("Importação .STY cancelada.");
+        return;
+      }
+      setArranger(nextState);
+      setPackages((prev) => mergePackageEntry(prev, nextState, "sty"));
+      const sfInfo = nextState.soundfont_name ? ` • SF2: ${nextState.soundfont_name}` : "";
+      setStatusMsg(
+        `Carregado ${nextState.file_name}: ${nextState.styles.length} estilo(s) .STY${sfInfo}`,
+      );
+    } catch (err) {
+      setStatusMsg(`Falha ao abrir arquivo .STY: ${String(err)}`);
+    }
+  }, []);
+
+  const handlePickStyFolderDialog = useCallback(async () => {
+    if (!engineClient.isTauri()) {
+      setStatusMsg("Importador de pasta .STY disponível no aplicativo desktop Tauri");
+      return;
+    }
+    setStatusMsg("Selecionando pasta de ritmos .STY...");
+    try {
+      const nextState = await engineClient.pickStyFolderDialog();
+      if (!nextState) {
+        setStatusMsg("Seleção de pasta .STY cancelada.");
+        return;
+      }
+      setArranger(nextState);
+      setPackages((prev) => mergePackageEntry(prev, nextState, "sty"));
+      const sfInfo = nextState.soundfont_name ? ` • SF2: ${nextState.soundfont_name}` : "";
+      setStatusMsg(
+        `Pasta .STY carregada (${nextState.styles.length} ritmo(s))${sfInfo}`,
+      );
+    } catch (err) {
+      setStatusMsg(`Falha ao carregar pasta .STY: ${String(err)}`);
+    }
+  }, []);
+
+  const handlePickSoundfontDialog = useCallback(async () => {
+    if (!engineClient.isTauri()) {
+      setStatusMsg("Importador de SoundFont .SF2 disponível no aplicativo desktop Tauri");
+      return;
+    }
+    setStatusMsg("Selecionando SoundFont (.sf2)...");
+    try {
+      const nextState = await engineClient.pickSoundfontDialog();
+      if (!nextState) {
+        setStatusMsg("Seleção de SoundFont cancelada.");
+        return;
+      }
+      setArranger(nextState);
+      setStatusMsg(
+        `SoundFont carregado: ${nextState.soundfont_name ?? "SF2"} (${nextState.instruments.length} timbres)`,
+      );
+    } catch (err) {
+      setStatusMsg(`Falha ao carregar SoundFont .SF2: ${String(err)}`);
+    }
+  }, []);
 
   const handlePickInstrumentDialog = useCallback(async () => {
     if (!engineClient.isTauri()) {
@@ -394,8 +454,7 @@ export function App() {
     setArranger(nextState);
   }, [arranger.rhythm_playing, arranger.tempo_locked]);
 
-  const handleSelectStyle = useCallback(async (val: string) => {
-    const idx = Number(val);
+  const handleSelectStyle = useCallback(async (idx: number) => {
     if (!Number.isFinite(idx)) return;
     if (!engineClient.isTauri()) {
       setArranger((prev) => ({ ...prev, active_style_index: idx }));
@@ -542,7 +601,56 @@ export function App() {
     setArranger(nextState);
   }, []);
 
-  const handleMidiConnect = async (portName: string) => {
+  const handleTrackInstrumentChange = useCallback(
+    async (trackIndex: number, instrumentIndex: number | null) => {
+      if (!engineClient.isTauri()) {
+        setArranger((prev) => {
+          const nextInsts = [...(prev.track_instruments ?? Array(8).fill(null))];
+          nextInsts[trackIndex] = instrumentIndex;
+          return { ...prev, track_instruments: nextInsts };
+        });
+        return;
+      }
+      try {
+        const nextState = await engineClient.setArrangerTrackInstrument(
+          trackIndex,
+          instrumentIndex,
+        );
+        setArranger(nextState);
+      } catch (err) {
+        setStatusMsg(`Falha ao alterar timbre da trilha: ${String(err)}`);
+      }
+    },
+    [],
+  );
+
+  const handleApplyOts = useCallback(async (otsIndex: number) => {
+    if (!engineClient.isTauri()) {
+      setArranger((prev) => {
+        const preset = (prev.ots_presets ?? []).find((p) => p.index === otsIndex);
+        if (!preset) return prev;
+        return {
+          ...prev,
+          upper1_instrument: preset.upper1_instrument,
+          upper2_instrument: preset.upper2_instrument,
+          lower_instrument: preset.lower_instrument,
+        };
+      });
+      return;
+    }
+    try {
+      const nextState = await engineClient.applyArrangerOts(otsIndex);
+      setArranger(nextState);
+      const applied = (nextState.ots_presets ?? []).find((p) => p.index === otsIndex);
+      if (applied) {
+        setStatusMsg(`OTS aplicado: ${applied.name}`);
+      }
+    } catch (err) {
+      setStatusMsg(`Falha ao aplicar OTS: ${String(err)}`);
+    }
+  }, []);
+
+  const handleMidiConnect = useCallback(async (portName: string) => {
     setSelectedMidiPort(portName);
     if (!portName || !engineClient.isTauri()) return;
     try {
@@ -551,7 +659,7 @@ export function App() {
     } catch (err) {
       setStatusMsg(`Erro MIDI: ${String(err)}`);
     }
-  };
+  }, []);
 
   const handleToggleSustain = () => {
     const next = !sustainOn;
@@ -567,7 +675,7 @@ export function App() {
     }
   };
 
-  const handleExportWav = async () => {
+  const handleExportWav = useCallback(async () => {
     if (!engineClient.isTauri()) {
       setStatusMsg("Exportação WAV disponível no app Tauri");
       return;
@@ -578,7 +686,7 @@ export function App() {
     } catch (err) {
       setStatusMsg(`Erro ao exportar WAV: ${String(err)}`);
     }
-  };
+  }, []);
 
   const activeStyle = arranger.styles[arranger.active_style_index] ?? arranger.styles[0] ?? null;
   const availableSections = useMemo(
@@ -586,477 +694,57 @@ export function App() {
     [activeStyle],
   );
 
-  const playableInstrumentOptions = useMemo(() => {
-    return arranger.instruments
-      .filter((inst) => inst.has_samples || inst.zone_count > 0)
-      .map((inst) => ({
-        value: String(inst.index),
-        label: inst.name,
-        sublabel: `${inst.is_drumkit ? "Bateria/Kit" : "Timbre"} • ${inst.zone_count} zonas`,
-      }));
-  }, [arranger.instruments]);
-
-  const optionalVoiceOptions = useMemo(
-    () => [{ value: "", label: "-- Só Acorde / Mudo --" }, ...playableInstrumentOptions],
-    [playableInstrumentOptions],
-  );
-
-  const peakPct = Math.min(
-    100,
-    Math.round(Math.max(telemetry?.peak_l ?? 0, telemetry?.peak_r ?? 0) * 100),
-  );
-
   return (
     <div className="studio-shell">
-      <header className="topbar">
-        <div className="brand-block">
-          <div className="brand-badge">MS</div>
-          <div>
-            <div className="brand-title">Music Studio Tauri</div>
-            <div className="brand-sub">
-              {telemetry?.audio_backend ?? ".Music Arranger Engine"}
-            </div>
-          </div>
-        </div>
-
-        <div className="selector-row">
-          <SearchableSelect
-            ariaLabel="Music Package Selector"
-            value={arranger.file_path}
-            onChange={handleLoadPackage}
-            searchPlaceholder="Pesquisar pacote .Music..."
-            options={packages.map((p) => ({
-              value: p.file_path,
-              label: p.file_name,
-              sublabel: `v${p.version} • ${p.size_mb.toFixed(1)} MB`,
-            }))}
-          />
-
-          <SearchableSelect
-            ariaLabel="Style Selector"
-            value={String(arranger.active_style_index)}
-            onChange={handleSelectStyle}
-            searchPlaceholder="Pesquisar ritmo..."
-            options={arranger.styles.map((st, idx) => ({
-              value: String(idx),
-              label: st.name,
-              sublabel: st.category,
-            }))}
-          />
-
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={handlePickFileDialog}
-            title="Abrir pasta do Linux para importar .Music"
-          >
-            <FolderOpen size={13} /> Importar .Music
-          </button>
-
-          <select
-            aria-label="MIDI Input"
-            className="studio-select studio-select-sm topbar-midi-select"
-            value={selectedMidiPort}
-            onChange={(e) => handleMidiConnect(e.target.value)}
-          >
-            <option value="">-- MIDI In --</option>
-            {midiPorts.map((p) => (
-              <option key={p.index} value={p.name}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-
-          <button type="button" className="btn" onClick={handleExportWav}>
-            <Disc size={13} /> WAV
-          </button>
-        </div>
-
-        <div className="telemetry-strip">
-          <div className="meter-pill volume-pill" role="group" aria-label="Master Volume Controls">
-            <Volume2 size={13} color="#60a5fa" />
-            <button
-              type="button"
-              className="btn btn-xs"
-              aria-label="Diminuir Volume"
-              onClick={() => handleMasterVolumeChange(masterVolumeDb - 1.5)}
-              title="Diminuir Volume Master"
-            >
-              <Minus size={11} />
-            </button>
-            <span className="vol-readout-pill">
-              {masterVolumeDb > 0 ? `+${masterVolumeDb.toFixed(1)}` : masterVolumeDb.toFixed(1)} dB
-            </span>
-            <button
-              type="button"
-              className="btn btn-xs"
-              aria-label="Aumentar Volume"
-              onClick={() => handleMasterVolumeChange(masterVolumeDb + 1.5)}
-              title="Aumentar Volume Master"
-            >
-              <Plus size={11} />
-            </button>
-            <div className="vu-bar-wrap">
-              <div className="vu-bar-fill" style={{ width: `${peakPct}%` }} />
-            </div>
-          </div>
-
-          <div className="meter-pill latency-pill">
-            <select
-              aria-label="Audio Buffer Size"
-              className="studio-select studio-select-sm latency-select"
-              value={String(bufferSize)}
-              onChange={(e) => handleBufferSizeChange(Number(e.target.value))}
-              title="Tamanho do buffer de áudio (latência)"
-            >
-              <option value="128">128 buf</option>
-              <option value="256">256 buf</option>
-              <option value="512">512 buf</option>
-              <option value="1024">1024 buf</option>
-            </select>
-            <span className="latency-readout">
-              {(telemetry?.latency_ms ?? (bufferSize / 48000) * 1000).toFixed(1)} ms
-            </span>
-          </div>
-
-          <div className="meter-pill voices-pill">
-            <Activity size={13} color="#48b8d0" />
-            <span>{telemetry?.active_voices ?? 0} voices</span>
-          </div>
-        </div>
-      </header>
+      <ArrangerTopbar
+        packages={packages}
+        activePackagePath={arranger.file_path}
+        styles={arranger.styles}
+        activeStyleIndex={arranger.active_style_index}
+        midiPorts={midiPorts}
+        selectedMidiPort={selectedMidiPort}
+        masterVolumeDb={masterVolumeDb}
+        bufferSize={bufferSize}
+        telemetry={telemetry}
+        onLoadPackage={handleLoadPackage}
+        onSelectStyle={handleSelectStyle}
+        onPickMusicDialog={handlePickFileDialog}
+        onPickStyDialog={handlePickStyDialog}
+        onPickStyFolderDialog={handlePickStyFolderDialog}
+        onMidiConnect={handleMidiConnect}
+        onExportWav={handleExportWav}
+        onMasterVolumeChange={handleMasterVolumeChange}
+        onBufferSizeChange={handleBufferSizeChange}
+      />
 
       <main className="arranger-workspace">
         {/* ROW 1: 3-Column Hardware Arranger Console (Mixer | LCD & Chords | Voices & Split/Scan) */}
         <div className="arranger-console-grid">
-          <section className="panel-card arranger-mixer-card">
-            <div className="panel-title">
-              <span>Mixer de Trilhas & Master</span>
-              <Sliders size={14} />
-            </div>
+          <MixerPanel
+            masterVolumeDb={masterVolumeDb}
+            trackVolumes={arranger.track_volumes}
+            trackInstruments={arranger.track_instruments}
+            instruments={arranger.instruments}
+            soundfontName={arranger.soundfont_name}
+            onMasterVolumeChange={handleMasterVolumeChange}
+            onTrackVolumeChange={handleTrackVolume}
+            onTrackInstrumentChange={handleTrackInstrumentChange}
+            onPickSoundfont={handlePickSoundfontDialog}
+          />
 
-            <ParameterSlider
-              label="Master Volume"
-              value={masterVolumeDb}
-              min={-36}
-              max={6}
-              step={0.5}
-              unit="dB"
-              onChange={handleMasterVolumeChange}
-            />
+          <LcdPanel
+            arranger={arranger}
+            onBpmChange={handleBpmChange}
+            onTempoLockToggle={handleTempoLockToggle}
+            onApplyOts={handleApplyOts}
+            onChordClick={handleChordClick}
+          />
 
-            <div className="track-faders-grid">
-              {TRACK_LABELS.map((label, slot) => (
-                <label key={label} className="track-fader-col">
-                  <span className="track-fader-val">
-                    {Math.round((arranger.track_volumes[slot] ?? 1) * 100)}%
-                  </span>
-                  <input
-                    type="range"
-                    aria-label={`${label} Volume`}
-                    className="studio-range"
-                    min={0}
-                    max={1.25}
-                    step={0.02}
-                    value={arranger.track_volumes[slot] ?? 1}
-                    onChange={(e) => handleTrackVolume(slot, Number(e.target.value))}
-                  />
-                  <span className="track-fader-name">{label}</span>
-                </label>
-              ))}
-            </div>
-          </section>
-
-          <section className="panel-card arranger-lcd-card">
-            <div className="panel-title">
-              <span>Visor do Arranjador (.Music)</span>
-              <span className="badge-subtle">
-                {arranger.loaded ? `v${arranger.version}` : "Sem pacote"}
-              </span>
-            </div>
-
-            <div className="lcd-screen">
-              <div className="lcd-main-row">
-                <div className="lcd-info-col">
-                  <div className="lcd-label">RITMO ATIVO</div>
-                  <div className="lcd-style-name">{activeStyle?.name ?? arranger.file_name}</div>
-                  <div className="lcd-sub-meta">
-                    Seção: <strong>{arranger.active_section}</strong>
-                    {arranger.pending_section && (
-                      <span className="lcd-pending"> → {arranger.pending_section}</span>
-                    )}
-                  </div>
-                </div>
-
-                <div className="lcd-chord-box" data-testid="chord-display">
-                  <div className="lcd-label">ACORDE</div>
-                  <div className="lcd-chord-value">{arranger.detected_chord || "C"}</div>
-                </div>
-              </div>
-
-              <div className="lcd-beat-bar">
-                <div
-                  className="lcd-beat-fill"
-                  style={{ width: `${Math.round(arranger.beat_position * 100)}%` }}
-                />
-              </div>
-
-              <div className="lcd-tempo-row">
-                <span className="lcd-label">TEMPO</span>
-                <div className="tempo-stepper">
-                  <button
-                    type="button"
-                    className="btn btn-xs"
-                    aria-label="Decrease Tempo"
-                    onClick={() => handleBpmChange(arranger.bpm - 2)}
-                  >
-                    -
-                  </button>
-                  <strong className="tempo-readout">{Math.round(arranger.bpm)} BPM</strong>
-                  <button
-                    type="button"
-                    className="btn btn-xs"
-                    aria-label="Increase Tempo"
-                    onClick={() => handleBpmChange(arranger.bpm + 2)}
-                  >
-                    +
-                  </button>
-                </div>
-                <input
-                  type="range"
-                  aria-label="Tempo BPM"
-                  className="studio-range tempo-slider"
-                  min={40}
-                  max={240}
-                  step={1}
-                  value={Math.round(arranger.bpm)}
-                  onChange={(e) => handleBpmChange(Number(e.target.value))}
-                />
-                <button
-                  type="button"
-                  aria-label="Tempo Lock"
-                  aria-pressed={Boolean(arranger.tempo_locked)}
-                  className={`btn btn-xs ${arranger.tempo_locked ? "btn-flag-on" : ""}`}
-                  onClick={handleTempoLockToggle}
-                  title="Travar BPM ao trocar de estilo/ritmo"
-                >
-                  {arranger.tempo_locked ? <Lock size={11} /> : <Unlock size={11} />}
-                  <span>Lock</span>
-                </button>
-              </div>
-            </div>
-
-            <div className="chord-pads-section">
-              <div className="chord-pads-label">Acorde Rápido (ou toque na esquerda / Chord Scan):</div>
-              <div className="chord-pads-grid" role="group" aria-label="Quick Chords">
-                {QUICK_CHORDS.map((c) => (
-                  <button
-                    key={c.label}
-                    type="button"
-                    className={`chord-pad-btn ${
-                      arranger.detected_chord === c.label ? "active" : ""
-                    }`}
-                    onClick={() => handleChordClick(c.root, c.quality, c.label)}
-                  >
-                    {c.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </section>
-
-          <section className="panel-card arranger-voices-card">
-            <div className="panel-title">
-              <span>Timbres, Split Divider & Chord Scan</span>
-              <div className="panel-title-actions">
-                <button
-                  type="button"
-                  className="btn btn-xs btn-primary"
-                  aria-label="Importar Timbre .Instrument"
-                  onClick={handlePickInstrumentDialog}
-                  title="Importar arquivo .Instrument para usar em Upper 1 / Upper 2 / Lower"
-                >
-                  <FolderOpen size={12} /> + .Instrument
-                </button>
-                <Music2 size={14} />
-              </div>
-            </div>
-
-            <div className="voice-slots-grid">
-              <div className="voice-slot-box">
-                <span className="voice-tag voice-tag-u1">UPPER 1 (Solo)</span>
-                <SearchableSelect
-                  ariaLabel="Upper 1 Instrument"
-                  value={String(arranger.upper1_instrument)}
-                  onChange={(val) => handleVoiceChange("upper1", Number(val))}
-                  searchPlaceholder="Buscar timbre Upper 1..."
-                  options={playableInstrumentOptions}
-                />
-              </div>
-
-              <div className="voice-slot-box">
-                <span className="voice-tag voice-tag-u2">UPPER 2 (Camada)</span>
-                <SearchableSelect
-                  ariaLabel="Upper 2 Instrument"
-                  value={arranger.upper2_instrument !== null ? String(arranger.upper2_instrument) : ""}
-                  onChange={(val) =>
-                    handleVoiceChange("upper2", val === "" ? null : Number(val))
-                  }
-                  searchPlaceholder="Buscar timbre Upper 2..."
-                  options={optionalVoiceOptions}
-                />
-              </div>
-
-              <div className="voice-slot-box">
-                <span className="voice-tag voice-tag-low">LOWER (Esq.)</span>
-                <SearchableSelect
-                  ariaLabel="Lower Instrument"
-                  value={arranger.lower_instrument !== null ? String(arranger.lower_instrument) : ""}
-                  onChange={(val) =>
-                    handleVoiceChange("lower", val === "" ? null : Number(val))
-                  }
-                  searchPlaceholder="Mudo = Só Acorde"
-                  options={optionalVoiceOptions}
-                />
-              </div>
-            </div>
-
-            <div className="hardware-toggle-row" role="group" aria-label="Split and Chord Scan Controls">
-              <button
-                type="button"
-                aria-pressed={arranger.split_enabled}
-                className={`btn btn-compact btn-split-divider ${
-                  arranger.split_enabled ? "active" : ""
-                }`}
-                onClick={() =>
-                  handleVoiceChange("split", null, null, !arranger.split_enabled)
-                }
-              >
-                <span className={`led-dot ${arranger.split_enabled ? "led-red" : ""}`} />
-                SPLIT DIVIDER
-              </button>
-
-              <button
-                type="button"
-                aria-pressed={arranger.chord_scan_lower}
-                className={`btn btn-compact ${arranger.chord_scan_lower ? "btn-flag-on" : ""}`}
-                onClick={() =>
-                  handleVoiceChange(
-                    "split",
-                    null,
-                    null,
-                    null,
-                    !arranger.chord_scan_lower,
-                  )
-                }
-              >
-                CHORD LOWER
-              </button>
-
-              <button
-                type="button"
-                aria-pressed={arranger.chord_scan_upper}
-                className={`btn btn-compact ${arranger.chord_scan_upper ? "btn-flag-on" : ""}`}
-                onClick={() =>
-                  handleVoiceChange(
-                    "split",
-                    null,
-                    null,
-                    null,
-                    null,
-                    !arranger.chord_scan_upper,
-                  )
-                }
-              >
-                SCAN UP
-              </button>
-            </div>
-
-            <div className="split-pitch-row">
-              <select
-                aria-label="Split Point"
-                className="studio-select studio-select-sm"
-                disabled={!arranger.split_enabled}
-                value={String(arranger.split_key)}
-                onChange={(e) =>
-                  handleVoiceChange("split", null, Number(e.target.value), null)
-                }
-              >
-                {SPLIT_POINTS.map((sp) => (
-                  <option key={sp.value} value={sp.value}>
-                    Corte: {sp.label}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                aria-label="Tipo de Acorde"
-                className="studio-select studio-select-sm"
-                value={arranger.chord_mode ?? "fingered_3_7"}
-                onChange={(e) =>
-                  handleVoiceChange("split", null, null, null, null, null, null, null, e.target.value)
-                }
-                title="Define se acordes exigem 3 a 7 teclas (7ª, 9ª, 7/9...) ou aceitam 1 tecla"
-              >
-                <option value="fingered_3_7">Tipo de Acorde: 3 a 7 Teclas (Padrão)</option>
-                <option value="single_finger">Tipo de Acorde: 1 Tecla (Automático)</option>
-              </select>
-
-              <div className="pitch-stepper-group">
-                <span className="pitch-tag">Oitava Upper</span>
-                <button
-                  type="button"
-                  className="btn btn-xs"
-                  aria-label="Upper Octave Down"
-                  onClick={() =>
-                    handleVoiceChange("split", null, null, null, null, null, arranger.upper_octave - 1)
-                  }
-                >
-                  -
-                </button>
-                <strong className="pitch-val">
-                  {arranger.upper_octave > 0 ? `+${arranger.upper_octave}` : arranger.upper_octave}
-                </strong>
-                <button
-                  type="button"
-                  className="btn btn-xs"
-                  aria-label="Upper Octave Up"
-                  onClick={() =>
-                    handleVoiceChange("split", null, null, null, null, null, arranger.upper_octave + 1)
-                  }
-                >
-                  +
-                </button>
-              </div>
-
-              <div className="pitch-stepper-group">
-                <span className="pitch-tag">Transpose</span>
-                <button
-                  type="button"
-                  className="btn btn-xs"
-                  aria-label="Transpose Down"
-                  onClick={() =>
-                    handleVoiceChange("split", null, null, null, null, null, null, arranger.transpose - 1)
-                  }
-                >
-                  -
-                </button>
-                <strong className="pitch-val">
-                  {arranger.transpose > 0 ? `+${arranger.transpose}` : arranger.transpose}
-                </strong>
-                <button
-                  type="button"
-                  className="btn btn-xs"
-                  aria-label="Transpose Up"
-                  onClick={() =>
-                    handleVoiceChange("split", null, null, null, null, null, null, arranger.transpose + 1)
-                  }
-                >
-                  +
-                </button>
-              </div>
-            </div>
-          </section>
+          <VoicesSplitPanel
+            arranger={arranger}
+            onVoiceChange={handleVoiceChange}
+            onPickInstrumentDialog={handlePickInstrumentDialog}
+          />
         </div>
 
         {/* ROW 2: Hardware Intro / Variation / Fill / Ending & Start/Stop Strip */}

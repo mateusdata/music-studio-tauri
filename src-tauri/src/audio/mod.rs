@@ -10,20 +10,34 @@ use crate::midi::{
     MidiConnectionHandle, MidiEngineEvent,
 };
 use crate::music_studio::{
-    list_all_music_packages, parse_instrument_file, parse_music_file, LoadedInstrument,
-    LoadedMusicPackage, MusicPackageEntry, MusicPackageSummary, MusicStudioArrangerEngine,
-    DEFAULT_MUSIC_STUDIO_DIR, USER_DOCUMENTS_RHYTHMS_DIR,
+    build_sty_package, list_all_music_packages, parse_instrument_file, parse_music_file,
+    rebuild_package_with_soundfont, LoadedInstrument, LoadedMusicPackage, MusicPackageEntry,
+    MusicPackageSummary, MusicStudioArrangerEngine, DEFAULT_MUSIC_STUDIO_DIR,
+    USER_DOCUMENTS_RHYTHMS_DIR,
 };
 use crate::presets::{build_factory_presets, load_user_presets, morph_engine_params, save_user_preset};
+use crate::soundfont::find_default_soundfont;
 use crate::synthesis::{PianoSynthEngine, MAX_POLYPHONY};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Stream, StreamConfig};
 use parking_lot::{Mutex, RwLock};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Instant;
+
+fn is_sty_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|ext| {
+            matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "sty" | "prs" | "sst" | "bcs"
+            )
+        })
+        .unwrap_or(false)
+}
 
 #[derive(Debug, Clone)]
 pub enum AudioCommand {
@@ -60,6 +74,11 @@ pub enum AudioCommand {
     },
     SetArrangerChord { root_pc: u8, quality: String },
     SetArrangerTrackVolume { track_slot: usize, volume: f32 },
+    SetArrangerTrackInstrument {
+        track_slot: usize,
+        instrument_index: Option<usize>,
+    },
+    ApplyArrangerOts(usize),
 }
 
 pub struct SharedAudioState {
@@ -74,6 +93,8 @@ pub struct SharedAudioState {
     pub telemetry: RwLock<EngineTelemetry>,
     pub active_music_package: RwLock<Option<Arc<LoadedMusicPackage>>>,
     pub arranger_summary: RwLock<MusicPackageSummary>,
+    pub active_soundfont_path: RwLock<Option<PathBuf>>,
+    pub user_imported_instruments: RwLock<Vec<LoadedInstrument>>,
 }
 
 pub struct AudioEngineManager {
@@ -399,7 +420,7 @@ fn process_audio_command(
         }
         AudioCommand::SetArrangerStyle(idx) => {
             arranger.set_style(idx);
-            dynamic_summary_dirty = true;
+            full_summary_dirty = true;
         }
         AudioCommand::SetArrangerVoice {
             slot,
@@ -433,6 +454,17 @@ fn process_audio_command(
             arranger.set_track_volume(track_slot, volume);
             dynamic_summary_dirty = true;
         }
+        AudioCommand::SetArrangerTrackInstrument {
+            track_slot,
+            instrument_index,
+        } => {
+            arranger.set_track_instrument(track_slot, instrument_index);
+            dynamic_summary_dirty = true;
+        }
+        AudioCommand::ApplyArrangerOts(ots_idx) => {
+            arranger.apply_ots(ots_idx);
+            dynamic_summary_dirty = true;
+        }
     }
     if full_summary_dirty {
         if let Some(mut s) = shared.arranger_summary.try_write() {
@@ -455,6 +487,7 @@ impl AudioEngineManager {
         let first_preset_id = presets[0].id.clone();
         let initial_params = presets[0].params.clone();
 
+        let default_sf2 = find_default_soundfont();
         let (initial_pkg, initial_summary) = if !cfg!(test) {
             let doc_pref = std::path::Path::new(USER_DOCUMENTS_RHYTHMS_DIR)
                 .join("Josiran_Pisadinha_GR.Music");
@@ -471,7 +504,12 @@ impl AudioEngineManager {
                     .map(|e| PathBuf::from(e.file_path))
             };
             if let Some(p) = target_path {
-                if let Ok(parsed) = parse_music_file(&p) {
+                let parsed_res = if is_sty_path(&p) {
+                    build_sty_package(&[p], default_sf2.as_deref())
+                } else {
+                    parse_music_file(&p)
+                };
+                if let Ok(parsed) = parsed_res {
                     let pkg_arc = Arc::new(parsed);
                     let mut tmp = MusicStudioArrangerEngine::new(48000.0);
                     tmp.load_package(Arc::clone(&pkg_arc));
@@ -523,6 +561,8 @@ impl AudioEngineManager {
             }),
             active_music_package: RwLock::new(initial_pkg),
             arranger_summary: RwLock::new(initial_summary),
+            active_soundfont_path: RwLock::new(default_sf2),
+            user_imported_instruments: RwLock::new(Vec::new()),
         });
 
         let keep_alive = Arc::new(AtomicBool::new(true));
@@ -1290,16 +1330,75 @@ impl AudioEngineManager {
         self.shared.arranger_summary.read().clone()
     }
 
-    pub fn load_music_package(&self, path: &PathBuf) -> Result<MusicPackageSummary, String> {
-        let parsed = parse_music_file(path)?;
-        let pkg_arc = Arc::new(parsed);
+    fn commit_loaded_package(&self, parsed: LoadedMusicPackage) -> MusicPackageSummary {
         let mut tmp = MusicStudioArrangerEngine::new(48000.0);
-        tmp.load_package(Arc::clone(&pkg_arc));
+        tmp.user_imported_instruments = self.shared.user_imported_instruments.read().clone();
+        if let Some(old_pkg) = self.shared.active_music_package.read().clone() {
+            tmp.package = Some(old_pkg);
+            tmp.upper1_instrument = self.shared.arranger_summary.read().upper1_instrument;
+        }
+        tmp.load_package(Arc::new(parsed));
+        let pkg_arc = tmp
+            .package
+            .clone()
+            .expect("tmp.load_package always sets package");
         let summary = tmp.summary();
         *self.shared.active_music_package.write() = Some(Arc::clone(&pkg_arc));
         *self.shared.arranger_summary.write() = summary.clone();
         let _ = self.cmd_tx.lock().send(AudioCommand::LoadMusicPackage(pkg_arc));
-        Ok(summary)
+        summary
+    }
+
+    pub fn load_music_package(&self, path: &PathBuf) -> Result<MusicPackageSummary, String> {
+        if is_sty_path(path) {
+            return self.load_sty_files(std::slice::from_ref(path));
+        }
+        let parsed = parse_music_file(path)?;
+        Ok(self.commit_loaded_package(parsed))
+    }
+
+    pub fn load_sty_files(&self, paths: &[PathBuf]) -> Result<MusicPackageSummary, String> {
+        let sf2 = {
+            let existing = self.shared.active_soundfont_path.read().clone();
+            if existing.is_some() {
+                existing
+            } else {
+                let found = find_default_soundfont();
+                if found.is_some() {
+                    *self.shared.active_soundfont_path.write() = found.clone();
+                }
+                found
+            }
+        };
+        let parsed = build_sty_package(paths, sf2.as_deref())?;
+        Ok(self.commit_loaded_package(parsed))
+    }
+
+    pub fn load_soundfont_file(&self, path: &PathBuf) -> Result<MusicPackageSummary, String> {
+        let bank = crate::soundfont::SoundFontBank::open(path)?;
+        let bank_name = bank.name().to_string();
+        drop(bank);
+        *self.shared.active_soundfont_path.write() = Some(path.clone());
+
+        let base_pkg = self
+            .shared
+            .active_music_package
+            .read()
+            .clone()
+            .map(|p| (*p).clone())
+            .unwrap_or_else(|| LoadedMusicPackage {
+                file_name: bank_name,
+                file_path: path.to_string_lossy().to_string(),
+                version: "SF2".to_string(),
+                source_format: "music".to_string(),
+                soundfont_name: None,
+                instruments: Vec::new(),
+                styles: Vec::new(),
+                ots_presets: Vec::new(),
+                source_paths: Vec::new(),
+            });
+        let rebuilt = rebuild_package_with_soundfont(&base_pkg, path)?;
+        Ok(self.commit_loaded_package(rebuilt))
     }
 
     pub fn import_instrument_file(
@@ -1317,6 +1416,15 @@ impl AudioEngineManager {
         let parsed = parse_instrument_file(path, next_idx)?;
 
         {
+            let mut user_list = self.shared.user_imported_instruments.write();
+            if let Some(existing) = user_list.iter_mut().find(|u| u.name == parsed.name) {
+                *existing = parsed.clone();
+            } else {
+                user_list.push(parsed.clone());
+            }
+        }
+
+        {
             let mut pkg_guard = self.shared.active_music_package.write();
             let mut pkg = match pkg_guard.as_ref() {
                 Some(existing) => (**existing).clone(),
@@ -1324,13 +1432,27 @@ impl AudioEngineManager {
                     file_name: "Custom Instruments".to_string(),
                     file_path: "custom://instruments".to_string(),
                     version: "1.4".to_string(),
+                    source_format: "music".to_string(),
+                    soundfont_name: None,
                     instruments: Vec::new(),
                     styles: Vec::new(),
+                    ots_presets: Vec::new(),
+                    source_paths: Vec::new(),
                 },
             };
             let mut inst = parsed.clone();
-            let actual_idx = pkg.instruments.len();
-            inst.index = actual_idx;
+            let (actual_idx, replaced) = if let Some(existing_idx) =
+                pkg.instruments.iter().position(|i| i.name == inst.name)
+            {
+                inst.index = existing_idx;
+                pkg.instruments[existing_idx] = inst.clone();
+                (existing_idx, true)
+            } else {
+                let idx = pkg.instruments.len();
+                inst.index = idx;
+                pkg.instruments.push(inst.clone());
+                (idx, false)
+            };
             let inst_summary = crate::music_studio::MusicInstrumentSummary {
                 index: actual_idx,
                 name: inst.name.clone(),
@@ -1338,7 +1460,6 @@ impl AudioEngineManager {
                 has_samples: inst.zones.iter().any(|z| !z.pcm_l.is_empty()),
                 is_drumkit: inst.is_drumkit,
             };
-            pkg.instruments.push(inst);
             *pkg_guard = Some(Arc::new(pkg));
 
             let mut sum = self.shared.arranger_summary.write();
@@ -1347,8 +1468,13 @@ impl AudioEngineManager {
                 sum.file_name = "Custom Instruments".to_string();
                 sum.file_path = "custom://instruments".to_string();
                 sum.version = "1.4".to_string();
+                sum.source_format = "music".to_string();
             }
-            sum.instruments.push(inst_summary);
+            if replaced && actual_idx < sum.instruments.len() {
+                sum.instruments[actual_idx] = inst_summary;
+            } else {
+                sum.instruments.push(inst_summary);
+            }
             if assign_upper1 {
                 sum.upper1_instrument = actual_idx;
             }
@@ -1434,13 +1560,14 @@ impl AudioEngineManager {
 
     pub fn set_arranger_style(&self, style_index: usize) -> MusicPackageSummary {
         {
-            let pkg_bpm = self
+            let (pkg_bpm, pkg_ots) = self
                 .shared
                 .active_music_package
                 .read()
                 .as_ref()
                 .and_then(|pkg| pkg.styles.get(style_index))
-                .map(|st| st.bpm);
+                .map(|st| (Some(st.bpm), (!st.ots_presets.is_empty()).then(|| st.ots_presets.clone())))
+                .unwrap_or((None, None));
             let mut s = self.shared.arranger_summary.write();
             let next_sec = s.styles.get(style_index).and_then(|st| {
                 st.sections
@@ -1458,6 +1585,9 @@ impl AudioEngineManager {
                 }
                 if let Some(first_sec) = next_sec {
                     s.active_section = first_sec;
+                }
+                if let Some(ots) = pkg_ots {
+                    s.ots_presets = ots;
                 }
                 s.pending_section = None;
             }
@@ -1560,6 +1690,50 @@ impl AudioEngineManager {
         self.arranger_state()
     }
 
+    pub fn set_arranger_track_instrument(
+        &self,
+        track_index: usize,
+        instrument_index: Option<usize>,
+    ) -> MusicPackageSummary {
+        {
+            let mut s = self.shared.arranger_summary.write();
+            if track_index < 8 {
+                let max_idx = s.instruments.len();
+                s.track_instruments[track_index] = instrument_index.filter(|&i| i < max_idx);
+            }
+        }
+        let _ = self
+            .cmd_tx
+            .lock()
+            .send(AudioCommand::SetArrangerTrackInstrument {
+                track_slot: track_index,
+                instrument_index,
+            });
+        self.arranger_state()
+    }
+
+    pub fn apply_arranger_ots(&self, ots_index: usize) -> MusicPackageSummary {
+        {
+            let mut s = self.shared.arranger_summary.write();
+            let max_idx = s.instruments.len();
+            if let Some(ots) = s
+                .ots_presets
+                .iter()
+                .find(|p| p.index == ots_index)
+                .or_else(|| s.ots_presets.get(ots_index))
+                .cloned()
+            {
+                if ots.upper1_instrument < max_idx {
+                    s.upper1_instrument = ots.upper1_instrument;
+                }
+                s.upper2_instrument = ots.upper2_instrument.filter(|&i| i < max_idx);
+                s.lower_instrument = ots.lower_instrument.filter(|&i| i < max_idx);
+            }
+        }
+        let _ = self.cmd_tx.lock().send(AudioCommand::ApplyArrangerOts(ots_index));
+        self.arranger_state()
+    }
+
     /// Renders a short C-major arpeggio / chord offline to a stereo 32-bit float WAV file.
     pub fn export_demo_wav(&self, path: PathBuf) -> Result<String, String> {
         let sr = 48000_u32;
@@ -1581,6 +1755,15 @@ impl AudioEngineManager {
                 Some(s.transpose),
                 Some(&s.chord_mode),
             );
+            arranger.set_keyboard_voice("upper2", s.upper2_instrument, None, None, None, None, None, None, None);
+            arranger.set_keyboard_voice("lower", s.lower_instrument, None, None, None, None, None, None, None);
+            arranger.set_chord(s.detected_chord_root, &s.detected_chord_quality);
+            for (slot, &vol) in s.track_volumes.iter().enumerate() {
+                arranger.set_track_volume(slot, vol);
+            }
+            for (slot, &inst_opt) in s.track_instruments.iter().enumerate() {
+                arranger.set_track_instrument(slot, inst_opt);
+            }
             arranger.set_tempo_locked(s.tempo_locked);
             arranger.set_transport(true, Some(s.sync_start), Some(s.bpm));
         }
@@ -1680,6 +1863,8 @@ mod tests {
             }),
             active_music_package: RwLock::new(None),
             arranger_summary: RwLock::new(MusicPackageSummary::default()),
+            active_soundfont_path: RwLock::new(None),
+            user_imported_instruments: RwLock::new(Vec::new()),
         })
     }
 

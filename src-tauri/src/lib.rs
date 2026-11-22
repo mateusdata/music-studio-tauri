@@ -6,7 +6,9 @@ pub mod instruments;
 pub mod midi;
 pub mod music_studio;
 pub mod presets;
+pub mod soundfont;
 pub mod synthesis;
+pub mod yamaha_sty;
 
 use audio::AudioEngineManager;
 use tauri::Manager;
@@ -61,6 +63,13 @@ pub fn run() {
             commands::set_arranger_keyboard_voice,
             commands::set_arranger_chord,
             commands::set_arranger_track_volume,
+            commands::set_arranger_track_instrument,
+            commands::apply_arranger_ots,
+            commands::load_sty_files,
+            commands::pick_sty_dialog,
+            commands::pick_sty_folder_dialog,
+            commands::load_soundfont_file,
+            commands::pick_soundfont_dialog,
             commands::set_audio_buffer_size,
         ])
         .run(tauri::generate_context!())

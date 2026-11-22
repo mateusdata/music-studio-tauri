@@ -1,12 +1,13 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub const DEFAULT_MUSIC_STUDIO_DIR: &str =
     "/home/data/.config/hydralauncher/wine-prefixes/1174180/drive_c/users/steamuser/AppData/Local/Programs/Music Studio";
 pub const USER_DOCUMENTS_RHYTHMS_DIR: &str = "/home/data/Documents/Ritmos_Forro_Music_Studio";
 pub const USER_DOCUMENTS_KEYBOARDS_DIR: &str = "/home/data/Documents/Ritmos de Teclados";
+pub const USER_DOCUMENTS_KEYBOARD_DIR: &str = USER_DOCUMENTS_KEYBOARDS_DIR;
 pub const USER_DOCUMENTS_INSTRUMENTS_DIR: &str = "/home/data/Documents/instrumentos pack";
 
 const NOTE_NAMES: [&str; 12] = [
@@ -19,6 +20,7 @@ pub struct MusicPackageEntry {
     pub file_path: String,
     pub size_mb: f32,
     pub version: String,
+    pub format: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,11 +41,22 @@ pub struct MusicStyleSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OtsPresetSummary {
+    pub index: usize,
+    pub name: String,
+    pub upper1_instrument: usize,
+    pub upper2_instrument: Option<usize>,
+    pub lower_instrument: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MusicPackageSummary {
     pub loaded: bool,
     pub file_name: String,
     pub file_path: String,
     pub version: String,
+    pub source_format: String,
+    pub soundfont_name: Option<String>,
     pub instruments: Vec<MusicInstrumentSummary>,
     pub styles: Vec<MusicStyleSummary>,
     pub active_style_index: usize,
@@ -68,6 +81,8 @@ pub struct MusicPackageSummary {
     pub detected_chord: String,
     pub chord_mode: String,
     pub track_volumes: [f32; 8],
+    pub track_instruments: [Option<usize>; 8],
+    pub ots_presets: Vec<OtsPresetSummary>,
     pub beat_position: f32,
 }
 
@@ -78,6 +93,8 @@ impl Default for MusicPackageSummary {
             file_name: String::new(),
             file_path: String::new(),
             version: String::new(),
+            source_format: "music".to_string(),
+            soundfont_name: None,
             instruments: Vec::new(),
             styles: Vec::new(),
             active_style_index: 0,
@@ -102,6 +119,8 @@ impl Default for MusicPackageSummary {
             detected_chord: "C".to_string(),
             chord_mode: ChordMode::Fingered3To7.as_str().to_string(),
             track_volumes: [1.0; 8],
+            track_instruments: [None; 8],
+            ots_presets: Vec::new(),
             beat_position: 0.0,
         }
     }
@@ -112,6 +131,8 @@ pub struct SampleZone {
     pub root_key: u8,
     pub key_low: u8,
     pub key_high: u8,
+    pub vel_low: u8,
+    pub vel_high: u8,
     pub name: String,
     pub sample_rate: u32,
     pub channels: u8,
@@ -157,6 +178,7 @@ pub struct RhythmTrack {
     pub key_move: i32,
     pub octave_shift: i32,
     pub is_drum: bool,
+    pub casm_rule: Option<crate::yamaha_sty::CasmRule>,
     pub events: Vec<RhythmNoteEvent>,
 }
 
@@ -177,6 +199,7 @@ pub struct RhythmStyle {
     pub category: String,
     pub bpm: f32,
     pub sections: Vec<RhythmSection>,
+    pub ots_presets: Vec<OtsPresetSummary>,
 }
 
 #[derive(Debug, Clone)]
@@ -184,8 +207,12 @@ pub struct LoadedMusicPackage {
     pub file_name: String,
     pub file_path: String,
     pub version: String,
+    pub source_format: String,
+    pub soundfont_name: Option<String>,
     pub instruments: Vec<LoadedInstrument>,
     pub styles: Vec<RhythmStyle>,
+    pub ots_presets: Vec<OtsPresetSummary>,
+    pub source_paths: Vec<PathBuf>,
 }
 
 #[inline]
@@ -610,6 +637,8 @@ fn parse_zone_at(
             root_key,
             key_low: root_key,
             key_high: root_key,
+            vel_low: 0,
+            vel_high: 127,
             name,
             sample_rate: sr,
             channels: ch,
@@ -1292,6 +1321,7 @@ fn parse_rhythm_tracks(
             key_move,
             octave_shift,
             is_drum,
+            casm_rule: None,
             events,
         });
     }
@@ -1482,6 +1512,7 @@ fn parse_music_file_internal(
                     category,
                     bpm: section_bpm,
                     sections: Vec::new(),
+                    ots_presets: Vec::new(),
                 });
 
             if let Some(b) = node.bpm {
@@ -1553,6 +1584,7 @@ fn parse_music_file_internal(
             category: "Music".to_string(),
             bpm: default_bpm,
             sections: fallback_sections,
+            ots_presets: Vec::new(),
         }]
     } else {
         Vec::new()
@@ -1568,8 +1600,12 @@ fn parse_music_file_internal(
         file_name,
         file_path: path.to_string_lossy().to_string(),
         version,
+        source_format: "music".to_string(),
+        soundfont_name: None,
         instruments,
         styles,
+        ots_presets: Vec::new(),
+        source_paths: vec![path.to_path_buf()],
     })
 }
 
@@ -1628,6 +1664,13 @@ pub fn parse_instrument_file(path: &Path, index: usize) -> Result<LoadedInstrume
     Ok(inst)
 }
 
+fn is_sty_extension_str(ext: &str) -> bool {
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "sty" | "prs" | "sst" | "bcs"
+    )
+}
+
 fn scan_dir_for_packages(dir: &Path, depth: usize, out: &mut Vec<MusicPackageEntry>) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
@@ -1644,14 +1687,23 @@ fn scan_dir_for_packages(dir: &Path, depth: usize, out: &mut Vec<MusicPackageEnt
         let Some(ext) = p.extension().and_then(|e| e.to_str()) else {
             continue;
         };
-        if !ext.eq_ignore_ascii_case("music") && !ext.eq_ignore_ascii_case("template") {
+        let is_music = ext.eq_ignore_ascii_case("music") || ext.eq_ignore_ascii_case("template");
+        let is_sty = is_sty_extension_str(ext);
+        if !is_music && !is_sty {
             continue;
         }
         if let Ok(meta) = std::fs::metadata(&p) {
             let mut hdr = [0_u8; 64];
             if let Ok(mut f) = std::fs::File::open(&p) {
                 use std::io::Read;
-                if f.read(&mut hdr).unwrap_or(0) >= 36 && is_music_studio_magic(&hdr) {
+                let n = f.read(&mut hdr).unwrap_or(0);
+                let file_name = p
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let size_mb = (meta.len() as f32) / (1024.0 * 1024.0);
+                if is_music && n >= 36 && is_music_studio_magic(&hdr) {
                     let vlen = read_u32_le(&hdr, 0x20).unwrap_or(0) as usize;
                     let version = if vlen > 0 && vlen <= 32 && 0x24 + vlen <= 64 {
                         decode_latin1(&hdr[0x24..0x24 + vlen])
@@ -1664,15 +1716,29 @@ fn scan_dir_for_packages(dir: &Path, depth: usize, out: &mut Vec<MusicPackageEnt
                         "1.x".to_string()
                     };
                     out.push(MusicPackageEntry {
-                        file_name: p
-                            .file_name()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or_default()
-                            .to_string(),
+                        file_name,
                         file_path: p.to_string_lossy().to_string(),
-                        size_mb: (meta.len() as f32) / (1024.0 * 1024.0),
+                        size_mb,
                         version,
+                        format: "music".to_string(),
                     });
+                } else if is_sty && n >= 14 {
+                    let version = if &hdr[0..4] == b"MThd" {
+                        Some("SFF1/SFF2".to_string())
+                    } else if &hdr[0..4] == b"STYL" {
+                        Some("STYL".to_string())
+                    } else {
+                        None
+                    };
+                    if let Some(version) = version {
+                        out.push(MusicPackageEntry {
+                            file_name,
+                            file_path: p.to_string_lossy().to_string(),
+                            size_mb,
+                            version,
+                            format: "sty".to_string(),
+                        });
+                    }
                 }
             }
         }
@@ -1682,25 +1748,425 @@ fn scan_dir_for_packages(dir: &Path, depth: usize, out: &mut Vec<MusicPackageEnt
 pub fn list_music_packages_in_dir(dir: &Path) -> Vec<MusicPackageEntry> {
     let mut entries = Vec::new();
     scan_dir_for_packages(dir, 0, &mut entries);
-    entries.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
+    entries.sort_by(|a, b| {
+        a.file_name
+            .to_lowercase()
+            .cmp(&b.file_name.to_lowercase())
+            .then_with(|| a.file_path.to_lowercase().cmp(&b.file_path.to_lowercase()))
+    });
     entries
 }
 
 pub fn list_all_music_packages() -> Vec<MusicPackageEntry> {
     let mut raw = Vec::new();
-    scan_dir_for_packages(Path::new(USER_DOCUMENTS_RHYTHMS_DIR), 1, &mut raw);
-    scan_dir_for_packages(Path::new(USER_DOCUMENTS_KEYBOARDS_DIR), 2, &mut raw);
-    scan_dir_for_packages(Path::new(DEFAULT_MUSIC_STUDIO_DIR), 0, &mut raw);
+    scan_dir_for_packages(Path::new(USER_DOCUMENTS_RHYTHMS_DIR), 2, &mut raw);
+    scan_dir_for_packages(Path::new(USER_DOCUMENTS_KEYBOARD_DIR), 5, &mut raw);
+    scan_dir_for_packages(Path::new(DEFAULT_MUSIC_STUDIO_DIR), 1, &mut raw);
 
-    let mut seen_names = std::collections::HashSet::new();
+    let mut seen_paths = HashSet::new();
     let mut deduped = Vec::with_capacity(raw.len());
     for entry in raw {
-        if seen_names.insert(entry.file_name.to_lowercase()) {
+        let canon = std::fs::canonicalize(&entry.file_path)
+            .unwrap_or_else(|_| PathBuf::from(&entry.file_path));
+        if seen_paths.insert(canon) {
             deduped.push(entry);
         }
     }
-    deduped.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
+    deduped.sort_by(|a, b| {
+        a.file_name
+            .to_lowercase()
+            .cmp(&b.file_name.to_lowercase())
+            .then_with(|| a.file_path.to_lowercase().cmp(&b.file_path.to_lowercase()))
+    });
     deduped
+}
+
+const CURATED_SF2_PALETTE: [(u16, u16); 13] = [
+    (0, 0),    // Grand Piano
+    (0, 21),   // Accordion
+    (0, 24),   // Nylon Guitar
+    (0, 25),   // Steel Guitar
+    (0, 27),   // Clean Electric Guitar
+    (0, 33),   // Finger Bass
+    (0, 36),   // Slap Bass
+    (0, 48),   // Strings
+    (0, 61),   // Brass Section
+    (0, 65),   // Alto Sax
+    (0, 81),   // Lead Square
+    (128, 0),  // Standard Drums
+    (128, 16), // Power Drums
+];
+
+/// Converts a decoded SoundFont 2 preset into a playable `LoadedInstrument`.
+pub fn sf2_to_loaded_instrument(
+    inst_data: &crate::soundfont::Sf2InstrumentData,
+    index: usize,
+) -> LoadedInstrument {
+    let zones = inst_data
+        .zones
+        .iter()
+        .map(|z| SampleZone {
+            root_key: z.root_key,
+            key_low: z.key_low,
+            key_high: z.key_high,
+            vel_low: z.vel_low,
+            vel_high: z.vel_high,
+            name: z.name.clone(),
+            sample_rate: z.sample_rate,
+            channels: if Arc::ptr_eq(&z.pcm_l, &z.pcm_r) {
+                1
+            } else {
+                2
+            },
+            loop_start: z.loop_start,
+            loop_end: z.loop_end,
+            loop_enabled: z.loop_enabled,
+            loop_mode: if z.loop_enabled { 2 } else { 0 },
+            gain: z.gain,
+            pan: z.pan,
+            fine_tune: z.fine_tune_cents * 10,
+            pool_sid: 0,
+            pcm_l: Arc::clone(&z.pcm_l),
+            pcm_r: Arc::clone(&z.pcm_r),
+        })
+        .collect();
+
+    let name = if inst_data.is_drumkit
+        && !inst_data.name.to_ascii_lowercase().contains("drum")
+        && !inst_data.name.to_ascii_lowercase().contains("kit")
+    {
+        format!("GM Drum: {}", inst_data.name)
+    } else {
+        inst_data.name.clone()
+    };
+
+    LoadedInstrument {
+        index,
+        name,
+        volume: 1.0,
+        pan: 0,
+        inst_type: if inst_data.is_drumkit { 1 } else { 0 },
+        is_drumkit: inst_data.is_drumkit,
+        zones,
+    }
+}
+
+fn sty_slot_name(slot: usize) -> &'static str {
+    match slot {
+        0 => "Drum",
+        1 => "Percussion",
+        2 => "Bass",
+        3 => "Acc. 1",
+        4 => "Acc. 2",
+        5 => "Acc. 3",
+        6 => "Acc. 4",
+        _ => "Acc. 5",
+    }
+}
+
+fn load_sf2_presets_once(
+    bank: &crate::soundfont::SoundFontBank,
+    requests: &[(u16, u16)],
+) -> (Vec<LoadedInstrument>, HashMap<(u16, u16), usize>) {
+    let mut instruments = Vec::new();
+    let mut requested_to_idx: HashMap<(u16, u16), usize> = HashMap::new();
+    let mut resolved_to_idx: HashMap<(u16, u16), usize> = HashMap::new();
+
+    for &(req_bank, req_prog) in requests {
+        if requested_to_idx.contains_key(&(req_bank, req_prog)) {
+            continue;
+        }
+        let Some(sf2_data) = bank.load_preset(req_bank, req_prog) else {
+            continue;
+        };
+        let actual_key = (sf2_data.bank, sf2_data.program);
+        let idx = if let Some(&existing_idx) = resolved_to_idx.get(&actual_key) {
+            existing_idx
+        } else {
+            let new_idx = instruments.len();
+            instruments.push(sf2_to_loaded_instrument(&sf2_data, new_idx));
+            resolved_to_idx.insert(actual_key, new_idx);
+            new_idx
+        };
+        requested_to_idx.insert((req_bank, req_prog), idx);
+    }
+
+    (instruments, requested_to_idx)
+}
+
+/// Builds a playable `LoadedMusicPackage` from one or more Yamaha `.STY`/`.PRS`/`.SST`/`.BCS`
+/// style files paired with a SoundFont 2 bank.
+pub fn build_sty_package(
+    paths: &[PathBuf],
+    sf2_path: Option<&Path>,
+) -> Result<LoadedMusicPackage, String> {
+    if paths.is_empty() {
+        return Err("Nenhum arquivo .STY especificado".to_string());
+    }
+
+    let resolved_sf2 = sf2_path
+        .map(Path::to_path_buf)
+        .or_else(crate::soundfont::find_default_soundfont)
+        .ok_or_else(|| "Nenhum SoundFont (.sf2) encontrado no sistema".to_string())?;
+    let bank = crate::soundfont::SoundFontBank::open(&resolved_sf2)?;
+
+    let mut docs = Vec::with_capacity(paths.len());
+    let mut errors = Vec::new();
+    for p in paths {
+        match crate::yamaha_sty::parse_sty_file(p) {
+            Ok(doc) => docs.push(doc),
+            Err(e) => errors.push(format!("{}: {}", p.display(), e)),
+        }
+    }
+    if docs.is_empty() {
+        return Err(errors.join("; "));
+    }
+
+    let mut requested_presets: Vec<(u16, u16)> = Vec::new();
+    let mut seen_req: HashSet<(u16, u16)> = HashSet::new();
+    let mut push_req = |bank_id: u16, prog_id: u16| {
+        if seen_req.insert((bank_id, prog_id)) {
+            requested_presets.push((bank_id, prog_id));
+        }
+    };
+
+    for doc in &docs {
+        for sec in &doc.sections {
+            for tr in &sec.tracks {
+                let (b, p, _) = crate::yamaha_sty::resolve_yamaha_voice_to_gm(
+                    tr.dest_ch,
+                    tr.voice.msb,
+                    tr.voice.lsb,
+                    tr.voice.program,
+                    &tr.voice.name_hint,
+                );
+                push_req(b, p);
+            }
+        }
+        for ots in &doc.ots_presets {
+            let (b1, p1, _) = crate::yamaha_sty::resolve_yamaha_voice_to_gm(
+                0,
+                ots.right1_bank_msb,
+                ots.right1_bank_lsb,
+                ots.right1_program,
+                &ots.name,
+            );
+            push_req(b1, p1);
+            if let Some((m, l, pr)) = ots.right2_program {
+                let (b2, p2, _) = crate::yamaha_sty::resolve_yamaha_voice_to_gm(1, m, l, pr, &ots.name);
+                push_req(b2, p2);
+            }
+            if let Some((m, l, pr)) = ots.left_program {
+                let (bl, pl, _) = crate::yamaha_sty::resolve_yamaha_voice_to_gm(3, m, l, pr, &ots.name);
+                push_req(bl, pl);
+            }
+        }
+    }
+
+    for &(b, p) in &CURATED_SF2_PALETTE {
+        push_req(b, p);
+    }
+
+    let (instruments, requested_to_idx) = load_sf2_presets_once(&bank, &requested_presets);
+    if instruments.is_empty() {
+        return Err(format!(
+            "SoundFont '{}' não possui presets carregáveis",
+            resolved_sf2.display()
+        ));
+    }
+
+    let mut has_sff1 = false;
+    let mut has_sff2 = false;
+    let mut has_styl = false;
+    let mut styles = Vec::with_capacity(docs.len());
+
+    for (doc_idx, doc) in docs.iter().enumerate() {
+        match doc.format {
+            crate::yamaha_sty::StyFormat::Sff1 => has_sff1 = true,
+            crate::yamaha_sty::StyFormat::Sff2 => has_sff2 = true,
+            crate::yamaha_sty::StyFormat::LegacyStyl => has_styl = true,
+        }
+
+        let sections: Vec<RhythmSection> = doc
+            .sections
+            .iter()
+            .map(|sec| {
+                let tracks = sec
+                    .tracks
+                    .iter()
+                    .map(|tr| {
+                        let (req_b, req_p, resolved_drum) =
+                            crate::yamaha_sty::resolve_yamaha_voice_to_gm(
+                                tr.dest_ch,
+                                tr.voice.msb,
+                                tr.voice.lsb,
+                                tr.voice.program,
+                                &tr.voice.name_hint,
+                            );
+                        let inst_idx = requested_to_idx
+                            .get(&(req_b, req_p))
+                            .copied()
+                            .unwrap_or(0);
+                        let inst_is_drum = instruments
+                            .get(inst_idx)
+                            .map(|i| i.is_drumkit)
+                            .unwrap_or(false);
+                        let events = tr
+                            .events
+                            .iter()
+                            .map(|ev| RhythmNoteEvent {
+                                midi_note: ev.midi_note,
+                                velocity: ev.velocity,
+                                start_tick: ev.start_tick,
+                                duration_ticks: ev.duration_ticks,
+                            })
+                            .collect();
+                        RhythmTrack {
+                            track_type: sty_slot_name(tr.track_slot).to_string(),
+                            track_slot: tr.track_slot.min(7),
+                            instrument_index: inst_idx,
+                            volume: (tr.voice.volume as f32 / 100.0).clamp(0.05, 1.5),
+                            pan: tr.voice.pan,
+                            fine_tune: 0,
+                            key_move: 0,
+                            octave_shift: 0,
+                            is_drum: tr.is_drum || resolved_drum || inst_is_drum,
+                            casm_rule: tr.casm_rule.clone(),
+                            events,
+                        }
+                    })
+                    .collect();
+                RhythmSection {
+                    id: sec.id,
+                    name: sec.name.clone(),
+                    length_ticks: sec.length_ticks,
+                    is_loop: sec.is_loop,
+                    jump_to: sec.jump_to,
+                    tracks,
+                }
+            })
+            .collect();
+
+        let ots_presets: Vec<OtsPresetSummary> = doc
+            .ots_presets
+            .iter()
+            .map(|ots| {
+                let (b1, p1, _) = crate::yamaha_sty::resolve_yamaha_voice_to_gm(
+                    0,
+                    ots.right1_bank_msb,
+                    ots.right1_bank_lsb,
+                    ots.right1_program,
+                    &ots.name,
+                );
+                let upper1_instrument = requested_to_idx.get(&(b1, p1)).copied().unwrap_or(0);
+                let upper2_instrument = ots.right2_program.and_then(|(m, l, pr)| {
+                    let (b2, p2, _) =
+                        crate::yamaha_sty::resolve_yamaha_voice_to_gm(1, m, l, pr, &ots.name);
+                    requested_to_idx.get(&(b2, p2)).copied()
+                });
+                let lower_instrument = ots.left_program.and_then(|(m, l, pr)| {
+                    let (bl, pl, _) =
+                        crate::yamaha_sty::resolve_yamaha_voice_to_gm(3, m, l, pr, &ots.name);
+                    requested_to_idx.get(&(bl, pl)).copied()
+                });
+                OtsPresetSummary {
+                    index: ots.index,
+                    name: ots.name.clone(),
+                    upper1_instrument,
+                    upper2_instrument,
+                    lower_instrument,
+                }
+            })
+            .collect();
+
+        let category = match doc.format {
+            crate::yamaha_sty::StyFormat::Sff1 => "Yamaha SFF1",
+            crate::yamaha_sty::StyFormat::Sff2 => "Yamaha SFF2",
+            crate::yamaha_sty::StyFormat::LegacyStyl => "Yamaha STYL",
+        }
+        .to_string();
+
+        styles.push(RhythmStyle {
+            id: (doc_idx + 1) as u32,
+            name: doc.title.clone(),
+            category,
+            bpm: doc.bpm.clamp(40.0, 240.0),
+            sections,
+            ots_presets,
+        });
+    }
+
+    let version = match (has_sff1, has_sff2, has_styl) {
+        (false, true, false) => "SFF2/SF2",
+        (true, false, false) => "SFF1/SF2",
+        (false, false, true) => "STYL/SF2",
+        _ => "SFF1/SFF2/SF2",
+    }
+    .to_string();
+
+    let is_pack = docs.len() > 1;
+    let file_name = if is_pack {
+        format!("{} Ritmos .STY", docs.len())
+    } else {
+        docs[0].file_name.clone()
+    };
+    let file_path = docs[0].file_path.clone();
+    let ots_presets = styles
+        .first()
+        .map(|s| s.ots_presets.clone())
+        .unwrap_or_default();
+
+    Ok(LoadedMusicPackage {
+        file_name,
+        file_path,
+        version,
+        source_format: if is_pack {
+            "sty_pack".to_string()
+        } else {
+            "sty".to_string()
+        },
+        soundfont_name: Some(bank.name().to_string()),
+        instruments,
+        styles,
+        ots_presets,
+        source_paths: docs.iter().map(|d| PathBuf::from(&d.file_path)).collect(),
+    })
+}
+
+/// Rebuilds an active `.STY` package from its source style paths using a newly selected SoundFont,
+/// or augments an active `.Music` package with curated SoundFont solo instruments.
+pub fn rebuild_package_with_soundfont(
+    pkg: &LoadedMusicPackage,
+    sf2_path: &Path,
+) -> Result<LoadedMusicPackage, String> {
+    if (pkg.source_format == "sty" || pkg.source_format == "sty_pack")
+        && !pkg.source_paths.is_empty()
+    {
+        return build_sty_package(&pkg.source_paths, Some(sf2_path));
+    }
+
+    let bank = crate::soundfont::SoundFontBank::open(sf2_path)?;
+    let (sf2_insts, _) = load_sf2_presets_once(&bank, &CURATED_SF2_PALETTE);
+    if sf2_insts.is_empty() {
+        return Err(format!(
+            "SoundFont '{}' não possui presets carregáveis",
+            sf2_path.display()
+        ));
+    }
+
+    let mut next = pkg.clone();
+    next.soundfont_name = Some(bank.name().to_string());
+    next.instruments.retain(|inst| !inst.name.ends_with(" (SF2)"));
+    for (idx, inst) in next.instruments.iter_mut().enumerate() {
+        inst.index = idx;
+    }
+    for mut inst in sf2_insts {
+        let new_idx = next.instruments.len();
+        inst.index = new_idx;
+        inst.name = format!("{} (SF2)", inst.name);
+        next.instruments.push(inst);
+    }
+    Ok(next)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2325,11 +2791,55 @@ fn transpose_note_for_chord(
     adjusted.clamp(24, 108) as u8
 }
 
+pub fn chord_quality_to_target_spec(
+    root: u8,
+    quality: ChordQuality,
+) -> crate::yamaha_sty::TargetChordSpec {
+    let (yamaha_bit, third_iv, fifth_iv, seventh_iv, add9, is_major_family) = match quality {
+        ChordQuality::Major => (0, 4, 7, 11, false, true),
+        ChordQuality::Six => (1, 4, 7, 9, false, true),
+        ChordQuality::Maj7 => (2, 4, 7, 11, false, true),
+        ChordQuality::Add9 => (4, 4, 7, 11, true, true),
+        ChordQuality::Maj9 => (5, 4, 7, 11, true, true),
+        ChordQuality::SixNine => (6, 4, 7, 9, true, true),
+        ChordQuality::Aug => (7, 4, 8, 11, false, true),
+        ChordQuality::Minor => (8, 3, 7, 10, false, false),
+        ChordQuality::Min6 => (9, 3, 7, 9, false, false),
+        ChordQuality::MinAdd9 => (10, 3, 7, 10, true, false),
+        ChordQuality::Min7b5 => (11, 3, 6, 10, false, false),
+        ChordQuality::Min7 => (12, 3, 7, 10, false, false),
+        ChordQuality::Min9 => (13, 3, 7, 10, true, false),
+        ChordQuality::Min11 => (14, 3, 7, 10, true, false),
+        ChordQuality::MinMaj7 => (15, 3, 7, 11, false, false),
+        ChordQuality::Dim => (17, 3, 6, 10, false, false),
+        ChordQuality::Dim7 => (18, 3, 6, 9, false, false),
+        ChordQuality::Dom7 => (19, 4, 7, 10, false, true),
+        ChordQuality::Dom7Sus4 => (20, 5, 7, 10, false, true),
+        ChordQuality::Dom9 => (22, 4, 7, 10, true, true),
+        ChordQuality::Dom11 => (23, 4, 7, 10, true, true),
+        ChordQuality::Dom13 => (24, 4, 7, 10, true, true),
+        ChordQuality::Maj13 => (5, 4, 7, 11, true, true),
+        ChordQuality::Min13 => (13, 3, 7, 10, true, false),
+        ChordQuality::Sus4 => (32, 5, 7, 10, false, true),
+        ChordQuality::Sus2 => (33, 2, 7, 10, true, true),
+    };
+    crate::yamaha_sty::TargetChordSpec {
+        root_pc: root % 12,
+        yamaha_bit,
+        third_iv,
+        fifth_iv,
+        seventh_iv,
+        add9,
+        is_major_family,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn collect_section_events(
     sec: &RhythmSection,
     instruments: &[LoadedInstrument],
     track_volumes: &[f32; 8],
+    track_instrument_overrides: &[Option<usize>; 8],
     detected_chord_root: u8,
     detected_chord_quality: ChordQuality,
     bpm: f32,
@@ -2341,21 +2851,45 @@ fn collect_section_events(
     if win_end <= win_start {
         return;
     }
+    let target_spec = chord_quality_to_target_spec(detected_chord_root, detected_chord_quality);
     for track in &sec.tracks {
+        let slot = track.track_slot.min(7);
+        let effective_inst_idx = track_instrument_overrides[slot]
+            .filter(|&idx| idx < instruments.len())
+            .unwrap_or(track.instrument_index);
         let inst_is_drum = instruments
-            .get(track.instrument_index)
+            .get(effective_inst_idx)
             .map(|i| i.is_drumkit)
             .unwrap_or(false);
-        let is_drum = track.is_drum || inst_is_drum;
+        let effective_is_drum = track.is_drum || inst_is_drum;
         let is_bass = track.track_slot == 2;
-        let vol = track.volume * track_volumes[track.track_slot.min(7)];
+        let vol = track.volume * track_volumes[slot];
         if vol <= 0.002 {
             continue;
+        }
+        if let Some(ref rule) = track.casm_rule {
+            if !rule.is_active(target_spec) {
+                continue;
+            }
         }
         for ev in &track.events {
             let t = ev.start_tick as f64;
             if t >= win_start && t < win_end {
-                let target_note = if is_drum {
+                let target_note = if let Some(ref rule) = track.casm_rule {
+                    if effective_is_drum {
+                        ev.midi_note
+                    } else {
+                        let shifted = (ev.midi_note as i16
+                            + track.key_move as i16
+                            + (track.octave_shift * 12) as i16)
+                            .clamp(0, 127) as u8;
+                        match rule.transpose_note(shifted, target_spec, effective_is_drum, is_bass)
+                        {
+                            Some(n) => n,
+                            None => continue,
+                        }
+                    }
+                } else if effective_is_drum {
                     ev.midi_note
                 } else {
                     let shifted = (ev.midi_note as i16
@@ -2369,7 +2903,7 @@ fn collect_section_events(
                         is_bass,
                     )
                 };
-                let dur_samples = if is_drum {
+                let dur_samples = if effective_is_drum {
                     None
                 } else {
                     let dur_sec =
@@ -2377,7 +2911,7 @@ fn collect_section_events(
                     Some(((dur_sec * sr as f64) as usize).max(256))
                 };
                 out.push(PendingTrigger {
-                    inst_idx: track.instrument_index,
+                    inst_idx: effective_inst_idx,
                     midi_note: target_note,
                     velocity: ev.velocity,
                     vol,
@@ -2416,6 +2950,8 @@ pub struct MusicStudioArrangerEngine {
     pub detected_chord_label: String,
     pub chord_mode: ChordMode,
     pub track_volumes: [f32; 8],
+    pub track_instrument_overrides: [Option<usize>; 8],
+    pub user_imported_instruments: Vec<LoadedInstrument>,
     pub master_gain: f32,
     current_tick: f64,
     held_keys: [bool; 128],
@@ -2453,6 +2989,8 @@ impl MusicStudioArrangerEngine {
             detected_chord_label: "C".to_string(),
             chord_mode: ChordMode::Fingered3To7,
             track_volumes: [1.0; 8],
+            track_instrument_overrides: [None; 8],
+            user_imported_instruments: Vec::new(),
             master_gain: 0.85,
             current_tick: 0.0,
             held_keys: [false; 128],
@@ -2467,12 +3005,34 @@ impl MusicStudioArrangerEngine {
         self.package.is_some()
     }
 
-    pub fn load_package(&mut self, pkg: Arc<LoadedMusicPackage>) {
+    pub fn load_package(&mut self, mut pkg: Arc<LoadedMusicPackage>) {
         self.all_notes_off();
         self.rhythm_playing = false;
         self.current_tick = 0.0;
         self.pending_section = None;
         self.tempo_locked = false;
+        self.track_instrument_overrides = [None; 8];
+
+        let prev_user_upper1_name = self.package.as_ref().and_then(|old_pkg| {
+            old_pkg.instruments.get(self.upper1_instrument).and_then(|inst| {
+                self.user_imported_instruments
+                    .iter()
+                    .find(|u| u.name == inst.name)
+                    .map(|u| u.name.clone())
+            })
+        });
+
+        if !self.user_imported_instruments.is_empty() {
+            let mut pkg_mut = (*pkg).clone();
+            for user_inst in &self.user_imported_instruments {
+                if !pkg_mut.instruments.iter().any(|i| i.name == user_inst.name) {
+                    let mut cloned = user_inst.clone();
+                    cloned.index = pkg_mut.instruments.len();
+                    pkg_mut.instruments.push(cloned);
+                }
+            }
+            pkg = Arc::new(pkg_mut);
+        }
 
         // Auto-pick the best playable melodic lead instrument (prefer Accordion/Bandoneon/Sanfona/Lead/Guitar/Strings with samples)
         let mut playable: Vec<&LoadedInstrument> = pkg
@@ -2495,7 +3055,10 @@ impl MusicStudioArrangerEngine {
             let effective_gain = inst.volume * max_zone_gain;
             let is_very_quiet = effective_gain < 0.20;
             let is_base = up.contains("BASE");
-            let tier = if up.contains("BANDONEON") || up.contains("ACORD") || up.contains("SANFONA")
+            let tier = if up.contains("BANDONEON")
+                || up.contains("ACCORD")
+                || up.contains("ACORD")
+                || up.contains("SANFONA")
             {
                 0
             } else if up.contains("PIANO") || up.contains("LEAD") || up.contains("ORGAN") {
@@ -2512,7 +3075,31 @@ impl MusicStudioArrangerEngine {
             (is_very_quiet, is_base, tier)
         });
 
-        self.upper1_instrument = playable.first().map(|i| i.index).unwrap_or(0);
+        let preserved_user_upper1 = prev_user_upper1_name.and_then(|uname| {
+            pkg.instruments
+                .iter()
+                .find(|i| {
+                    i.name == uname
+                        && !i.is_drumkit
+                        && i.zones.iter().any(|z| !z.pcm_l.is_empty())
+                })
+                .map(|i| i.index)
+        });
+        let sty_ots_upper1 = if pkg.source_format == "sty" || pkg.source_format == "sty_pack" {
+            pkg.ots_presets.first().and_then(|ots| {
+                pkg.instruments
+                    .get(ots.upper1_instrument)
+                    .filter(|i| !i.is_drumkit && i.zones.iter().any(|z| !z.pcm_l.is_empty()))
+                    .map(|i| i.index)
+            })
+        } else {
+            None
+        };
+
+        self.upper1_instrument = preserved_user_upper1
+            .or(sty_ots_upper1)
+            .or_else(|| playable.first().map(|i| i.index))
+            .unwrap_or(0);
         self.upper2_instrument = None;
         // Default Lower voice to None (Chord Scan only, silent left-hand keys unless user assigns a timbre)
         self.lower_instrument = None;
@@ -2544,11 +3131,19 @@ impl MusicStudioArrangerEngine {
             .active_section_ref()
             .map(|s| s.length_ticks.max(1) as f64)
             .unwrap_or(4000.0);
+        let ots_presets = pkg
+            .styles
+            .get(self.active_style_index)
+            .filter(|st| !st.ots_presets.is_empty())
+            .map(|st| st.ots_presets.clone())
+            .unwrap_or_else(|| pkg.ots_presets.clone());
         MusicPackageSummary {
             loaded: true,
             file_name: pkg.file_name.clone(),
             file_path: pkg.file_path.clone(),
             version: pkg.version.clone(),
+            source_format: pkg.source_format.clone(),
+            soundfont_name: pkg.soundfont_name.clone(),
             instruments: pkg
                 .instruments
                 .iter()
@@ -2592,19 +3187,35 @@ impl MusicStudioArrangerEngine {
             detected_chord: self.detected_chord_label.clone(),
             chord_mode: self.chord_mode.as_str().to_string(),
             track_volumes: self.track_volumes,
+            track_instruments: self.track_instrument_overrides,
+            ots_presets,
             beat_position: (self.current_tick / sec_len).clamp(0.0, 1.0) as f32,
         }
     }
 
     pub fn sync_dynamic_summary(&self, dst: &mut MusicPackageSummary) {
-        if self.package.is_none() {
+        let Some(ref pkg) = self.package else {
             return;
-        }
+        };
         let sec_len = self
             .active_section_ref()
             .map(|s| s.length_ticks.max(1) as f64)
             .unwrap_or(4000.0);
         dst.loaded = true;
+        if dst.source_format != pkg.source_format {
+            dst.source_format.clear();
+            dst.source_format.push_str(&pkg.source_format);
+        }
+        match (&mut dst.soundfont_name, &pkg.soundfont_name) {
+            (Some(d), Some(s)) => {
+                if d != s {
+                    d.clear();
+                    d.push_str(s);
+                }
+            }
+            (None, None) => {}
+            (slot, src) => *slot = src.clone(),
+        }
         dst.active_style_index = self.active_style_index;
         if dst.active_section != self.active_section {
             dst.active_section.clear();
@@ -2650,6 +3261,7 @@ impl MusicStudioArrangerEngine {
             dst.chord_mode.push_str(cm_str);
         }
         dst.track_volumes = self.track_volumes;
+        dst.track_instruments = self.track_instrument_overrides;
         dst.beat_position = (self.current_tick / sec_len).clamp(0.0, 1.0) as f32;
     }
 
@@ -2730,29 +3342,96 @@ impl MusicStudioArrangerEngine {
         mut inst: LoadedInstrument,
         assign_upper1: bool,
     ) -> usize {
+        if let Some(existing) = self
+            .user_imported_instruments
+            .iter_mut()
+            .find(|u| u.name == inst.name)
+        {
+            *existing = inst.clone();
+        } else {
+            self.user_imported_instruments.push(inst.clone());
+        }
+
         let mut next_pkg = match self.package.as_ref() {
             Some(pkg) => (**pkg).clone(),
             None => LoadedMusicPackage {
                 file_name: "Custom Instruments".to_string(),
                 file_path: "custom://instruments".to_string(),
                 version: "1.4".to_string(),
+                source_format: "music".to_string(),
+                soundfont_name: None,
                 instruments: Vec::new(),
                 styles: Vec::new(),
+                ots_presets: Vec::new(),
+                source_paths: Vec::new(),
             },
         };
-        let new_idx = next_pkg.instruments.len();
-        inst.index = new_idx;
-        next_pkg.instruments.push(inst);
+        let target_idx = if let Some(existing_idx) = next_pkg
+            .instruments
+            .iter()
+            .position(|i| i.name == inst.name)
+        {
+            inst.index = existing_idx;
+            next_pkg.instruments[existing_idx] = inst;
+            existing_idx
+        } else {
+            let new_idx = next_pkg.instruments.len();
+            inst.index = new_idx;
+            next_pkg.instruments.push(inst);
+            new_idx
+        };
         self.package = Some(Arc::new(next_pkg));
         if assign_upper1 {
-            self.upper1_instrument = new_idx;
+            self.upper1_instrument = target_idx;
             for v in &mut self.voices {
                 if !v.from_rhythm {
                     v.releasing = true;
                 }
             }
         }
-        new_idx
+        target_idx
+    }
+
+    pub fn set_track_instrument(&mut self, track_slot: usize, instrument_index: Option<usize>) {
+        if track_slot >= 8 {
+            return;
+        }
+        let max_idx = self
+            .package
+            .as_ref()
+            .map(|p| p.instruments.len())
+            .unwrap_or(0);
+        self.track_instrument_overrides[track_slot] = instrument_index.filter(|&i| i < max_idx);
+    }
+
+    pub fn apply_ots(&mut self, ots_index: usize) {
+        let Some(ref pkg) = self.package else {
+            return;
+        };
+        let ots_list = pkg
+            .styles
+            .get(self.active_style_index)
+            .filter(|st| !st.ots_presets.is_empty())
+            .map(|st| st.ots_presets.as_slice())
+            .unwrap_or(pkg.ots_presets.as_slice());
+        let Some(ots) = ots_list
+            .iter()
+            .find(|p| p.index == ots_index)
+            .or_else(|| ots_list.get(ots_index))
+        else {
+            return;
+        };
+        let max_idx = pkg.instruments.len();
+        if ots.upper1_instrument < max_idx {
+            self.upper1_instrument = ots.upper1_instrument;
+        }
+        self.upper2_instrument = ots.upper2_instrument.filter(|&i| i < max_idx);
+        self.lower_instrument = ots.lower_instrument.filter(|&i| i < max_idx);
+        for v in &mut self.voices {
+            if !v.from_rhythm {
+                v.releasing = true;
+            }
+        }
     }
 
     pub fn set_chord(&mut self, root_pc: u8, quality: &str) {
@@ -2883,16 +3562,64 @@ impl MusicStudioArrangerEngine {
         let zone = if inst.is_drumkit {
             inst.zones
                 .iter()
-                .find(|z| !z.pcm_l.is_empty() && z.root_key == midi_note)
+                .find(|z| {
+                    !z.pcm_l.is_empty()
+                        && z.root_key == midi_note
+                        && velocity >= z.vel_low
+                        && velocity <= z.vel_high
+                })
+                .or_else(|| {
+                    inst.zones.iter().find(|z| {
+                        !z.pcm_l.is_empty()
+                            && midi_note >= z.key_low
+                            && midi_note <= z.key_high
+                            && velocity >= z.vel_low
+                            && velocity <= z.vel_high
+                    })
+                })
+                .or_else(|| {
+                    inst.zones
+                        .iter()
+                        .find(|z| !z.pcm_l.is_empty() && z.root_key == midi_note)
+                })
+                .or_else(|| {
+                    inst.zones.iter().find(|z| {
+                        !z.pcm_l.is_empty() && midi_note >= z.key_low && midi_note <= z.key_high
+                    })
+                })
         } else {
             inst.zones
                 .iter()
-                .find(|z| !z.pcm_l.is_empty() && midi_note >= z.key_low && midi_note <= z.key_high)
+                .find(|z| {
+                    !z.pcm_l.is_empty()
+                        && z.root_key == midi_note
+                        && velocity >= z.vel_low
+                        && velocity <= z.vel_high
+                })
+                .or_else(|| {
+                    inst.zones.iter().find(|z| {
+                        !z.pcm_l.is_empty()
+                            && midi_note >= z.key_low
+                            && midi_note <= z.key_high
+                            && velocity >= z.vel_low
+                            && velocity <= z.vel_high
+                    })
+                })
+                .or_else(|| {
+                    inst.zones
+                        .iter()
+                        .find(|z| !z.pcm_l.is_empty() && z.root_key == midi_note)
+                })
+                .or_else(|| {
+                    inst.zones.iter().find(|z| {
+                        !z.pcm_l.is_empty() && midi_note >= z.key_low && midi_note <= z.key_high
+                    })
+                })
                 .or_else(|| {
                     inst.zones
                         .iter()
                         .filter(|z| !z.pcm_l.is_empty())
-                        .min_by_key(|z| (z.root_key as i16 - midi_note as i16).abs())
+                        .min_by_key(|z| z.root_key.abs_diff(midi_note))
                 })
         };
         let Some(z) = zone else {
@@ -3129,6 +3856,7 @@ impl MusicStudioArrangerEngine {
                                 sec,
                                 &pkg.instruments,
                                 &self.track_volumes,
+                                &self.track_instrument_overrides,
                                 self.detected_chord_root,
                                 self.detected_chord_quality,
                                 self.bpm,
@@ -3177,6 +3905,7 @@ impl MusicStudioArrangerEngine {
                                     next_sec_ref,
                                     &pkg.instruments,
                                     &self.track_volumes,
+                                    &self.track_instrument_overrides,
                                     self.detected_chord_root,
                                     self.detected_chord_quality,
                                     self.bpm,
@@ -3191,6 +3920,7 @@ impl MusicStudioArrangerEngine {
                                 sec,
                                 &pkg.instruments,
                                 &self.track_volumes,
+                                &self.track_instrument_overrides,
                                 self.detected_chord_root,
                                 self.detected_chord_quality,
                                 self.bpm,
@@ -3674,6 +4404,8 @@ mod tests {
             file_name: "clock_test.Music".to_string(),
             file_path: "test://clock".to_string(),
             version: "1.4.4".to_string(),
+            source_format: "music".to_string(),
+            soundfont_name: None,
             instruments: vec![LoadedInstrument {
                 index: 0,
                 name: "Click".to_string(),
@@ -3685,6 +4417,8 @@ mod tests {
                     root_key: 36,
                     key_low: 36,
                     key_high: 36,
+                    vel_low: 0,
+                    vel_high: 127,
                     name: "Kick".to_string(),
                     sample_rate: 48000,
                     channels: 1,
@@ -3721,6 +4455,7 @@ mod tests {
                         key_move: 0,
                         octave_shift: 0,
                         is_drum: true,
+                        casm_rule: None,
                         events: vec![RhythmNoteEvent {
                             midi_note: 36,
                             velocity: 100,
@@ -3729,7 +4464,10 @@ mod tests {
                         }],
                     }],
                 }],
+                ots_presets: Vec::new(),
             }],
+            ots_presets: Vec::new(),
+            source_paths: Vec::new(),
         });
 
         let mut engine = MusicStudioArrangerEngine::new(48000.0);
@@ -4048,6 +4786,8 @@ mod tests {
                     root_key: 42,
                     key_low: 42,
                     key_high: 42,
+                    vel_low: 0,
+                    vel_high: 127,
                     name: "CHH".to_string(),
                     sample_rate: 48000,
                     channels: 1,
@@ -4066,6 +4806,8 @@ mod tests {
                     root_key: 46,
                     key_low: 46,
                     key_high: 46,
+                    vel_low: 0,
+                    vel_high: 127,
                     name: "OHH".to_string(),
                     sample_rate: 48000,
                     channels: 1,
@@ -4084,6 +4826,8 @@ mod tests {
                     root_key: 80,
                     key_low: 80,
                     key_high: 80,
+                    vel_low: 0,
+                    vel_high: 127,
                     name: "MuteTri".to_string(),
                     sample_rate: 48000,
                     channels: 1,
@@ -4102,6 +4846,8 @@ mod tests {
                     root_key: 81,
                     key_low: 81,
                     key_high: 81,
+                    vel_low: 0,
+                    vel_high: 127,
                     name: "OpenTri".to_string(),
                     sample_rate: 48000,
                     channels: 1,
@@ -4122,8 +4868,12 @@ mod tests {
             file_name: "choke.Music".to_string(),
             file_path: "test://choke".to_string(),
             version: "1.4.2".to_string(),
+            source_format: "music".to_string(),
+            soundfont_name: None,
             instruments: vec![kit],
             styles: Vec::new(),
+            ots_presets: Vec::new(),
+            source_paths: Vec::new(),
         }));
 
         // Open triangle 81 followed by Mute triangle 80 chokes 81 cleanly
@@ -4173,5 +4923,360 @@ mod tests {
             }
         }
         assert!(tested > 0, "expected .Instrument files in {}", dir.display());
+    }
+
+    #[test]
+    fn test_chord_quality_to_target_spec_and_velocity_zone_selection() {
+        let all_qualities = [
+            ChordQuality::Major,
+            ChordQuality::Minor,
+            ChordQuality::Dom7,
+            ChordQuality::Min7,
+            ChordQuality::Maj7,
+            ChordQuality::MinMaj7,
+            ChordQuality::Dim,
+            ChordQuality::Dim7,
+            ChordQuality::Min7b5,
+            ChordQuality::Aug,
+            ChordQuality::Sus2,
+            ChordQuality::Sus4,
+            ChordQuality::Dom7Sus4,
+            ChordQuality::Six,
+            ChordQuality::Min6,
+            ChordQuality::SixNine,
+            ChordQuality::Add9,
+            ChordQuality::MinAdd9,
+            ChordQuality::Dom9,
+            ChordQuality::Maj9,
+            ChordQuality::Min9,
+            ChordQuality::Dom11,
+            ChordQuality::Min11,
+            ChordQuality::Dom13,
+            ChordQuality::Maj13,
+            ChordQuality::Min13,
+        ];
+        for (idx, q) in all_qualities.iter().enumerate() {
+            let spec = chord_quality_to_target_spec((idx as u8) + 12, *q);
+            assert_eq!(spec.root_pc, (idx as u8) % 12);
+            assert!(spec.yamaha_bit <= 33, "{:?} bit out of range", q);
+        }
+
+        // Verify velocity layer routing in trigger_instrument_note
+        let soft_pcm = Arc::new(vec![0.15_f32; 2048]);
+        let loud_pcm = Arc::new(vec![0.80_f32; 2048]);
+        let vel_inst = LoadedInstrument {
+            index: 0,
+            name: "VelSplit".to_string(),
+            volume: 1.0,
+            pan: 0,
+            inst_type: 0,
+            is_drumkit: false,
+            zones: vec![
+                SampleZone {
+                    root_key: 60,
+                    key_low: 48,
+                    key_high: 72,
+                    vel_low: 0,
+                    vel_high: 63,
+                    name: "Soft".to_string(),
+                    sample_rate: 48000,
+                    channels: 1,
+                    loop_start: 0,
+                    loop_end: 0,
+                    loop_enabled: false,
+                    loop_mode: 0,
+                    gain: 1.0,
+                    pan: 0,
+                    fine_tune: 0,
+                    pool_sid: 0,
+                    pcm_l: Arc::clone(&soft_pcm),
+                    pcm_r: Arc::clone(&soft_pcm),
+                },
+                SampleZone {
+                    root_key: 60,
+                    key_low: 48,
+                    key_high: 72,
+                    vel_low: 64,
+                    vel_high: 127,
+                    name: "Loud".to_string(),
+                    sample_rate: 48000,
+                    channels: 1,
+                    loop_start: 0,
+                    loop_end: 0,
+                    loop_enabled: false,
+                    loop_mode: 0,
+                    gain: 1.0,
+                    pan: 0,
+                    fine_tune: 0,
+                    pool_sid: 0,
+                    pcm_l: Arc::clone(&loud_pcm),
+                    pcm_r: Arc::clone(&loud_pcm),
+                },
+            ],
+        };
+        let mut engine = MusicStudioArrangerEngine::new(48000.0);
+        engine.package = Some(Arc::new(LoadedMusicPackage {
+            file_name: "vel.Music".to_string(),
+            file_path: "test://vel".to_string(),
+            version: "1.4".to_string(),
+            source_format: "music".to_string(),
+            soundfont_name: None,
+            instruments: vec![vel_inst],
+            styles: Vec::new(),
+            ots_presets: Vec::new(),
+            source_paths: Vec::new(),
+        }));
+        engine.trigger_instrument_note(0, 62, 62, 40, 1.0, 0, 0, false, None);
+        assert!(Arc::ptr_eq(&engine.voices[0].pcm_l, &soft_pcm));
+        engine.voices.clear();
+        engine.trigger_instrument_note(0, 62, 62, 110, 1.0, 0, 0, false, None);
+        assert!(Arc::ptr_eq(&engine.voices[0].pcm_l, &loud_pcm));
+    }
+
+    #[test]
+    fn test_sty_six_real_styles_parse_load_and_render_clean_audio() {
+        if crate::soundfont::find_default_soundfont().is_none() {
+            return;
+        }
+        let kb = Path::new(USER_DOCUMENTS_KEYBOARD_DIR);
+        if !kb.exists() {
+            return;
+        }
+        let sty_paths = [
+            kb.join("Ritmos PSR/O Som do Povo/O Som do Povo.S837.STY"),
+            kb.join("Washington Brasileiro e Forro Boys/Forro Boys/(35) FORRÓ BOYS.sty"),
+            kb.join("Ritmos PSR/Calcinha Preta/CALCINHAPRETA GB.sty"),
+            kb.join("Ritmos PSR/Zé Vaqueiro/01-ZE VAQUEIRO.sty"),
+            kb.join("Forro_novos_2026-11-08/Mastruz/Mastruz.STY"),
+            kb.join("Forro_novos_2026-11-08/Forro_bandas/CALPRETA.STY"),
+        ];
+
+        let mut l = vec![0.0_f32; 4096];
+        let mut r = vec![0.0_f32; 4096];
+
+        for (idx, p) in sty_paths.iter().enumerate() {
+            if !p.exists() {
+                continue;
+            }
+            let pkg = Arc::new(
+                build_sty_package(std::slice::from_ref(p), None)
+                    .unwrap_or_else(|e| panic!("build_sty_package {}: {}", p.display(), e)),
+            );
+            assert_eq!(pkg.source_format, "sty");
+            assert!(pkg.soundfont_name.is_some());
+            assert!(!pkg.instruments.is_empty());
+            assert_eq!(pkg.styles.len(), 1);
+
+            if idx == 2 {
+                // Verify CALCINHAPRETA GB.sty CASM chord_mute: Major activates src=11 & mutes src=7,
+                // Minor activates src=7 & mutes src=11.
+                let var1 = pkg.styles[0]
+                    .sections
+                    .iter()
+                    .find(|s| s.name == "Variation 1")
+                    .expect("CALCINHAPRETA Variation 1");
+                let slot3_tracks: Vec<&RhythmTrack> = var1
+                    .tracks
+                    .iter()
+                    .filter(|t| t.track_slot == 3 && t.casm_rule.is_some())
+                    .collect();
+                let mut maj_track = (*slot3_tracks
+                    .iter()
+                    .find(|t| t.casm_rule.as_ref().unwrap().src_ch == 11)
+                    .expect("src=11 track"))
+                .clone();
+                let mut min_track = (*slot3_tracks
+                    .iter()
+                    .find(|t| t.casm_rule.as_ref().unwrap().src_ch == 7)
+                    .expect("src=7 track"))
+                .clone();
+                maj_track.instrument_index = 0;
+                min_track.instrument_index = 1;
+                let probe_sec = RhythmSection {
+                    id: var1.id,
+                    name: var1.name.clone(),
+                    length_ticks: var1.length_ticks,
+                    is_loop: true,
+                    jump_to: 0,
+                    tracks: vec![maj_track, min_track],
+                };
+                let mut maj_triggers = Vec::new();
+                collect_section_events(
+                    &probe_sec,
+                    &pkg.instruments,
+                    &[1.0; 8],
+                    &[None; 8],
+                    0,
+                    ChordQuality::Major,
+                    pkg.styles[0].bpm,
+                    48000.0,
+                    0.0,
+                    var1.length_ticks as f64,
+                    &mut maj_triggers,
+                );
+                assert!(!maj_triggers.is_empty());
+                assert!(maj_triggers.iter().all(|t| t.inst_idx == 0));
+
+                let mut min_triggers = Vec::new();
+                collect_section_events(
+                    &probe_sec,
+                    &pkg.instruments,
+                    &[1.0; 8],
+                    &[None; 8],
+                    0,
+                    ChordQuality::Minor,
+                    pkg.styles[0].bpm,
+                    48000.0,
+                    0.0,
+                    var1.length_ticks as f64,
+                    &mut min_triggers,
+                );
+                assert!(!min_triggers.is_empty());
+                assert!(min_triggers.iter().all(|t| t.inst_idx == 1));
+            }
+
+            let mut engine = MusicStudioArrangerEngine::new(48000.0);
+            engine.load_package(Arc::clone(&pkg));
+            engine.set_transport(true, None, None);
+
+            let mut peak = 0.0_f32;
+            for _ in 0..10 {
+                engine.process_block(&mut l, &mut r);
+                for (&sl, &sr) in l.iter().zip(r.iter()) {
+                    assert!(sl.is_finite() && sr.is_finite());
+                    peak = peak.max(sl.abs()).max(sr.abs());
+                }
+            }
+            assert!(
+                peak > 0.02 && peak <= 1.0,
+                "{}: expected 0.02 < peak <= 1.0, got {}",
+                p.display(),
+                peak
+            );
+        }
+    }
+
+    #[test]
+    fn test_sty_multi_file_pack_and_style_switching() {
+        if crate::soundfont::find_default_soundfont().is_none() {
+            return;
+        }
+        let kb = Path::new(USER_DOCUMENTS_KEYBOARD_DIR);
+        if !kb.exists() {
+            return;
+        }
+        let candidate_paths = vec![
+            kb.join("Ritmos PSR/O Som do Povo/O Som do Povo.S837.STY"),
+            kb.join("Washington Brasileiro e Forro Boys/Forro Boys/(35) FORRÓ BOYS.sty"),
+            kb.join("Ritmos PSR/Calcinha Preta/CALCINHAPRETA GB.sty"),
+            kb.join("Ritmos PSR/Zé Vaqueiro/01-ZE VAQUEIRO.sty"),
+            kb.join("Forro_novos_2026-11-08/Forro_bandas/CALPRETA.STY"),
+        ];
+        if !candidate_paths.iter().all(|p| p.exists()) {
+            return;
+        }
+
+        let pkg = Arc::new(build_sty_package(&candidate_paths, None).expect("5-style pack"));
+        assert_eq!(pkg.source_format, "sty_pack");
+        assert_eq!(pkg.styles.len(), 5);
+        assert!(pkg.source_paths.len() == 5);
+
+        let mut engine = MusicStudioArrangerEngine::new(48000.0);
+        engine.load_package(Arc::clone(&pkg));
+        assert_eq!(engine.summary().source_format, "sty_pack");
+
+        let mut l = vec![0.0_f32; 4096];
+        let mut r = vec![0.0_f32; 4096];
+        for style_idx in 0..5 {
+            engine.set_style(style_idx);
+            assert!((engine.bpm - pkg.styles[style_idx].bpm).abs() < 0.01);
+            engine.set_transport(true, None, None);
+            let mut peak = 0.0_f32;
+            for _ in 0..8 {
+                engine.process_block(&mut l, &mut r);
+                peak = l.iter().chain(r.iter()).fold(peak, |m, &s| m.max(s.abs()));
+            }
+            assert!(
+                peak > 0.02 && peak <= 1.0,
+                "pack style {} failed clean audio (peak={})",
+                style_idx,
+                peak
+            );
+            engine.set_transport(false, None, None);
+        }
+    }
+
+    #[test]
+    fn test_sty_import_external_instrument_and_track_override() {
+        if crate::soundfont::find_default_soundfont().is_none() {
+            return;
+        }
+        let sty_a = Path::new(USER_DOCUMENTS_KEYBOARD_DIR)
+            .join("Ritmos PSR/O Som do Povo/O Som do Povo.S837.STY");
+        let sty_b = Path::new(USER_DOCUMENTS_KEYBOARD_DIR)
+            .join("Ritmos PSR/Zé Vaqueiro/01-ZE VAQUEIRO.sty");
+        let inst_dir = Path::new(USER_DOCUMENTS_INSTRUMENTS_DIR).join("Sanfonas/Instrument_AddMore");
+        if !sty_a.exists() || !sty_b.exists() || !inst_dir.exists() {
+            return;
+        }
+        let inst_path = std::fs::read_dir(&inst_dir)
+            .ok()
+            .and_then(|rd| {
+                rd.flatten()
+                    .map(|e| e.path())
+                    .find(|p| {
+                        p.extension()
+                            .and_then(|e| e.to_str())
+                            .map(|s| s.eq_ignore_ascii_case("instrument"))
+                            .unwrap_or(false)
+                    })
+            });
+        let Some(inst_path) = inst_path else {
+            return;
+        };
+
+        let pkg_a = Arc::new(build_sty_package(&[sty_a], None).expect("build STY A"));
+        let pkg_b = Arc::new(build_sty_package(&[sty_b], None).expect("build STY B"));
+        let imported = parse_instrument_file(&inst_path, 0).expect("parse .Instrument");
+        let imported_name = imported.name.clone();
+
+        let mut engine = MusicStudioArrangerEngine::new(48000.0);
+        engine.load_package(pkg_a);
+        let imp_idx = engine.add_imported_instrument(imported, true);
+        assert_eq!(engine.upper1_instrument, imp_idx);
+
+        // Switching to STY B must retain user_imported_instruments and reset overrides
+        engine.set_track_instrument(3, Some(imp_idx));
+        assert_eq!(engine.track_instrument_overrides[3], Some(imp_idx));
+        engine.load_package(pkg_b);
+        assert_eq!(engine.track_instrument_overrides, [None; 8]);
+        let retained_idx = engine
+            .package
+            .as_ref()
+            .unwrap()
+            .instruments
+            .iter()
+            .find(|i| i.name == imported_name)
+            .map(|i| i.index)
+            .expect("user imported instrument must persist across STY package switches");
+
+        engine.set_track_instrument(3, Some(retained_idx));
+        assert_eq!(engine.summary().track_instruments[3], Some(retained_idx));
+
+        engine.set_transport(true, None, None);
+        engine.note_on(64, 110);
+        let mut l = vec![0.0_f32; 4096];
+        let mut r = vec![0.0_f32; 4096];
+        let mut peak = 0.0_f32;
+        for _ in 0..8 {
+            engine.process_block(&mut l, &mut r);
+            peak = l.iter().chain(r.iter()).fold(peak, |m, &s| m.max(s.abs()));
+        }
+        assert!(peak > 0.02 && peak <= 1.0, "override+solo peak={}", peak);
+
+        // Library scanner must find both .Music and .STY entries cleanly
+        let all_entries = list_all_music_packages();
+        assert!(all_entries.iter().any(|e| e.format == "music"));
+        assert!(all_entries.iter().any(|e| e.format == "sty"));
     }
 }
