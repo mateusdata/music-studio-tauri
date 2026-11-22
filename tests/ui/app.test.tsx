@@ -172,7 +172,7 @@ function buildMockArrangerState(overrides?: Partial<MusicPackageSummary>): Music
     upper1_instrument: 7,
     upper2_instrument: null,
     lower_instrument: null,
-    split_key: 53,
+    split_key: 54,
     split_enabled: true,
     chord_scan_lower: true,
     chord_scan_upper: false,
@@ -224,8 +224,12 @@ describe("Music Studio Tauri Arranger App UI", () => {
     expect(keyButtons).toHaveLength(61);
 
     expect(within(keyboard).getByRole("button", { name: "Key F3" })).toHaveClass("split-chord-zone");
-    expect(within(keyboard).getByRole("button", { name: "Key G3" })).toHaveClass("split-point-edge");
+    expect(within(keyboard).getByRole("button", { name: "Key F#3" })).toHaveClass("split-chord-zone");
+    const keyG3 = within(keyboard).getByRole("button", { name: "Key G3" });
+    expect(keyG3).not.toHaveClass("split-chord-zone");
+    expect(keyG3).toHaveClass("split-point-edge");
     expect(within(keyboard).getByTestId("split-divider-line")).toBeInTheDocument();
+    expect(screen.getByLabelText("Audio Buffer Size")).toHaveValue("1024");
     for (const oct of [3, 4, 5, 6, 7, 8]) {
       expect(keyboard.querySelector(`.key-oct-${oct}`)).toBeInTheDocument();
     }

@@ -85,7 +85,7 @@ impl Default for MusicPackageSummary {
             upper1_instrument: 0,
             upper2_instrument: None,
             lower_instrument: None,
-            split_key: 53,
+            split_key: 54,
             split_enabled: true,
             chord_scan_lower: true,
             chord_scan_upper: false,
@@ -2032,7 +2032,7 @@ impl MusicStudioArrangerEngine {
             upper1_instrument: 0,
             upper2_instrument: None,
             lower_instrument: None,
-            split_key: 53,
+            split_key: 54,
             split_enabled: true,
             chord_scan_lower: true,
             chord_scan_upper: false,
@@ -2970,16 +2970,27 @@ mod tests {
         let mut engine = MusicStudioArrangerEngine::new(48000.0);
         engine.load_package(pkg);
         assert!(engine.has_loaded_package());
-        assert_eq!(engine.split_key, 53);
+        assert_eq!(engine.split_key, 54);
         assert!(engine.lower_instrument.is_none());
 
-        // Trigger left-hand Am chord below split_key=53 -> changes chord + sync-starts rhythm, NO Lower voice triggered
+        // Trigger left-hand Am chord below/at split_key=54 -> changes chord + sync-starts rhythm, NO Lower voice triggered
         engine.note_on(45, 110); // A2
         engine.note_on(48, 108); // C3
         engine.note_on(52, 105); // E3 -> Am triad
         assert!(engine.rhythm_playing);
         assert_eq!(engine.detected_chord_label, "Am");
         assert_eq!(engine.active_voice_count(), 0);
+
+        // Pressing F#3 (54) stays in the left-hand chord/lower zone (no Upper1 solo voice triggered)
+        engine.note_on(54, 105);
+        assert_eq!(engine.active_voice_count(), 0);
+        engine.note_off(54, false);
+
+        // Pressing G3 (55) starts Upper1 solo voice
+        engine.note_on(55, 105);
+        assert!(engine.active_voice_count() > 0);
+        engine.note_off(55, false);
+        engine.voices.clear();
 
         // Toggle SCAN UP and play upper triad (F4, A4, C5) -> should update chord to F
         engine.set_keyboard_voice("upper1", None, None, None, None, Some(true), Some(1), None);

@@ -304,8 +304,8 @@ export const VelocityCurveEditor: React.FC<VelocityCurveEditorProps> = ({
         >
           <defs>
             <linearGradient id="velCurveFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#e29d38" stopOpacity="0.34" />
-              <stop offset="100%" stopColor="#e29d38" stopOpacity="0.02" />
+              <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.34" />
+              <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.02" />
             </linearGradient>
           </defs>
 
@@ -375,7 +375,7 @@ export const VelocityCurveEditor: React.FC<VelocityCurveEditorProps> = ({
           <polyline
             points={polylineStr}
             fill="none"
-            stroke="#e29d38"
+            stroke="#60a5fa"
             strokeWidth="2.2"
             strokeLinejoin="round"
           />
@@ -409,7 +409,7 @@ export const VelocityCurveEditor: React.FC<VelocityCurveEditorProps> = ({
                 cx={toSvgX(x)}
                 cy={toSvgY(y)}
                 r={isSelected ? 6 : 4.5}
-                fill={isSelected ? "#ffd188" : "#e29d38"}
+                fill={isSelected ? "#93c5fd" : "#3b82f6"}
                 stroke="#0b0e14"
                 strokeWidth="1.6"
                 style={{ cursor: "grab" }}

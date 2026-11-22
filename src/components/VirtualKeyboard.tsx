@@ -79,7 +79,7 @@ function noteLabel(midi: number): string {
 export const VirtualKeyboard: React.FC<VirtualKeyboardProps> = ({
   activeNotes,
   extendedRange,
-  splitKey = 53,
+  splitKey = 54,
   splitEnabled = false,
   onNoteOn,
   onNoteOff,

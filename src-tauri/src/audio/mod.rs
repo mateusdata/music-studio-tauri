@@ -493,8 +493,8 @@ impl AudioEngineManager {
             presets: RwLock::new(presets),
             telemetry: RwLock::new(EngineTelemetry {
                 sample_rate: 48000,
-                buffer_size: 256,
-                latency_ms: 5.33,
+                buffer_size: 1024,
+                latency_ms: 21.33,
                 active_voices: 0,
                 max_polyphony: MAX_POLYPHONY,
                 cpu_load_pct: 0.0,
@@ -531,7 +531,7 @@ impl AudioEngineManager {
         });
 
         let (reconfigure_tx, reconfigure_rx) = mpsc::channel::<u32>();
-        let requested_buffer_size = Arc::new(AtomicU32::new(256));
+        let requested_buffer_size = Arc::new(AtomicU32::new(1024));
 
         // Start real-time cpal audio output or fallback headless DSP thread on an audio supervisor thread
         let stream_shared = Arc::clone(&shared);
@@ -1638,8 +1638,8 @@ mod tests {
             presets: RwLock::new(presets),
             telemetry: RwLock::new(EngineTelemetry {
                 sample_rate: 48000,
-                buffer_size: 256,
-                latency_ms: 5.33,
+                buffer_size: 1024,
+                latency_ms: 21.33,
                 active_voices: 0,
                 max_polyphony: MAX_POLYPHONY,
                 cpu_load_pct: 0.0,

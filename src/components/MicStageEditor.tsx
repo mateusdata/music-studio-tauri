@@ -14,7 +14,7 @@ const STAGE_PAD = { left: 26, right: 26, top: 22, bottom: 26 };
 const PLOT_W = STAGE_W - STAGE_PAD.left - STAGE_PAD.right;
 const PLOT_H = STAGE_H - STAGE_PAD.top - STAGE_PAD.bottom;
 
-const MIC_COLORS = ["#48b8d0", "#e29d38", "#44c082"];
+const MIC_COLORS = ["#48b8d0", "#3b82f6", "#44c082"];
 
 type DragTarget =
   | { kind: "mic"; index: number }
@@ -186,14 +186,14 @@ export const MicStageEditor: React.FC<MicStageEditorProps> = ({
                 <path
                   d={`M ${pxRight - 4} ${pyKeyBack - 8} Q ${pxRight + 32 * lidRatio} ${normToSvgY(0.52)} ${pxMidRight + 16} ${pyTail - 16}`}
                   fill="none"
-                  stroke="#e29d38"
+                  stroke="#60a5fa"
                   strokeWidth="1.4"
                   strokeDasharray="4 3"
                 />
                 <path
                   d={`M ${pxRight + 8} ${pyKeyBack - 4} Q ${pxRight + 54 * lidRatio} ${normToSvgY(0.54)} ${pxMidRight + 32} ${pyTail - 24}`}
                   fill="none"
-                  stroke="#e29d38"
+                  stroke="#60a5fa"
                   strokeWidth="1"
                   strokeDasharray="3 4"
                 />
@@ -264,7 +264,7 @@ export const MicStageEditor: React.FC<MicStageEditorProps> = ({
               y1={normToSvgY(0.52)}
               x2={pxLeft + 6 + (pxRight - pxLeft) * (0.2 + lidRatio * 0.85)}
               y2={normToSvgY(0.52 - lidRatio * 0.06)}
-              stroke="#e29d38"
+              stroke="#60a5fa"
               strokeWidth="2.2"
               strokeLinecap="round"
             />

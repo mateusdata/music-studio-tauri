@@ -56,7 +56,8 @@ const TRACK_LABELS = ["Drum", "Perc", "Bass", "Acc 1", "Acc 2", "Acc 3", "Acc 4"
 const SPLIT_POINTS: { value: string; label: string }[] = [
   { value: "41", label: "1º Fá (F2 • MIDI 41)" },
   { value: "48", label: "Dó 3 (C3 • MIDI 48)" },
-  { value: "53", label: "2º Fá (F3 • Padrão)" },
+  { value: "53", label: "2º Fá (F3 • MIDI 53)" },
+  { value: "54", label: "2º Fá# (F#3 • Padrão)" },
   { value: "55", label: "Sol 3 (G3 • MIDI 55)" },
   { value: "59", label: "Si 3 (B3 • MIDI 59)" },
   { value: "60", label: "Dó 4 (C4 • MIDI 60)" },
@@ -106,7 +107,7 @@ function createPreviewArrangerState(): MusicPackageSummary {
     upper1_instrument: 7,
     upper2_instrument: null,
     lower_instrument: null,
-    split_key: 53,
+    split_key: 54,
     split_enabled: true,
     chord_scan_lower: true,
     chord_scan_upper: false,
@@ -167,7 +168,7 @@ export function App() {
           upper1_instrument: 0,
           upper2_instrument: null,
           lower_instrument: null,
-          split_key: 53,
+          split_key: 54,
           split_enabled: true,
           chord_scan_lower: true,
           chord_scan_upper: false,
@@ -193,7 +194,7 @@ export function App() {
   const [selectedMidiPort, setSelectedMidiPort] = useState<string>("");
   const [sustainOn, setSustainOn] = useState(false);
   const [masterVolumeDb, setMasterVolumeDb] = useState<number>(-4.0);
-  const [bufferSize, setBufferSize] = useState<number>(256);
+  const [bufferSize, setBufferSize] = useState<number>(1024);
   const [statusMsg, setStatusMsg] = useState<string>(() =>
     engineClient.isTauri()
       ? "Pronto"
@@ -637,7 +638,7 @@ export function App() {
 
           <select
             aria-label="MIDI Input"
-            className="studio-select studio-select-sm"
+            className="studio-select studio-select-sm topbar-midi-select"
             value={selectedMidiPort}
             onChange={(e) => handleMidiConnect(e.target.value)}
           >
@@ -656,7 +657,7 @@ export function App() {
 
         <div className="telemetry-strip">
           <div className="meter-pill volume-pill" role="group" aria-label="Master Volume Controls">
-            <Volume2 size={13} color="#e29d38" />
+            <Volume2 size={13} color="#60a5fa" />
             <button
               type="button"
               className="btn btn-xs"
@@ -701,7 +702,7 @@ export function App() {
             </span>
           </div>
 
-          <div className="meter-pill">
+          <div className="meter-pill voices-pill">
             <Activity size={13} color="#48b8d0" />
             <span>{telemetry?.active_voices ?? 0} voices</span>
           </div>
