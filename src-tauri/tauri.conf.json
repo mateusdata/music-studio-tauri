@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Piano Tect Tauri — Physical Modeling Studio",
+        "title": "Music Studio Tauri — .Music Arranger",
         "width": 1440,
         "height": 900,
         "minWidth": 1100,

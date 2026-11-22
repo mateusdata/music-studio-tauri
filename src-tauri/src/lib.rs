@@ -4,6 +4,7 @@ pub mod contracts;
 pub mod effects;
 pub mod instruments;
 pub mod midi;
+pub mod music_studio;
 pub mod presets;
 pub mod synthesis;
 
@@ -48,6 +49,15 @@ pub fn run() {
             commands::play_recorded_midi,
             commands::set_midi_playback_speed,
             commands::arm_midi_cc_learn,
+            commands::list_music_packages,
+            commands::load_music_package,
+            commands::get_arranger_state,
+            commands::set_arranger_section,
+            commands::set_arranger_transport,
+            commands::set_arranger_style,
+            commands::set_arranger_keyboard_voice,
+            commands::set_arranger_chord,
+            commands::set_arranger_track_volume,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Piano Tect Tauri application");

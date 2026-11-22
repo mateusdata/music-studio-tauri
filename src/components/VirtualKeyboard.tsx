@@ -3,6 +3,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 interface VirtualKeyboardProps {
   activeNotes: number[];
   extendedRange: boolean;
+  splitKey?: number;
+  splitEnabled?: boolean;
   onNoteOn: (note: number, velocity: number) => void;
   onNoteOff: (note: number) => void;
 }
@@ -50,6 +52,8 @@ function noteLabel(midi: number): string {
 export const VirtualKeyboard: React.FC<VirtualKeyboardProps> = ({
   activeNotes,
   extendedRange,
+  splitKey = 59,
+  splitEnabled = false,
   onNoteOn,
   onNoteOff,
 }) => {
@@ -152,12 +156,16 @@ export const VirtualKeyboard: React.FC<VirtualKeyboardProps> = ({
         {whiteKeys.map((midi) => {
           const isC = midi % 12 === 0;
           const isActive = activeSet.has(midi);
+          const isLeftSplit = splitEnabled && midi <= splitKey;
+          const isSplitEdge = splitEnabled && midi === splitKey + 1;
           return (
             <div
               key={midi}
               role="button"
               aria-label={`Key ${noteLabel(midi)}`}
-              className={`white-key ${isActive ? "active" : ""}`}
+              className={`white-key ${isActive ? "active" : ""} ${
+                isLeftSplit ? "split-chord-zone" : ""
+              } ${isSplitEdge ? "split-point-edge" : ""}`}
               onMouseDown={(e) => {
                 e.stopPropagation();
                 triggerDown(midi, computeVelocity(e));

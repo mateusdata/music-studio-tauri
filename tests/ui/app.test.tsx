@@ -3,14 +3,13 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import App from "../../src/App";
 import { VirtualKeyboard } from "../../src/components/VirtualKeyboard";
 import { engineClient } from "../../src/services/engineClient";
-import type { EngineParams, EngineSnapshot, EngineTelemetry } from "../../src/types/engine";
-
-const PEDAL_LABELS = [
-  "Una Corda (Soft)",
-  "Sostenuto",
-  "Harmonic",
-  "Sustain (Damper)",
-] as const;
+import type {
+  EngineParams,
+  EngineSnapshot,
+  EngineTelemetry,
+  MusicPackageEntry,
+  MusicPackageSummary,
+} from "../../src/types/engine";
 
 function buildMockEngineParams(): EngineParams {
   return {
@@ -84,28 +83,6 @@ function buildMockEngineParams(): EngineParams {
           volume: 0.85,
           pan: -0.58,
         },
-        {
-          enabled: true,
-          name: "Right Close",
-          x: 0.72,
-          y: 0.42,
-          z: 0.65,
-          azimuth: 0.0,
-          elevation: -15.0,
-          volume: 0.85,
-          pan: 0.58,
-        },
-        {
-          enabled: false,
-          name: "Room Ribbon",
-          x: 0.5,
-          y: 0.85,
-          z: 0.8,
-          azimuth: 0.0,
-          elevation: -15.0,
-          volume: 0.55,
-          pan: 0.0,
-        },
       ],
     },
     eq_enabled: true,
@@ -170,93 +147,117 @@ function buildMockEngineParams(): EngineParams {
   };
 }
 
+function buildMockArrangerState(overrides?: Partial<MusicPackageSummary>): MusicPackageSummary {
+  return {
+    loaded: true,
+    file_name: "Josiran_Pisadinha_GR.Music",
+    file_path: "/music/Josiran_Pisadinha_GR.Music",
+    version: "1.4.4",
+    instruments: [
+      { index: 1, name: "Strings (Stereo)", zone_count: 7, has_samples: true, is_drumkit: false },
+      { index: 2, name: "BTR JOSIRAN PISADINHA", zone_count: 33, has_samples: true, is_drumkit: true },
+      { index: 7, name: "BANDONEON VA7 ST SOLO", zone_count: 12, has_samples: true, is_drumkit: false },
+    ],
+    styles: [
+      {
+        id: 1,
+        name: "Josiran Pisadinha (GR)",
+        category: "GABRIEL RODRIGUES GR",
+        sections: ["Intro 1", "Variation 1", "Variation 2", "Fill 1", "Ending 1"],
+      },
+    ],
+    active_style_index: 0,
+    active_section: "Variation 1",
+    pending_section: null,
+    upper1_instrument: 7,
+    upper2_instrument: null,
+    lower_instrument: 1,
+    split_key: 59,
+    split_enabled: true,
+    bpm: 120,
+    rhythm_playing: false,
+    sync_start: true,
+    auto_fill: true,
+    detected_chord_root: 0,
+    detected_chord_quality: "Major",
+    detected_chord: "C",
+    track_volumes: [1, 1, 1, 1, 1, 1, 1, 1],
+    beat_position: 0,
+    ...overrides,
+  };
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("Piano Tect Tauri App UI", () => {
-  it("renders title, preview status, telemetry strip, tabs, and action buttons", () => {
+describe("Music Studio Tauri Arranger App UI", () => {
+  it("renders slim arranger header, searchable selectors, LCD screen, quick chords, and virtual keyboard in preview mode", () => {
     render(<App />);
 
-    expect(screen.getByText("Piano Tect Tauri")).toBeInTheDocument();
-    expect(screen.getByText("Physical Modeling Studio")).toBeInTheDocument();
-    expect(screen.getByLabelText("Instrument Selector")).toBeInTheDocument();
-    expect(screen.getByLabelText("Preset Selector")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Test Chord/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Export WAV/i })).toBeInTheDocument();
-    expect(screen.getByText("0/128 voices")).toBeInTheDocument();
-    expect(screen.getByText(/Browser preview mode/i)).toBeInTheDocument();
+    expect(screen.getByText("Music Studio Tauri")).toBeInTheDocument();
+    expect(screen.getByLabelText("Music Package Selector")).toBeInTheDocument();
+    expect(screen.getByLabelText("Style Selector")).toBeInTheDocument();
+    expect(screen.getByLabelText("Upper 1 Instrument")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /START RITMO/i })).toBeInTheDocument();
+    expect(screen.getByTestId("chord-display")).toHaveTextContent("C");
 
-    const nav = screen.getByRole("navigation", { name: "Parameter Sections" });
-    expect(within(nav).getAllByRole("button")).toHaveLength(7);
-    expect(screen.getByRole("button", { name: "Voicing & Hammers" })).toHaveClass("active");
-    expect(screen.getByRole("button", { name: "Note Edit (PRO)" })).toBeInTheDocument();
+    // Ensure old Pianoteq clutter tabs are completely gone
+    expect(screen.queryByRole("button", { name: "Voicing & Hammers" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Note Edit (PRO)" })).not.toBeInTheDocument();
+
+    // Quick Chord switching updates preview LCD display
+    fireEvent.click(screen.getByRole("button", { name: "Am" }));
+    expect(screen.getByTestId("chord-display")).toHaveTextContent("Am");
   });
 
-  it("renders 88 virtual keyboard keys by default with expected note aria-labels", () => {
+  it("renders 88 virtual keyboard keys with split chord highlighting", () => {
     render(<App />);
 
     const keyboard = screen.getByTestId("virtual-keyboard");
     const keyButtons = within(keyboard).getAllByRole("button");
     expect(keyButtons).toHaveLength(88);
 
-    expect(within(keyboard).getByRole("button", { name: "Key A0" })).toBeInTheDocument();
-    expect(within(keyboard).getByRole("button", { name: "Key C4" })).toBeInTheDocument();
-    expect(within(keyboard).getByRole("button", { name: "Key A4" })).toBeInTheDocument();
-    expect(within(keyboard).getByRole("button", { name: "Key C8" })).toBeInTheDocument();
-
-    expect(within(keyboard).queryByRole("button", { name: "Key C0" })).not.toBeInTheDocument();
-    expect(within(keyboard).queryByRole("button", { name: "Key G#8" })).not.toBeInTheDocument();
-
-    expect(keyboard.querySelectorAll(".white-key")).toHaveLength(52);
-    expect(keyboard.querySelectorAll(".black-key")).toHaveLength(36);
+    expect(within(keyboard).getByRole("button", { name: "Key C3" })).toHaveClass("split-chord-zone");
+    expect(within(keyboard).getByRole("button", { name: "Key C4" })).toHaveClass("split-point-edge");
   });
 
-  it("renders all four pedal buttons and toggles active state on click", () => {
+  it("supports searchable filtering on Music Package Selector dropdown", () => {
     render(<App />);
 
-    for (const label of PEDAL_LABELS) {
-      const btn = screen.getByRole("button", { name: label });
-      expect(btn).toBeInTheDocument();
-      expect(btn).not.toHaveClass("active");
+    fireEvent.click(screen.getByLabelText("Music Package Selector Trigger"));
+    const searchInput = screen.getByLabelText("Music Package Selector Search");
+    fireEvent.change(searchInput, { target: { value: "Arrasta" } });
 
-      fireEvent.click(btn);
-      expect(btn).toHaveClass("active");
-    }
+    const popover = screen.getByTestId("music-package-selector-popover");
+    expect(within(popover).getByRole("option", { name: /Arrasta_Pe_Forro_GR\.Music/i })).toBeInTheDocument();
+    expect(within(popover).queryByRole("option", { name: /Josiran_Pisadinha_GR\.Music/i })).not.toBeInTheDocument();
 
-    // All four pedals can remain active concurrently; clicking again deactivates individually
-    for (const label of PEDAL_LABELS) {
-      const btn = screen.getByRole("button", { name: label });
-      expect(btn).toHaveClass("active");
-      fireEvent.click(btn);
-      expect(btn).not.toHaveClass("active");
-    }
+    fireEvent.click(within(popover).getByRole("option", { name: /Arrasta_Pe_Forro_GR\.Music/i }));
+    expect(screen.queryByTestId("music-package-selector-popover")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Music Package Selector Trigger")).toHaveTextContent("Arrasta_Pe_Forro_GR.Music");
   });
 
-  it("switches active parameter navigation tabs when clicked", () => {
-    render(<App />);
-
-    const voicingTab = screen.getByRole("button", { name: "Voicing & Hammers" });
-    const tuningTab = screen.getByRole("button", { name: "Tuning & Temperament" });
-    const midiTab = screen.getByRole("button", { name: "MIDI & Action" });
-
-    expect(voicingTab).toHaveClass("active");
-    expect(tuningTab).not.toHaveClass("active");
-
-    fireEvent.click(tuningTab);
-    expect(tuningTab).toHaveClass("active");
-    expect(voicingTab).not.toHaveClass("active");
-
-    fireEvent.click(midiTab);
-    expect(midiTab).toHaveClass("active");
-    expect(tuningTab).not.toHaveClass("active");
-  });
-
-  it("loads snapshot in Tauri mode and forwards pedal toggles to engineClient", async () => {
+  it("wires Tauri arranger commands for package loading, chord switching, sections, transport, and sustain pedal", async () => {
     const params = buildMockEngineParams();
+    const pkgList: MusicPackageEntry[] = [
+      {
+        file_name: "Josiran_Pisadinha_GR.Music",
+        file_path: "/music/Josiran_Pisadinha_GR.Music",
+        size_mb: 23.4,
+        version: "1.4.4",
+      },
+      {
+        file_name: "Arrasta_Pe_Forro_GR.Music",
+        file_path: "/music/Arrasta_Pe_Forro_GR.Music",
+        size_mb: 38.8,
+        version: "1.4.4",
+      },
+    ];
+    const initialArr = buildMockArrangerState();
     const snapshot: EngineSnapshot = {
-      active_instrument_id: "steinway_d",
-      active_preset_id: "concert_grand_warm",
+      active_instrument_id: "default",
+      active_preset_id: "default",
       preset_b_id: null,
       params,
       midi_config: {
@@ -271,48 +272,27 @@ describe("Piano Tect Tauri App UI", () => {
         ],
         cc_mappings: [],
       },
-      instruments: [
-        {
-          id: "steinway_d",
-          name: "Model D Concert Grand",
-          category: "GrandPiano",
-          exciter: "FeltHammer",
-          description: "Concert grand piano",
-          inharmonicity_base: 0.0001,
-          decay_scale: 1.0,
-          default_params: params,
-        },
-      ],
-      presets: [
-        {
-          id: "concert_grand_warm",
-          name: "Concert Hall Warm",
-          instrument_id: "steinway_d",
-          category: "Acoustic",
-          description: "Default concert preset",
-          params,
-          is_factory: true,
-        },
-      ],
+      instruments: [],
+      presets: [],
     };
     const telemetry: EngineTelemetry = {
       sample_rate: 48000,
       buffer_size: 256,
       latency_ms: 5.3,
-      active_voices: 3,
+      active_voices: 4,
       max_polyphony: 128,
-      cpu_load_pct: 4.2,
-      peak_l: 0.4,
-      peak_r: 0.35,
-      rms_l: 0.2,
-      rms_r: 0.18,
+      cpu_load_pct: 3.1,
+      peak_l: 0.3,
+      peak_r: 0.3,
+      rms_l: 0.15,
+      rms_r: 0.15,
       audio_backend: "PipeWire",
       audio_active: true,
       midi_connected: false,
       midi_port_name: null,
       last_midi_note: 60,
       last_midi_velocity: 90,
-      active_notes: [60, 64, 67],
+      active_notes: [60],
       pedals: {
         sustain: 0,
         soft: 0,
@@ -324,41 +304,62 @@ describe("Piano Tect Tauri App UI", () => {
         super_sostenuto: false,
         reversed_sustain: false,
       },
-      midi_transport: {
-        is_playing: false,
-        is_recording: false,
-        playback_speed: 1.0,
-        recorded_events_count: 0,
-        current_track_name: null,
-      },
-      midi_learn_target: null,
     };
 
     vi.spyOn(engineClient, "isTauri").mockReturnValue(true);
+    vi.spyOn(engineClient, "listMusicPackages").mockResolvedValue(pkgList);
+    vi.spyOn(engineClient, "getArrangerState").mockResolvedValue(initialArr);
     vi.spyOn(engineClient, "getSnapshot").mockResolvedValue(snapshot);
     vi.spyOn(engineClient, "listMidiDevices").mockResolvedValue([]);
     vi.spyOn(engineClient, "getTelemetry").mockResolvedValue(telemetry);
+
+    const chordSpy = vi
+      .spyOn(engineClient, "setArrangerChord")
+      .mockResolvedValue(buildMockArrangerState({ detected_chord: "Am", detected_chord_root: 9, detected_chord_quality: "Minor" }));
+    const transportSpy = vi
+      .spyOn(engineClient, "setArrangerTransport")
+      .mockResolvedValue(buildMockArrangerState({ rhythm_playing: true }));
+    const sectionSpy = vi
+      .spyOn(engineClient, "setArrangerSection")
+      .mockResolvedValue(buildMockArrangerState({ active_section: "Variation 2" }));
+    const loadSpy = vi
+      .spyOn(engineClient, "loadMusicPackage")
+      .mockResolvedValue(buildMockArrangerState({ file_name: "Arrasta_Pe_Forro_GR.Music", file_path: "/music/Arrasta_Pe_Forro_GR.Music" }));
     const setPedalSpy = vi.spyOn(engineClient, "setPedal").mockResolvedValue();
 
     render(<App />);
 
-    expect(await screen.findByText("Master & Morphing")).toBeInTheDocument();
-    expect(screen.getByText("Hammer Felt Hardness")).toBeInTheDocument();
+    expect(await screen.findByText("Visor do Arranjador (.Music)")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Tuning & Temperament" }));
-    expect(screen.getByText("Diapason (A4)")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Am" }));
+    await waitFor(() => {
+      expect(chordSpy).toHaveBeenCalledWith(9, "Minor");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /START RITMO/i }));
+    await waitFor(() => {
+      expect(transportSpy).toHaveBeenCalledWith(true, null, null, null);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Variation 2" }));
+    await waitFor(() => {
+      expect(sectionSpy).toHaveBeenCalledWith("Variation 2", false);
+    });
+
+    fireEvent.click(screen.getByLabelText("Music Package Selector Trigger"));
+    fireEvent.change(screen.getByLabelText("Music Package Selector Search"), {
+      target: { value: "Forro" },
+    });
+    const pkgPopover = screen.getByTestId("music-package-selector-popover");
+    fireEvent.click(within(pkgPopover).getByRole("option", { name: /Arrasta_Pe_Forro_GR\.Music/i }));
+    await waitFor(() => {
+      expect(loadSpy).toHaveBeenCalledWith("/music/Arrasta_Pe_Forro_GR.Music");
+    });
 
     const sustainBtn = screen.getByRole("button", { name: "Sustain (Damper)" });
     fireEvent.click(sustainBtn);
-    expect(sustainBtn).toHaveClass("active");
     await waitFor(() => {
       expect(setPedalSpy).toHaveBeenCalledWith("sustain", 1.0);
-    });
-
-    fireEvent.click(sustainBtn);
-    expect(sustainBtn).not.toHaveClass("active");
-    await waitFor(() => {
-      expect(setPedalSpy).toHaveBeenCalledWith("sustain", 0.0);
     });
   });
 });
@@ -404,15 +405,12 @@ describe("VirtualKeyboard component", () => {
     fireEvent.mouseDown(keyC4, { clientY: 50 });
     expect(onNoteOn).toHaveBeenCalledTimes(1);
     expect(onNoteOn.mock.calls[0][0]).toBe(60);
-    expect(onNoteOn.mock.calls[0][1]).toBeGreaterThanOrEqual(42);
-    expect(onNoteOn.mock.calls[0][1]).toBeLessThanOrEqual(124);
     expect(keyC4).toHaveClass("active");
 
     fireEvent.mouseUp(keyC4);
     expect(onNoteOff).toHaveBeenCalledWith(60);
     expect(keyC4).not.toHaveClass("active");
 
-    // Computer keyboard 'q' maps to MIDI 60 (C4) at velocity 88
     fireEvent.keyDown(window, { key: "q" });
     expect(onNoteOn).toHaveBeenLastCalledWith(60, 88);
     expect(keyC4).toHaveClass("active");

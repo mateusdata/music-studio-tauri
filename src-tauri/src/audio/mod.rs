@@ -9,6 +9,10 @@ use crate::midi::{
     connect_midi_port, evaluate_cc_mapping, generate_demo_midi_sequence, list_midi_input_ports,
     MidiConnectionHandle, MidiEngineEvent,
 };
+use crate::music_studio::{
+    list_music_packages_in_dir, parse_music_file, LoadedMusicPackage, MusicPackageEntry,
+    MusicPackageSummary, MusicStudioArrangerEngine, DEFAULT_MUSIC_STUDIO_DIR,
+};
 use crate::presets::{build_factory_presets, load_user_presets, morph_engine_params, save_user_preset};
 use crate::synthesis::{PianoSynthEngine, MAX_POLYPHONY};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -28,6 +32,23 @@ pub enum AudioCommand {
     SetPedal { pedal: String, value: f32 },
     UpdateParams(Box<EngineParams>),
     UpdateInstrument(Box<InstrumentModel>),
+    LoadMusicPackage(Arc<LoadedMusicPackage>),
+    SetArrangerSection { section_name: String, immediate: bool },
+    SetArrangerTransport {
+        playing: bool,
+        sync_start: Option<bool>,
+        bpm: Option<f32>,
+        auto_fill: Option<bool>,
+    },
+    SetArrangerStyle(usize),
+    SetArrangerVoice {
+        slot: String,
+        instrument_index: Option<usize>,
+        split_key: Option<u8>,
+        split_enabled: Option<bool>,
+    },
+    SetArrangerChord { root_pc: u8, quality: String },
+    SetArrangerTrackVolume { track_slot: usize, volume: f32 },
 }
 
 pub struct SharedAudioState {
@@ -40,6 +61,8 @@ pub struct SharedAudioState {
     pub instruments: RwLock<Vec<InstrumentModel>>,
     pub presets: RwLock<Vec<PresetData>>,
     pub telemetry: RwLock<EngineTelemetry>,
+    pub active_music_package: RwLock<Option<Arc<LoadedMusicPackage>>>,
+    pub arranger_summary: RwLock<MusicPackageSummary>,
 }
 
 pub struct AudioEngineManager {
@@ -256,25 +279,99 @@ fn apply_pedal_value(pedals: &mut PedalState, pedal: &str, value: f32) {
 fn process_audio_command(
     cmd: AudioCommand,
     synth: &mut PianoSynthEngine,
+    arranger: &mut MusicStudioArrangerEngine,
     params: &mut EngineParams,
     pedals: &mut PedalState,
     inst: &mut InstrumentModel,
+    shared: &Arc<SharedAudioState>,
 ) {
+    let mut summary_dirty = false;
     match cmd {
         AudioCommand::NoteOn { note, velocity } => {
-            synth.note_on(note, velocity, params, inst, pedals);
+            if arranger.has_loaded_package() {
+                arranger.note_on(note, velocity);
+                summary_dirty = true;
+            } else {
+                synth.note_on(note, velocity, params, inst, pedals);
+            }
         }
         AudioCommand::NoteOff { note } => {
-            synth.note_off(note, params, pedals);
+            if arranger.has_loaded_package() {
+                arranger.note_off(note, pedals.sustain >= 0.5 || pedals.reversed_sustain);
+            } else {
+                synth.note_off(note, params, pedals);
+            }
         }
-        AudioCommand::AllNotesOff => synth.all_notes_off(),
+        AudioCommand::AllNotesOff => {
+            synth.all_notes_off();
+            arranger.all_notes_off();
+        }
         AudioCommand::SetPedal { pedal, value } => {
             let prev = pedals.clone();
             apply_pedal_value(pedals, &pedal, value);
-            synth.update_pedals(pedals, &prev, params);
+            if arranger.has_loaded_package() {
+                if pedals.sustain < 0.5 && !pedals.reversed_sustain {
+                    arranger.release_unsustained();
+                }
+            } else {
+                synth.update_pedals(pedals, &prev, params);
+            }
         }
-        AudioCommand::UpdateParams(new_p) => *params = *new_p,
+        AudioCommand::UpdateParams(new_p) => {
+            *params = *new_p;
+            arranger.set_master_gain_db(params.volume_db);
+        }
         AudioCommand::UpdateInstrument(new_i) => *inst = *new_i,
+        AudioCommand::LoadMusicPackage(pkg) => {
+            arranger.load_package(pkg);
+            arranger.set_master_gain_db(params.volume_db);
+            summary_dirty = true;
+        }
+        AudioCommand::SetArrangerSection {
+            section_name,
+            immediate,
+        } => {
+            arranger.set_section(&section_name, immediate);
+            summary_dirty = true;
+        }
+        AudioCommand::SetArrangerTransport {
+            playing,
+            sync_start,
+            bpm,
+            auto_fill,
+        } => {
+            if let Some(af) = auto_fill {
+                arranger.set_auto_fill(af);
+            }
+            arranger.set_transport(playing, sync_start, bpm);
+            summary_dirty = true;
+        }
+        AudioCommand::SetArrangerStyle(idx) => {
+            arranger.set_style(idx);
+            summary_dirty = true;
+        }
+        AudioCommand::SetArrangerVoice {
+            slot,
+            instrument_index,
+            split_key,
+            split_enabled,
+        } => {
+            arranger.set_keyboard_voice(&slot, instrument_index, split_key, split_enabled);
+            summary_dirty = true;
+        }
+        AudioCommand::SetArrangerChord { root_pc, quality } => {
+            arranger.set_chord(root_pc, &quality);
+            summary_dirty = true;
+        }
+        AudioCommand::SetArrangerTrackVolume { track_slot, volume } => {
+            arranger.set_track_volume(track_slot, volume);
+            summary_dirty = true;
+        }
+    }
+    if summary_dirty {
+        if let Some(mut s) = shared.arranger_summary.try_write() {
+            *s = arranger.summary();
+        }
     }
 }
 
@@ -287,6 +384,34 @@ impl AudioEngineManager {
         let first_inst = instruments[0].clone();
         let first_preset_id = presets[0].id.clone();
         let initial_params = presets[0].params.clone();
+
+        let (initial_pkg, initial_summary) = if !cfg!(test) {
+            let dir = std::path::Path::new(DEFAULT_MUSIC_STUDIO_DIR);
+            let preferred = dir.join("Josiran_Pisadinha_GR.Music");
+            let target_path = if preferred.exists() {
+                Some(preferred)
+            } else {
+                list_music_packages_in_dir(dir)
+                    .into_iter()
+                    .next()
+                    .map(|e| PathBuf::from(e.file_path))
+            };
+            if let Some(p) = target_path {
+                if let Ok(parsed) = parse_music_file(&p) {
+                    let pkg_arc = Arc::new(parsed);
+                    let mut tmp = MusicStudioArrangerEngine::new(48000.0);
+                    tmp.load_package(Arc::clone(&pkg_arc));
+                    let summary = tmp.summary();
+                    (Some(pkg_arc), summary)
+                } else {
+                    (None, MusicPackageSummary::default())
+                }
+            } else {
+                (None, MusicPackageSummary::default())
+            }
+        } else {
+            (None, MusicPackageSummary::default())
+        };
 
         let (cmd_tx, cmd_rx) = mpsc::channel::<AudioCommand>();
         let (midi_tx, midi_rx) = mpsc::channel::<MidiEngineEvent>();
@@ -322,6 +447,8 @@ impl AudioEngineManager {
                 midi_transport: MidiTransportState::default(),
                 midi_learn_target: None,
             }),
+            active_music_package: RwLock::new(initial_pkg),
+            arranger_summary: RwLock::new(initial_summary),
         });
 
         let keep_alive = Arc::new(AtomicBool::new(true));
@@ -436,8 +563,13 @@ impl AudioEngineManager {
         std::thread::spawn(move || {
             let sr = 48000.0_f32;
             let mut synth = PianoSynthEngine::new(sr);
+            let mut arranger = MusicStudioArrangerEngine::new(sr);
+            if let Some(pkg) = shared.active_music_package.read().clone() {
+                arranger.load_package(pkg);
+            }
             let mut fx = EffectsChain::new(sr);
             let mut params = shared.params.read().clone();
+            arranger.set_master_gain_db(params.volume_db);
             let mut pedals = shared.pedals.read().clone();
             let mut inst = shared.active_instrument.read().clone();
             let mut buf_l = vec![0.0_f32; 256];
@@ -449,6 +581,7 @@ impl AudioEngineManager {
                     &mut buf_l,
                     &mut buf_r,
                     &mut synth,
+                    &mut arranger,
                     &mut fx,
                     &mut params,
                     &mut pedals,
@@ -488,8 +621,13 @@ impl AudioEngineManager {
         }
 
         let mut synth = PianoSynthEngine::new(sr as f32);
+        let mut arranger = MusicStudioArrangerEngine::new(sr as f32);
+        if let Some(pkg) = shared.active_music_package.read().clone() {
+            arranger.load_package(pkg);
+        }
         let mut fx = EffectsChain::new(sr as f32);
         let mut params = shared.params.read().clone();
+        arranger.set_master_gain_db(params.volume_db);
         let mut pedals = PedalState::default();
         let mut inst = shared.active_instrument.read().clone();
         let mut buf_l = vec![0.0_f32; 2048];
@@ -509,12 +647,24 @@ impl AudioEngineManager {
 
                     // Drain lock-free command queue
                     while let Ok(cmd) = cmd_rx.try_recv() {
-                        process_audio_command(cmd, &mut synth, &mut params, &mut pedals, &mut inst);
+                        process_audio_command(
+                            cmd,
+                            &mut synth,
+                            &mut arranger,
+                            &mut params,
+                            &mut pedals,
+                            &mut inst,
+                            &shared,
+                        );
                     }
 
                     let slice_l = &mut buf_l[..frames];
                     let slice_r = &mut buf_r[..frames];
-                    synth.process_block(slice_l, slice_r, &params, &pedals);
+                    if arranger.has_loaded_package() {
+                        arranger.process_block(slice_l, slice_r);
+                    } else {
+                        synth.process_block(slice_l, slice_r, &params, &pedals);
+                    }
                     fx.process_block(slice_l, slice_r, &params);
 
                     let mut peak_l = 0.0_f32;
@@ -547,14 +697,24 @@ impl AudioEngineManager {
                         if let Some(mut t) = shared.telemetry.try_write() {
                             t.buffer_size = frames;
                             t.latency_ms = (frames as f32 / sr as f32) * 1000.0;
-                            t.active_voices = synth.active_voice_count();
+                            if arranger.has_loaded_package() {
+                                t.active_voices = arranger.active_voice_count();
+                                t.active_notes = arranger.active_notes();
+                            } else {
+                                t.active_voices = synth.active_voice_count();
+                                t.active_notes = synth.active_notes();
+                            }
                             t.cpu_load_pct = cpu;
                             t.peak_l = peak_l;
                             t.peak_r = peak_r;
                             t.rms_l = (sq_l / frames.max(1) as f32).sqrt();
                             t.rms_r = (sq_r / frames.max(1) as f32).sqrt();
-                            t.active_notes = synth.active_notes();
                             t.pedals = pedals.clone();
+                        }
+                        if telemetry_tick % 8 == 0 && arranger.rhythm_playing {
+                            if let Some(mut s) = shared.arranger_summary.try_write() {
+                                *s = arranger.summary();
+                            }
                         }
                     }
                 },
@@ -572,6 +732,7 @@ impl AudioEngineManager {
         buf_l: &mut [f32],
         buf_r: &mut [f32],
         synth: &mut PianoSynthEngine,
+        arranger: &mut MusicStudioArrangerEngine,
         fx: &mut EffectsChain,
         params: &mut EngineParams,
         pedals: &mut PedalState,
@@ -583,7 +744,7 @@ impl AudioEngineManager {
         let count = frames.min(buf_l.len()).min(buf_r.len());
         if let Some(rx) = cmd_rx {
             while let Ok(cmd) = rx.try_recv() {
-                process_audio_command(cmd, synth, params, pedals, inst);
+                process_audio_command(cmd, synth, arranger, params, pedals, inst, shared);
             }
         } else {
             let prev_pedals = pedals.clone();
@@ -595,7 +756,11 @@ impl AudioEngineManager {
 
         let slice_l = &mut buf_l[..count];
         let slice_r = &mut buf_r[..count];
-        synth.process_block(slice_l, slice_r, params, pedals);
+        if arranger.has_loaded_package() {
+            arranger.process_block(slice_l, slice_r);
+        } else {
+            synth.process_block(slice_l, slice_r, params, pedals);
+        }
         fx.process_block(slice_l, slice_r, params);
 
         let mut peak_l = 0.0_f32;
@@ -615,12 +780,17 @@ impl AudioEngineManager {
             t.sample_rate = sr as u32;
             t.buffer_size = count;
             t.latency_ms = (count as f32 / sr.max(1.0)) * 1000.0;
-            t.active_voices = synth.active_voice_count();
+            if arranger.has_loaded_package() {
+                t.active_voices = arranger.active_voice_count();
+                t.active_notes = arranger.active_notes();
+            } else {
+                t.active_voices = synth.active_voice_count();
+                t.active_notes = synth.active_notes();
+            }
             t.peak_l = peak_l;
             t.peak_r = peak_r;
             t.rms_l = (sq_l / count.max(1) as f32).sqrt();
             t.rms_r = (sq_r / count.max(1) as f32).sqrt();
-            t.active_notes = synth.active_notes();
             t.pedals = pedals.clone();
         }
     }
@@ -913,12 +1083,178 @@ impl AudioEngineManager {
         }
     }
 
+    pub fn list_music_packages(&self) -> Vec<MusicPackageEntry> {
+        list_music_packages_in_dir(std::path::Path::new(DEFAULT_MUSIC_STUDIO_DIR))
+    }
+
+    pub fn arranger_state(&self) -> MusicPackageSummary {
+        self.shared.arranger_summary.read().clone()
+    }
+
+    pub fn load_music_package(&self, path: &PathBuf) -> Result<MusicPackageSummary, String> {
+        let parsed = parse_music_file(path)?;
+        let pkg_arc = Arc::new(parsed);
+        let mut tmp = MusicStudioArrangerEngine::new(48000.0);
+        tmp.load_package(Arc::clone(&pkg_arc));
+        let summary = tmp.summary();
+        *self.shared.active_music_package.write() = Some(Arc::clone(&pkg_arc));
+        *self.shared.arranger_summary.write() = summary.clone();
+        let _ = self.cmd_tx.lock().send(AudioCommand::LoadMusicPackage(pkg_arc));
+        Ok(summary)
+    }
+
+    pub fn set_arranger_section(&self, section_name: &str, immediate: bool) -> MusicPackageSummary {
+        {
+            let mut s = self.shared.arranger_summary.write();
+            if !s.rhythm_playing || immediate {
+                s.active_section = section_name.to_string();
+                s.pending_section = None;
+            } else {
+                s.pending_section = Some(section_name.to_string());
+            }
+        }
+        let _ = self.cmd_tx.lock().send(AudioCommand::SetArrangerSection {
+            section_name: section_name.to_string(),
+            immediate,
+        });
+        self.arranger_state()
+    }
+
+    pub fn set_arranger_transport(
+        &self,
+        playing: bool,
+        sync_start: Option<bool>,
+        bpm: Option<f32>,
+        auto_fill: Option<bool>,
+    ) -> MusicPackageSummary {
+        {
+            let mut s = self.shared.arranger_summary.write();
+            s.rhythm_playing = playing;
+            if let Some(ss) = sync_start {
+                s.sync_start = ss;
+            }
+            if let Some(b) = bpm {
+                if b.is_finite() {
+                    s.bpm = b.clamp(40.0, 240.0);
+                }
+            }
+            if let Some(af) = auto_fill {
+                s.auto_fill = af;
+            }
+        }
+        let _ = self.cmd_tx.lock().send(AudioCommand::SetArrangerTransport {
+            playing,
+            sync_start,
+            bpm,
+            auto_fill,
+        });
+        self.arranger_state()
+    }
+
+    pub fn set_arranger_style(&self, style_index: usize) -> MusicPackageSummary {
+        {
+            let mut s = self.shared.arranger_summary.write();
+            let next_sec = s.styles.get(style_index).and_then(|st| {
+                st.sections
+                    .iter()
+                    .find(|x| *x == "Variation 1")
+                    .or_else(|| st.sections.first())
+                    .cloned()
+            });
+            if style_index < s.styles.len() {
+                s.active_style_index = style_index;
+                if let Some(first_sec) = next_sec {
+                    s.active_section = first_sec;
+                }
+                s.pending_section = None;
+            }
+        }
+        let _ = self.cmd_tx.lock().send(AudioCommand::SetArrangerStyle(style_index));
+        self.arranger_state()
+    }
+
+    pub fn set_arranger_voice(
+        &self,
+        slot: &str,
+        instrument_index: Option<usize>,
+        split_key: Option<u8>,
+        split_enabled: Option<bool>,
+    ) -> MusicPackageSummary {
+        {
+            let mut s = self.shared.arranger_summary.write();
+            if let Some(sk) = split_key {
+                s.split_key = sk.clamp(24, 96);
+            }
+            if let Some(se) = split_enabled {
+                s.split_enabled = se;
+            }
+            let max_idx = s.instruments.len();
+            let valid = instrument_index.filter(|&i| i < max_idx);
+            match slot {
+                "upper1" => {
+                    if let Some(i) = valid {
+                        s.upper1_instrument = i;
+                    }
+                }
+                "upper2" => s.upper2_instrument = valid,
+                "lower" => s.lower_instrument = valid,
+                _ => {}
+            }
+        }
+        let _ = self.cmd_tx.lock().send(AudioCommand::SetArrangerVoice {
+            slot: slot.to_string(),
+            instrument_index,
+            split_key,
+            split_enabled,
+        });
+        self.arranger_state()
+    }
+
+    pub fn set_arranger_chord(&self, root_pc: u8, quality: &str) -> MusicPackageSummary {
+        {
+            let q = crate::music_studio::ChordQuality::from_str(quality);
+            let mut s = self.shared.arranger_summary.write();
+            s.detected_chord_root = root_pc % 12;
+            s.detected_chord_quality = q.as_str().to_string();
+            s.detected_chord = crate::music_studio::format_chord_label(root_pc % 12, q);
+        }
+        let _ = self.cmd_tx.lock().send(AudioCommand::SetArrangerChord {
+            root_pc,
+            quality: quality.to_string(),
+        });
+        self.arranger_state()
+    }
+
+    pub fn set_arranger_track_volume(&self, track_slot: usize, volume: f32) -> MusicPackageSummary {
+        {
+            let mut s = self.shared.arranger_summary.write();
+            if track_slot < 8 && volume.is_finite() {
+                s.track_volumes[track_slot] = volume.clamp(0.0, 1.5);
+            }
+        }
+        let _ = self.cmd_tx.lock().send(AudioCommand::SetArrangerTrackVolume {
+            track_slot,
+            volume,
+        });
+        self.arranger_state()
+    }
+
     /// Renders a short C-major arpeggio / chord offline to a stereo 32-bit float WAV file.
     pub fn export_demo_wav(&self, path: PathBuf) -> Result<String, String> {
         let sr = 48000_u32;
         let mut synth = PianoSynthEngine::new(sr as f32);
+        let mut arranger = MusicStudioArrangerEngine::new(sr as f32);
+        if let Some(pkg) = self.shared.active_music_package.read().clone() {
+            arranger.load_package(pkg);
+            let s = self.shared.arranger_summary.read().clone();
+            arranger.set_style(s.active_style_index);
+            arranger.set_section(&s.active_section, true);
+            arranger.set_keyboard_voice("upper1", Some(s.upper1_instrument), Some(s.split_key), Some(s.split_enabled));
+            arranger.set_transport(true, Some(s.sync_start), Some(s.bpm));
+        }
         let mut fx = EffectsChain::new(sr as f32);
         let params = self.shared.params.read().clone();
+        arranger.set_master_gain_db(params.volume_db);
         let inst = self.shared.active_instrument.read().clone();
         let mut pedals = PedalState::default();
         pedals.sustain = 1.0;
@@ -942,11 +1278,19 @@ impl AudioEngineManager {
 
         while pos < total_samples {
             if next_note_idx < notes.len() && pos >= next_note_idx * step_samples {
-                synth.note_on(notes[next_note_idx], 86, &params, &inst, &pedals);
+                if arranger.has_loaded_package() {
+                    arranger.note_on(notes[next_note_idx], 96);
+                } else {
+                    synth.note_on(notes[next_note_idx], 86, &params, &inst, &pedals);
+                }
                 next_note_idx += 1;
             }
             let frames = block.min(total_samples - pos);
-            synth.process_block(&mut buf_l[..frames], &mut buf_r[..frames], &params, &pedals);
+            if arranger.has_loaded_package() {
+                arranger.process_block(&mut buf_l[..frames], &mut buf_r[..frames]);
+            } else {
+                synth.process_block(&mut buf_l[..frames], &mut buf_r[..frames], &params, &pedals);
+            }
             fx.process_block(&mut buf_l[..frames], &mut buf_r[..frames], &params);
             for i in 0..frames {
                 writer.write_sample(buf_l[i]).map_err(|e| e.to_string())?;
@@ -1002,6 +1346,8 @@ mod tests {
                 midi_transport: MidiTransportState::default(),
                 midi_learn_target: None,
             }),
+            active_music_package: RwLock::new(None),
+            arranger_summary: RwLock::new(MusicPackageSummary::default()),
         })
     }
 
@@ -1108,6 +1454,7 @@ mod tests {
         let shared = make_test_shared();
         let sr = 48000.0_f32;
         let mut synth = PianoSynthEngine::new(sr);
+        let mut arranger = MusicStudioArrangerEngine::new(sr);
         let mut fx = EffectsChain::new(sr);
         let mut params = shared.params.read().clone();
         params.volume_db = 0.0;
@@ -1142,6 +1489,7 @@ mod tests {
                 &mut buf_l,
                 &mut buf_r,
                 &mut synth,
+                &mut arranger,
                 &mut fx,
                 &mut params,
                 &mut pedals,
@@ -1170,6 +1518,7 @@ mod tests {
             &mut buf_l,
             &mut buf_r,
             &mut synth,
+            &mut arranger,
             &mut fx,
             &mut params,
             &mut pedals,

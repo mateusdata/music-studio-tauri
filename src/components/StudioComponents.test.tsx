@@ -14,14 +14,13 @@ import { SavePresetPopover } from "./SavePresetPopover";
 import { BounceAndNoteFxPanel } from "./BounceAndNoteFxPanel";
 import { MidiTransportBar } from "./MidiTransportBar";
 import { InstrumentPackBrowser, PIANOTEQ_PACKS } from "./InstrumentPackBrowser";
+import { SearchableSelect } from "./SearchableSelect";
 import type {
   EngineParams,
   EngineSnapshot,
-  InstrumentCategory,
   MidiConfig,
   MidiTransportState,
   OutputStageParams,
-  PresetData,
 } from "../types/engine";
 
 function makeSnapshot(): EngineSnapshot {
@@ -426,20 +425,52 @@ describe("Studio UI components", () => {
     expect(screen.queryByTestId("save-preset-popover")).not.toBeInTheDocument();
   });
 
-  it("preserves baseline labels/tabs and integrates all editors & historical pedals in App", async () => {
-    const snap = makeSnapshot();
-    const savedPreset: PresetData = {
-      id: "user-midnight-felt",
-      name: "Midnight Felt",
-      instrument_id: "grand-ny-d",
-      category: "Intimate",
-      description: "Saved by user",
-      params: snap.params,
-      is_factory: false,
-    };
-
+  it("renders slim Music Studio Arranger in App and wires custom .Music import & searchable voices", async () => {
     vi.spyOn(engineClient, "isTauri").mockReturnValue(true);
-    vi.spyOn(engineClient, "getSnapshot").mockResolvedValue(snap);
+    vi.spyOn(engineClient, "listMusicPackages").mockResolvedValue([
+      {
+        file_name: "Josiran_Pisadinha_GR.Music",
+        file_path: "/music/Josiran_Pisadinha_GR.Music",
+        size_mb: 23.4,
+        version: "1.4.4",
+      },
+    ]);
+    vi.spyOn(engineClient, "getArrangerState").mockResolvedValue({
+      loaded: true,
+      file_name: "Josiran_Pisadinha_GR.Music",
+      file_path: "/music/Josiran_Pisadinha_GR.Music",
+      version: "1.4.4",
+      instruments: [
+        { index: 1, name: "Strings (Stereo)", zone_count: 7, has_samples: true, is_drumkit: false },
+        { index: 7, name: "BANDONEON VA7 ST SOLO", zone_count: 12, has_samples: true, is_drumkit: false },
+      ],
+      styles: [
+        {
+          id: 1,
+          name: "Josiran Pisadinha (GR)",
+          category: "GR",
+          sections: ["Variation 1", "Variation 2"],
+        },
+      ],
+      active_style_index: 0,
+      active_section: "Variation 1",
+      pending_section: null,
+      upper1_instrument: 7,
+      upper2_instrument: null,
+      lower_instrument: 1,
+      split_key: 59,
+      split_enabled: true,
+      bpm: 120,
+      rhythm_playing: false,
+      sync_start: true,
+      auto_fill: true,
+      detected_chord_root: 0,
+      detected_chord_quality: "Major",
+      detected_chord: "C",
+      track_volumes: [1, 1, 1, 1, 1, 1, 1, 1],
+      beat_position: 0,
+    });
+    vi.spyOn(engineClient, "getSnapshot").mockResolvedValue(makeSnapshot());
     vi.spyOn(engineClient, "listMidiDevices").mockResolvedValue([]);
     vi.spyOn(engineClient, "getTelemetry").mockResolvedValue({
       sample_rate: 48000,
@@ -471,111 +502,83 @@ describe("Studio UI components", () => {
         reversed_sustain: false,
       },
     });
-    const setPedalSpy = vi.spyOn(engineClient, "setPedal").mockResolvedValue();
-    const updateMidiSpy = vi.spyOn(engineClient, "updateMidiConfig").mockResolvedValue();
-    const updateParamsSpy = vi.spyOn(engineClient, "updateParams").mockResolvedValue();
-    const savePresetSpy = vi
-      .spyOn(engineClient, "saveUserPreset")
-      .mockResolvedValue(savedPreset);
+    const voiceSpy = vi.spyOn(engineClient, "setArrangerKeyboardVoice").mockResolvedValue({
+      loaded: true,
+      file_name: "Josiran_Pisadinha_GR.Music",
+      file_path: "/music/Josiran_Pisadinha_GR.Music",
+      version: "1.4.4",
+      instruments: [
+        { index: 1, name: "Strings (Stereo)", zone_count: 7, has_samples: true, is_drumkit: false },
+        { index: 7, name: "BANDONEON VA7 ST SOLO", zone_count: 12, has_samples: true, is_drumkit: false },
+      ],
+      styles: [],
+      active_style_index: 0,
+      active_section: "Variation 1",
+      pending_section: null,
+      upper1_instrument: 1,
+      upper2_instrument: null,
+      lower_instrument: 1,
+      split_key: 59,
+      split_enabled: true,
+      bpm: 120,
+      rhythm_playing: false,
+      sync_start: true,
+      auto_fill: true,
+      detected_chord_root: 0,
+      detected_chord_quality: "Major",
+      detected_chord: "C",
+      track_volumes: [1, 1, 1, 1, 1, 1, 1, 1],
+      beat_position: 0,
+    });
 
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Instrument Selector")).toHaveValue("grand-ny-d");
+      expect(screen.getByLabelText("Upper 1 Instrument Trigger")).toHaveTextContent(
+        "BANDONEON VA7 ST SOLO",
+      );
     });
 
-    // Preserved tabs + new PRO Note Edit tab
-    for (const tabLabel of [
-      "Voicing & Hammers",
-      "Tuning & Temperament",
-      "Acoustic Design",
-      "Mics & Binaural Stage",
-      "EQ, FX & Reverb",
-      "MIDI & Action",
-      "Note Edit (PRO)",
-    ]) {
-      expect(screen.getByRole("button", { name: tabLabel })).toBeInTheDocument();
-    }
-
-    // Historical & Primary pedals
-    for (const label of [
-      "Una Corda (Soft)",
-      "Sostenuto",
-      "Harmonic",
-      "Sustain (Damper)",
-      "Celeste",
-      "Buff Stop",
-      "Rattle",
-    ]) {
-      expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
-    }
-
-    fireEvent.click(screen.getByRole("button", { name: "Celeste" }));
-    fireEvent.click(screen.getByRole("button", { name: "Buff Stop" }));
-    fireEvent.click(screen.getByRole("button", { name: "Rattle" }));
-    expect(setPedalSpy).toHaveBeenCalledWith("celeste", 1.0);
-    expect(setPedalSpy).toHaveBeenCalledWith("buff_stop", 1.0);
-    expect(setPedalSpy).toHaveBeenCalledWith("rattle", 1.0);
-
-    // Save User Preset Popover
-    fireEvent.click(screen.getByRole("button", { name: /Save User Preset/i }));
-    const dialog = screen.getByTestId("save-preset-popover");
-    fireEvent.change(within(dialog).getByLabelText("Preset Name"), {
-      target: { value: "Midnight Felt" },
+    fireEvent.click(screen.getByLabelText("Upper 1 Instrument Trigger"));
+    fireEvent.change(screen.getByLabelText("Upper 1 Instrument Search"), {
+      target: { value: "Strings" },
     });
-    fireEvent.change(within(dialog).getByLabelText("Preset Category"), {
-      target: { value: "Intimate" },
-    });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    const voicePopover = screen.getByTestId("upper-1-instrument-popover");
+    fireEvent.click(within(voicePopover).getByRole("option", { name: /Strings \(Stereo\)/i }));
 
     await waitFor(() => {
-      expect(savePresetSpy).toHaveBeenCalledWith("Midnight Felt", "Intimate");
+      expect(voiceSpy).toHaveBeenCalledWith("upper1", 1, null, null);
     });
-    await waitFor(() => {
-      expect(screen.getByLabelText("Preset Selector")).toHaveValue("user-midnight-felt");
-    });
-
-    // MIDI & Action tab -> VelocityCurveEditor
-    fireEvent.click(screen.getByRole("button", { name: "MIDI & Action" }));
-    fireEvent.click(screen.getByRole("button", { name: "Slow keyboard" }));
-    expect(updateMidiSpy).toHaveBeenCalled();
-
-    // Mics & Binaural Stage tab -> MicStageEditor
-    fireEvent.click(screen.getByRole("button", { name: "Mics & Binaural Stage" }));
-    expect(screen.getByTestId("mic-stage-editor")).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText("Binaural Head Mode"));
-    expect(updateParamsSpy).toHaveBeenCalled();
-
-    // Note Edit (PRO) tab -> NoteEditPanel
-    fireEvent.click(screen.getByRole("button", { name: "Note Edit (PRO)" }));
-    expect(screen.getByTestId("note-edit-panel")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText(/Gain/i), { target: { value: "3.2" } });
-    expect(updateParamsSpy).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        note_edit: expect.objectContaining({
-          60: expect.objectContaining({ gain_db: 3.2 }),
-        }),
-      }),
-    );
   });
 
-  it("renders interactive editors in browser preview mode without Tauri runtime", () => {
-    render(<App />);
-    expect(screen.getByText("Piano Tect Tauri")).toBeInTheDocument();
-    expect(screen.getByTestId("virtual-keyboard")).toBeInTheDocument();
-    expect(screen.getByTestId("midi-transport-bar")).toBeInTheDocument();
+  it("renders searchable groups and keyboard selection in SearchableSelect", () => {
+    const onChange = vi.fn();
+    render(
+      <SearchableSelect
+        ariaLabel="Demo Select"
+        value="a"
+        onChange={onChange}
+        groups={[
+          {
+            label: "Sanfonas",
+            items: [
+              { value: "a", label: "Bandoneon VA7" },
+              { value: "b", label: "Acordeon Forro" },
+            ],
+          },
+          {
+            label: "Baterias",
+            items: [{ value: "c", label: "BTR Pisadinha" }],
+          },
+        ]}
+      />,
+    );
 
-    const nav = screen.getByRole("navigation", { name: "Parameter Sections" });
-    expect(within(nav).getAllByRole("button")).toHaveLength(7);
-
-    fireEvent.click(screen.getByRole("button", { name: "Acoustic Design" }));
-    expect(screen.getByTestId("bounce-notefx-panel")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Mics & Binaural Stage" }));
-    expect(screen.getByTestId("mic-stage-editor")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "MIDI & Action" }));
-    expect(screen.getByTestId("velocity-curve-editor")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Demo Select Trigger"));
+    const input = screen.getByLabelText("Demo Select Search");
+    fireEvent.change(input, { target: { value: "Acordeon" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onChange).toHaveBeenCalledWith("b");
   });
 
   it("controls Mallet Bounce, NoteFX sliders, DiatonicHarp 7 pedals, and Guitar mode in BounceAndNoteFxPanel", () => {
@@ -709,31 +712,39 @@ describe("Studio UI components", () => {
     await waitFor(() => expect(learnSpy).toHaveBeenLastCalledWith(null));
   });
 
-  it("groups instruments by category with optgroup, exposes all 10 FX processors with dynamic labels, and exposes 10 reverb environments", async () => {
-    const snap = makeSnapshot();
-    const categories: [InstrumentCategory, string, string][] = [
-      ["GrandPiano", "grand-ny-d", "Grand Concert NY D"],
-      ["UprightPiano", "upright-u4", "Studio Upright U4"],
-      ["ElectricPiano", "vintage-tines-mk2", "Vintage Tines MKII"],
-      ["Historical", "ruckers-harpsichord", "Flemish Harpsichord II"],
-      ["Mallet", "vibraphone-vb", "Concert Vibraphone V-B"],
-      ["Plucked", "concert-harp", "Grand Concert Harp"],
-      ["Prepared", "prepared-grand", "Prepared Grand"],
-      ["Synthesizer", "synth-pad", "FM Hybrid Piano"],
-    ];
-    snap.instruments = categories.map(([category, id, name]) => ({
-      id,
-      name,
-      category,
-      exciter: "FeltHammer",
-      description: name,
-      inharmonicity_base: 0.00018,
-      decay_scale: 1.0,
-      default_params: snap.params,
-    }));
-
+  it("controls custom .Music import bar, split point, reverb environment, and 8-track mixer sliders in App", async () => {
     vi.spyOn(engineClient, "isTauri").mockReturnValue(true);
-    vi.spyOn(engineClient, "getSnapshot").mockResolvedValue(snap);
+    vi.spyOn(engineClient, "listMusicPackages").mockResolvedValue([]);
+    vi.spyOn(engineClient, "getArrangerState").mockResolvedValue({
+      loaded: true,
+      file_name: "Josiran_Pisadinha_GR.Music",
+      file_path: "/music/Josiran_Pisadinha_GR.Music",
+      version: "1.4.4",
+      instruments: [
+        { index: 1, name: "Strings (Stereo)", zone_count: 7, has_samples: true, is_drumkit: false },
+      ],
+      styles: [
+        { id: 1, name: "Josiran", category: "GR", sections: ["Variation 1"] },
+      ],
+      active_style_index: 0,
+      active_section: "Variation 1",
+      pending_section: null,
+      upper1_instrument: 1,
+      upper2_instrument: null,
+      lower_instrument: null,
+      split_key: 59,
+      split_enabled: true,
+      bpm: 120,
+      rhythm_playing: false,
+      sync_start: true,
+      auto_fill: true,
+      detected_chord_root: 0,
+      detected_chord_quality: "Major",
+      detected_chord: "C",
+      track_volumes: [1, 1, 1, 1, 1, 1, 1, 1],
+      beat_position: 0,
+    });
+    vi.spyOn(engineClient, "getSnapshot").mockResolvedValue(makeSnapshot());
     vi.spyOn(engineClient, "listMidiDevices").mockResolvedValue([]);
     vi.spyOn(engineClient, "getTelemetry").mockResolvedValue({
       sample_rate: 48000,
@@ -751,7 +762,7 @@ describe("Studio UI components", () => {
       midi_connected: false,
       midi_port_name: null,
       last_midi_note: null,
-      last_midi_velocity: null,
+      last_midi_velocity: 84,
       active_notes: [],
       pedals: {
         sustain: 0,
@@ -765,134 +776,82 @@ describe("Studio UI components", () => {
         reversed_sustain: false,
       },
     });
+    const loadSpy = vi.spyOn(engineClient, "loadMusicPackage").mockResolvedValue({
+      loaded: true,
+      file_name: "Custom.Music",
+      file_path: "/tmp/Custom.Music",
+      version: "1.4.4",
+      instruments: [],
+      styles: [],
+      active_style_index: 0,
+      active_section: "Variation 1",
+      pending_section: null,
+      upper1_instrument: 0,
+      upper2_instrument: null,
+      lower_instrument: null,
+      split_key: 59,
+      split_enabled: true,
+      bpm: 120,
+      rhythm_playing: false,
+      sync_start: true,
+      auto_fill: true,
+      detected_chord_root: 0,
+      detected_chord_quality: "Major",
+      detected_chord: "C",
+      track_volumes: [1, 1, 1, 1, 1, 1, 1, 1],
+      beat_position: 0,
+    });
+    const volSpy = vi.spyOn(engineClient, "setArrangerTrackVolume").mockResolvedValue({
+      loaded: true,
+      file_name: "Custom.Music",
+      file_path: "/tmp/Custom.Music",
+      version: "1.4.4",
+      instruments: [],
+      styles: [],
+      active_style_index: 0,
+      active_section: "Variation 1",
+      pending_section: null,
+      upper1_instrument: 0,
+      upper2_instrument: null,
+      lower_instrument: null,
+      split_key: 59,
+      split_enabled: true,
+      bpm: 120,
+      rhythm_playing: false,
+      sync_start: true,
+      auto_fill: true,
+      detected_chord_root: 0,
+      detected_chord_quality: "Major",
+      detected_chord: "C",
+      track_volumes: [0.6, 1, 1, 1, 1, 1, 1, 1],
+      beat_position: 0,
+    });
     const updateParamsSpy = vi.spyOn(engineClient, "updateParams").mockResolvedValue();
 
     render(<App />);
 
+    expect(await screen.findByLabelText("Drum Volume")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Drum Volume"), { target: { value: "0.6" } });
     await waitFor(() => {
-      expect(screen.getByLabelText("Instrument Selector")).toHaveValue("grand-ny-d");
+      expect(volSpy).toHaveBeenCalledWith(0, 0.6);
     });
 
-    // Verify all 8 category optgroups
-    const instSelect = screen.getByLabelText("Instrument Selector");
-    const optgroups = Array.from(instSelect.querySelectorAll("optgroup")).map((g) => g.label);
-    expect(optgroups).toEqual([
-      "Grand Pianos",
-      "Upright Pianos",
-      "Electric Pianos",
-      "Historical Collection",
-      "Mallets & Percussion",
-      "Plucked (Guitar & Harps)",
-      "Prepared & Experimental",
-      "Synthesizer",
-    ]);
+    fireEvent.click(screen.getByRole("button", { name: /Importar \.Music/i }));
+    fireEvent.change(screen.getByLabelText("Custom .Music File Path"), {
+      target: { value: "/tmp/Custom.Music" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Carregar" }));
+    await waitFor(() => {
+      expect(loadSpy).toHaveBeenCalledWith("/tmp/Custom.Music");
+    });
 
-    // Switch to EQ, FX & Reverb tab
-    fireEvent.click(screen.getByRole("button", { name: "EQ, FX & Reverb" }));
-
-    // Verify all 18 official Pianoteq Reverb environments + parameters
     const reverbSelect = screen.getByLabelText("Reverb Environment") as HTMLSelectElement;
-    const reverbEnvs = Array.from(reverbSelect.options).map((o) => o.value);
-    expect(reverbEnvs).toEqual([
-      "Clean studio",
-      "Jazz studio",
-      "Dry room",
-      "Small Hall",
-      "Medium Hall",
-      "Large Hall",
-      "Concert Hall",
-      "Church",
-      "Cathedral",
-      "Taj Mahal",
-      "Elevator",
-      "Broceliande",
-      "Long Plate",
-      "Super Spring",
-      "Hard Spring",
-      "Smooth Spring",
-      "Small Speaker",
-      "Legacy reverb",
-    ]);
-
     fireEvent.change(reverbSelect, { target: { value: "Taj Mahal" } });
     expect(updateParamsSpy).toHaveBeenLastCalledWith(
       expect.objectContaining({
         reverb: expect.objectContaining({ preset_name: "Taj Mahal" }),
       }),
     );
-
-    const reverbPanel = screen.getByTestId("reverb-panel");
-    fireEvent.change(within(reverbPanel).getByLabelText(/Room Size/i), {
-      target: { value: "42" },
-    });
-    expect(updateParamsSpy).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        reverb: expect.objectContaining({ room_size_m: 42 }),
-      }),
-    );
-    fireEvent.click(within(reverbPanel).getByLabelText("Reverb Enabled"));
-    expect(updateParamsSpy).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        reverb: expect.objectContaining({ enabled: false }),
-      }),
-    );
-
-    const eqPresetSelect = screen.getByLabelText("EQ Preset") as HTMLSelectElement;
-    expect(eqPresetSelect.options.length).toBeGreaterThanOrEqual(17);
-    fireEvent.change(eqPresetSelect, { target: { value: "Brilliant" } });
-    expect(updateParamsSpy).toHaveBeenCalled();
-
-    // Verify all 10 official FX types exist in Slot 1 & check dynamic labels + FX preset selector
-    const slot1Type = screen.getByLabelText("FX Slot 1 Type") as HTMLSelectElement;
-    const fxOptions = Array.from(slot1Type.options).map((o) => o.value);
-    expect(fxOptions).toEqual([
-      "Tremolo",
-      "Wah",
-      "Chorus",
-      "Flanger",
-      "Phaser",
-      "Fuzz",
-      "Delay",
-      "Amp",
-      "Compressor",
-      "ParametricEq",
-    ]);
-
-    const slot0 = screen.getByTestId("fx-slot-0");
-
-    fireEvent.change(slot1Type, { target: { value: "Wah" } });
-    expect(within(slot0).getByText("Sensitivity")).toBeInTheDocument();
-    expect(within(slot0).getByText("Depth")).toBeInTheDocument();
-    expect(within(slot0).getByText("Q")).toBeInTheDocument();
-    fireEvent.change(within(slot0).getByLabelText(/^Wah[0-9.]/i), { target: { value: "0.82" } });
-    expect(updateParamsSpy).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        fx: expect.arrayContaining([
-          expect.objectContaining({ effect_type: "Wah", param_1: 0.82 }),
-        ]),
-      }),
-    );
-
-    const slot1Preset = within(slot0).getByLabelText("FX Slot 1 Preset") as HTMLSelectElement;
-    expect(slot1Preset.options.length).toBeGreaterThan(1);
-
-    fireEvent.change(slot1Type, { target: { value: "Phaser" } });
-    expect(within(slot0).getByText("Intensity")).toBeInTheDocument();
-    expect(within(slot0).getByText("Phasing")).toBeInTheDocument();
-
-    fireEvent.change(slot1Type, { target: { value: "Flanger" } });
-    expect(within(slot0).getByText("Depth")).toBeInTheDocument();
-    expect(within(slot0).getByText("Stereo")).toBeInTheDocument();
-
-    fireEvent.change(slot1Type, { target: { value: "Fuzz" } });
-    expect(within(slot0).getByText("Drive")).toBeInTheDocument();
-    expect(within(slot0).getByText("Grit")).toBeInTheDocument();
-
-    fireEvent.change(slot1Type, { target: { value: "Amp" } });
-    expect(within(slot0).getByText("Drive")).toBeInTheDocument();
-    expect(within(slot0).getByText("Bass / Treble")).toBeInTheDocument();
-    expect(within(slot0).getByText("Cabinet")).toBeInTheDocument();
-    expect(within(slot0).getByText("Presence")).toBeInTheDocument();
   });
 
   it("opens All Packs & Presets 3-column mega-menu, filters packs, selects instrument/preset, and closes", async () => {

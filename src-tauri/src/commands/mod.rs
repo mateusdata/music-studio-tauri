@@ -4,6 +4,7 @@ use crate::contracts::{
     MidiTransportState, PresetData,
 };
 use crate::midi::list_midi_input_ports;
+use crate::music_studio::{MusicPackageEntry, MusicPackageSummary};
 use std::path::PathBuf;
 use tauri::State;
 
@@ -147,4 +148,79 @@ pub fn arm_midi_cc_learn(
     param_path: Option<String>,
 ) -> Option<String> {
     engine.arm_midi_cc_learn(param_path)
+}
+
+#[tauri::command]
+pub fn list_music_packages(engine: State<AudioEngineManager>) -> Vec<MusicPackageEntry> {
+    engine.list_music_packages()
+}
+
+#[tauri::command]
+pub fn load_music_package(
+    engine: State<AudioEngineManager>,
+    path: String,
+) -> Result<MusicPackageSummary, String> {
+    engine.load_music_package(&PathBuf::from(path))
+}
+
+#[tauri::command]
+pub fn get_arranger_state(engine: State<AudioEngineManager>) -> MusicPackageSummary {
+    engine.arranger_state()
+}
+
+#[tauri::command]
+pub fn set_arranger_section(
+    engine: State<AudioEngineManager>,
+    section_name: String,
+    immediate: bool,
+) -> MusicPackageSummary {
+    engine.set_arranger_section(&section_name, immediate)
+}
+
+#[tauri::command]
+pub fn set_arranger_transport(
+    engine: State<AudioEngineManager>,
+    playing: bool,
+    sync_start: Option<bool>,
+    bpm: Option<f32>,
+    auto_fill: Option<bool>,
+) -> MusicPackageSummary {
+    engine.set_arranger_transport(playing, sync_start, bpm, auto_fill)
+}
+
+#[tauri::command]
+pub fn set_arranger_style(
+    engine: State<AudioEngineManager>,
+    style_index: usize,
+) -> MusicPackageSummary {
+    engine.set_arranger_style(style_index)
+}
+
+#[tauri::command]
+pub fn set_arranger_keyboard_voice(
+    engine: State<AudioEngineManager>,
+    slot: String,
+    instrument_index: Option<usize>,
+    split_key: Option<u8>,
+    split_enabled: Option<bool>,
+) -> MusicPackageSummary {
+    engine.set_arranger_voice(&slot, instrument_index, split_key, split_enabled)
+}
+
+#[tauri::command]
+pub fn set_arranger_chord(
+    engine: State<AudioEngineManager>,
+    root_pc: u8,
+    quality: String,
+) -> MusicPackageSummary {
+    engine.set_arranger_chord(root_pc, &quality)
+}
+
+#[tauri::command]
+pub fn set_arranger_track_volume(
+    engine: State<AudioEngineManager>,
+    track_index: usize,
+    volume: f32,
+) -> MusicPackageSummary {
+    engine.set_arranger_track_volume(track_index, volume)
 }

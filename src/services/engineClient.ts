@@ -6,6 +6,8 @@ import type {
   MidiConfig,
   MidiPortInfo,
   MidiTransportState,
+  MusicPackageEntry,
+  MusicPackageSummary,
   PresetData,
 } from "../types/engine";
 
@@ -102,5 +104,61 @@ export const engineClient = {
 
   async armMidiCcLearn(paramPath: string | null): Promise<string | null> {
     return invoke<string | null>("arm_midi_cc_learn", { paramPath });
+  },
+
+  async listMusicPackages(): Promise<MusicPackageEntry[]> {
+    return invoke<MusicPackageEntry[]>("list_music_packages");
+  },
+
+  async loadMusicPackage(path: string): Promise<MusicPackageSummary> {
+    return invoke<MusicPackageSummary>("load_music_package", { path });
+  },
+
+  async getArrangerState(): Promise<MusicPackageSummary> {
+    return invoke<MusicPackageSummary>("get_arranger_state");
+  },
+
+  async setArrangerSection(sectionName: string, immediate: boolean): Promise<MusicPackageSummary> {
+    return invoke<MusicPackageSummary>("set_arranger_section", { sectionName, immediate });
+  },
+
+  async setArrangerTransport(
+    playing: boolean,
+    syncStart: boolean | null,
+    bpm: number | null,
+    autoFill: boolean | null,
+  ): Promise<MusicPackageSummary> {
+    return invoke<MusicPackageSummary>("set_arranger_transport", {
+      playing,
+      syncStart,
+      bpm,
+      autoFill,
+    });
+  },
+
+  async setArrangerStyle(styleIndex: number): Promise<MusicPackageSummary> {
+    return invoke<MusicPackageSummary>("set_arranger_style", { styleIndex });
+  },
+
+  async setArrangerKeyboardVoice(
+    slot: "upper1" | "upper2" | "lower" | "split",
+    instrumentIndex: number | null,
+    splitKey: number | null,
+    splitEnabled: boolean | null,
+  ): Promise<MusicPackageSummary> {
+    return invoke<MusicPackageSummary>("set_arranger_keyboard_voice", {
+      slot,
+      instrumentIndex,
+      splitKey,
+      splitEnabled,
+    });
+  },
+
+  async setArrangerChord(rootPc: number, quality: string): Promise<MusicPackageSummary> {
+    return invoke<MusicPackageSummary>("set_arranger_chord", { rootPc, quality });
+  },
+
+  async setArrangerTrackVolume(trackIndex: number, volume: number): Promise<MusicPackageSummary> {
+    return invoke<MusicPackageSummary>("set_arranger_track_volume", { trackIndex, volume });
   },
 };

@@ -289,3 +289,51 @@ export interface EngineSnapshot {
   instruments: InstrumentModel[];
   presets: PresetData[];
 }
+
+export interface MusicPackageEntry {
+  file_name: string;
+  file_path: string;
+  size_mb: number;
+  version: string;
+}
+
+export interface MusicInstrumentSummary {
+  index: number;
+  name: string;
+  zone_count: number;
+  has_samples: boolean;
+  is_drumkit: boolean;
+}
+
+export interface MusicStyleSummary {
+  id: number;
+  name: string;
+  category: string;
+  sections: string[];
+}
+
+export interface MusicPackageSummary {
+  loaded: boolean;
+  file_name: string;
+  file_path: string;
+  version: string;
+  instruments: MusicInstrumentSummary[];
+  styles: MusicStyleSummary[];
+  active_style_index: number;
+  active_section: string;
+  pending_section: string | null;
+  upper1_instrument: number;
+  upper2_instrument: number | null;
+  lower_instrument: number | null;
+  split_key: number;
+  split_enabled: boolean;
+  bpm: number;
+  rhythm_playing: boolean;
+  sync_start: boolean;
+  auto_fill: boolean;
+  detected_chord_root: number;
+  detected_chord_quality: string;
+  detected_chord: string;
+  track_volumes: number[];
+  beat_position: number;
+}
