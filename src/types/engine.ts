@@ -332,6 +332,7 @@ export interface MusicPackageSummary {
   upper_octave: number;
   transpose: number;
   bpm: number;
+  tempo_locked: boolean;
   rhythm_playing: boolean;
   sync_start: boolean;
   auto_fill: boolean;

@@ -4,10 +4,14 @@ import {
   Cable,
   Disc,
   FolderOpen,
+  Lock,
+  Minus,
   Music2,
   Play,
+  Plus,
   Sliders,
   Square,
+  Unlock,
   Volume2,
 } from "lucide-react";
 import { engineClient } from "./services/engineClient";
@@ -109,6 +113,7 @@ function createPreviewArrangerState(): MusicPackageSummary {
     upper_octave: 0,
     transpose: 0,
     bpm: 85,
+    tempo_locked: false,
     rhythm_playing: false,
     sync_start: true,
     auto_fill: true,
@@ -169,6 +174,7 @@ export function App() {
           upper_octave: 0,
           transpose: 0,
           bpm: 120,
+          tempo_locked: false,
           rhythm_playing: false,
           sync_start: true,
           auto_fill: true,
@@ -186,8 +192,8 @@ export function App() {
   const [midiPorts, setMidiPorts] = useState<MidiPortInfo[]>([]);
   const [selectedMidiPort, setSelectedMidiPort] = useState<string>("");
   const [sustainOn, setSustainOn] = useState(false);
-  const [showCustomImport, setShowCustomImport] = useState(false);
-  const [customPathInput, setCustomPathInput] = useState("");
+  const [masterVolumeDb, setMasterVolumeDb] = useState<number>(-4.0);
+  const [bufferSize, setBufferSize] = useState<number>(256);
   const [statusMsg, setStatusMsg] = useState<string>(() =>
     engineClient.isTauri()
       ? "Pronto"
@@ -203,14 +209,22 @@ export function App() {
       engineClient.getArrangerState(),
       engineClient.getSnapshot(),
       engineClient.listMidiDevices(),
+      engineClient.getTelemetry().catch(() => null),
     ])
-      .then(([pkgs, arrState, snap, ports]) => {
+      .then(([pkgs, arrState, snap, ports, tele]) => {
         if (!alive) return;
         setPackages(pkgs);
         setArranger(arrState);
         setSnapshot(snap);
+        setMasterVolumeDb(snap.params.volume_db);
         setMidiPorts(ports);
         setSelectedMidiPort(snap.midi_config.selected_port ?? "");
+        if (tele) {
+          setTelemetry(tele);
+          if ([128, 256, 512, 1024].includes(tele.buffer_size)) {
+            setBufferSize(tele.buffer_size);
+          }
+        }
         if (arrState.loaded) {
           setStatusMsg(
             `Carregado ${arrState.file_name} (${arrState.instruments.length} timbres, v${arrState.version})`,
@@ -242,8 +256,6 @@ export function App() {
       clearInterval(midiPoll);
     };
   }, []);
-
-  const params = snapshot?.params ?? null;
 
   const updateParams = useCallback(
     (mutator: (draft: EngineParams) => void) => {
@@ -280,7 +292,7 @@ export function App() {
 
   const handlePickFileDialog = async () => {
     if (!engineClient.isTauri()) {
-      setShowCustomImport((v) => !v);
+      setStatusMsg("Importador nativo disponível no aplicativo desktop Tauri");
       return;
     }
     setStatusMsg("Abrindo explorador de arquivos...");
@@ -311,12 +323,49 @@ export function App() {
     }
   };
 
-  const handleCustomImportSubmit = async () => {
-    const trimmed = customPathInput.trim();
-    if (!trimmed) return;
-    await handleLoadPackage(trimmed);
-    setShowCustomImport(false);
-  };
+  const handleMasterVolumeChange = useCallback(
+    (nextDb: number) => {
+      const clamped = Math.max(-36, Math.min(6, Math.round(nextDb * 2) / 2));
+      setMasterVolumeDb(clamped);
+      updateParams((d) => {
+        d.volume_db = clamped;
+      });
+    },
+    [updateParams],
+  );
+
+  const handleBufferSizeChange = useCallback(async (nextSize: number) => {
+    setBufferSize(nextSize);
+    if (!engineClient.isTauri()) {
+      setStatusMsg(`Buffer ajustado para ${nextSize} frames (~${((nextSize / 48000) * 1000).toFixed(1)} ms)`);
+      return;
+    }
+    try {
+      const nextTelemetry = await engineClient.setAudioBufferSize(nextSize);
+      setTelemetry(nextTelemetry);
+      setStatusMsg(
+        `Latência configurada: ${nextSize} frames (${nextTelemetry.latency_ms.toFixed(1)} ms)`,
+      );
+    } catch (err) {
+      setStatusMsg(`Falha ao configurar latência: ${String(err)}`);
+    }
+  }, []);
+
+  const handleTempoLockToggle = useCallback(async () => {
+    const nextLocked = !arranger.tempo_locked;
+    if (!engineClient.isTauri()) {
+      setArranger((prev) => ({ ...prev, tempo_locked: nextLocked }));
+      return;
+    }
+    const nextState = await engineClient.setArrangerTransport(
+      arranger.rhythm_playing,
+      null,
+      null,
+      null,
+      nextLocked,
+    );
+    setArranger(nextState);
+  }, [arranger.rhythm_playing, arranger.tempo_locked]);
 
   const handleSelectStyle = useCallback(async (val: string) => {
     const idx = Number(val);
@@ -562,16 +611,6 @@ export function App() {
             <FolderOpen size={13} /> Importar .Music
           </button>
 
-          <button
-            type="button"
-            className="btn btn-compact"
-            aria-label="Caminho manual .Music"
-            onClick={() => setShowCustomImport((v) => !v)}
-            title="Digitar caminho manualmente"
-          >
-            Caminho
-          </button>
-
           <select
             aria-label="MIDI Input"
             className="studio-select studio-select-sm"
@@ -592,40 +631,58 @@ export function App() {
         </div>
 
         <div className="telemetry-strip">
-          <div className="meter-pill">
-            <Activity size={13} color="#e29d38" />
-            <span>{telemetry?.active_voices ?? 0} voices</span>
-          </div>
-          <div className="meter-pill">
-            <span>{(telemetry?.latency_ms ?? 5.3).toFixed(1)} ms</span>
-          </div>
-          <div className="meter-pill">
-            <Volume2 size={13} />
+          <div className="meter-pill volume-pill" role="group" aria-label="Master Volume Controls">
+            <Volume2 size={13} color="#e29d38" />
+            <button
+              type="button"
+              className="btn btn-xs"
+              aria-label="Diminuir Volume"
+              onClick={() => handleMasterVolumeChange(masterVolumeDb - 1.5)}
+              title="Diminuir Volume Master"
+            >
+              <Minus size={11} />
+            </button>
+            <span className="vol-readout-pill">
+              {masterVolumeDb > 0 ? `+${masterVolumeDb.toFixed(1)}` : masterVolumeDb.toFixed(1)} dB
+            </span>
+            <button
+              type="button"
+              className="btn btn-xs"
+              aria-label="Aumentar Volume"
+              onClick={() => handleMasterVolumeChange(masterVolumeDb + 1.5)}
+              title="Aumentar Volume Master"
+            >
+              <Plus size={11} />
+            </button>
             <div className="vu-bar-wrap">
               <div className="vu-bar-fill" style={{ width: `${peakPct}%` }} />
             </div>
           </div>
+
+          <div className="meter-pill latency-pill">
+            <select
+              aria-label="Audio Buffer Size"
+              className="studio-select studio-select-sm latency-select"
+              value={String(bufferSize)}
+              onChange={(e) => handleBufferSizeChange(Number(e.target.value))}
+              title="Tamanho do buffer de áudio (latência)"
+            >
+              <option value="128">128 buf</option>
+              <option value="256">256 buf</option>
+              <option value="512">512 buf</option>
+              <option value="1024">1024 buf</option>
+            </select>
+            <span className="latency-readout">
+              {(telemetry?.latency_ms ?? (bufferSize / 48000) * 1000).toFixed(1)} ms
+            </span>
+          </div>
+
+          <div className="meter-pill">
+            <Activity size={13} color="#48b8d0" />
+            <span>{telemetry?.active_voices ?? 0} voices</span>
+          </div>
         </div>
       </header>
-
-      {showCustomImport && (
-        <div className="custom-import-bar">
-          <input
-            type="text"
-            aria-label="Custom .Music File Path"
-            className="studio-input custom-import-input"
-            placeholder="/caminho/para/seu_arquivo.Music"
-            value={customPathInput}
-            onChange={(e) => setCustomPathInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleCustomImportSubmit();
-            }}
-          />
-          <button type="button" className="btn btn-primary" onClick={handleCustomImportSubmit}>
-            Carregar
-          </button>
-        </div>
-      )}
 
       <main className="arranger-workspace">
         {/* ROW 1: 3-Column Hardware Arranger Console (Mixer | LCD & Chords | Voices & Split/Scan) */}
@@ -636,17 +693,15 @@ export function App() {
               <Sliders size={14} />
             </div>
 
-            {params && (
-              <ParameterSlider
-                label="Master Volume"
-                value={params.volume_db}
-                min={-36}
-                max={6}
-                step={0.5}
-                unit="dB"
-                onChange={(v) => updateParams((d) => { d.volume_db = v; })}
-              />
-            )}
+            <ParameterSlider
+              label="Master Volume"
+              value={masterVolumeDb}
+              min={-36}
+              max={6}
+              step={0.5}
+              unit="dB"
+              onChange={handleMasterVolumeChange}
+            />
 
             <div className="track-faders-grid">
               {TRACK_LABELS.map((label, slot) => (
@@ -735,6 +790,17 @@ export function App() {
                   value={Math.round(arranger.bpm)}
                   onChange={(e) => handleBpmChange(Number(e.target.value))}
                 />
+                <button
+                  type="button"
+                  aria-label="Tempo Lock"
+                  aria-pressed={Boolean(arranger.tempo_locked)}
+                  className={`btn btn-xs ${arranger.tempo_locked ? "btn-flag-on" : ""}`}
+                  onClick={handleTempoLockToggle}
+                  title="Travar BPM ao trocar de estilo/ritmo"
+                >
+                  {arranger.tempo_locked ? <Lock size={11} /> : <Unlock size={11} />}
+                  <span>Lock</span>
+                </button>
               </div>
             </div>
 

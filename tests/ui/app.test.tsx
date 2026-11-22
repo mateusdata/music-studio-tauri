@@ -179,6 +179,7 @@ function buildMockArrangerState(overrides?: Partial<MusicPackageSummary>): Music
     upper_octave: 0,
     transpose: 0,
     bpm: 120,
+    tempo_locked: false,
     rhythm_playing: false,
     sync_start: true,
     auto_fill: true,
@@ -336,11 +337,16 @@ describe("Music Studio Tauri Arranger App UI", () => {
     const voiceSpy = vi
       .spyOn(engineClient, "setArrangerKeyboardVoice")
       .mockResolvedValue(buildMockArrangerState({ chord_scan_upper: true, split_enabled: false }));
+    const bufSpy = vi
+      .spyOn(engineClient, "setAudioBufferSize")
+      .mockResolvedValue({ ...telemetry, buffer_size: 128, latency_ms: 2.7 });
+    const updateParamsSpy = vi.spyOn(engineClient, "updateParams").mockResolvedValue();
     const setPedalSpy = vi.spyOn(engineClient, "setPedal").mockResolvedValue();
 
     render(<App />);
 
     expect(await screen.findByText("Visor do Arranjador (.Music)")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Caminho manual .Music" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Am" }));
     await waitFor(() => {
@@ -350,6 +356,21 @@ describe("Music Studio Tauri Arranger App UI", () => {
     fireEvent.click(screen.getByRole("button", { name: /START RITMO/i }));
     await waitFor(() => {
       expect(transportSpy).toHaveBeenCalledWith(true, null, null, null);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Tempo Lock" }));
+    await waitFor(() => {
+      expect(transportSpy).toHaveBeenCalledWith(true, null, null, null, true);
+    });
+
+    fireEvent.change(screen.getByLabelText("Audio Buffer Size"), { target: { value: "128" } });
+    await waitFor(() => {
+      expect(bufSpy).toHaveBeenCalledWith(128);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Aumentar Volume" }));
+    await waitFor(() => {
+      expect(updateParamsSpy).toHaveBeenCalled();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Variation 2" }));

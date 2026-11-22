@@ -20,7 +20,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Stream, StreamConfig};
 use parking_lot::{Mutex, RwLock};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Instant;
@@ -40,6 +40,7 @@ pub enum AudioCommand {
         sync_start: Option<bool>,
         bpm: Option<f32>,
         auto_fill: Option<bool>,
+        tempo_locked: Option<bool>,
     },
     SetArrangerStyle(usize),
     SetArrangerVoice {
@@ -73,12 +74,39 @@ pub struct SharedAudioState {
 pub struct AudioEngineManager {
     pub shared: Arc<SharedAudioState>,
     cmd_tx: Mutex<Sender<AudioCommand>>,
+    reconfigure_tx: Mutex<Sender<u32>>,
+    requested_buffer_size: Arc<AtomicU32>,
     midi_handle: Mutex<Option<MidiConnectionHandle>>,
     midi_tx: Mutex<Sender<MidiEngineEvent>>,
     recorded_events: Arc<RwLock<Vec<(u64, MidiEngineEvent)>>>,
     record_start: Arc<Mutex<Option<Instant>>>,
     playback_cancel: Mutex<Option<Arc<AtomicBool>>>,
     _keep_alive: Arc<AtomicBool>,
+}
+
+struct AudioDspRuntime {
+    synth: PianoSynthEngine,
+    arranger: MusicStudioArrangerEngine,
+    fx: EffectsChain,
+    params: EngineParams,
+    pedals: PedalState,
+    inst: InstrumentModel,
+    cmd_rx: Receiver<AudioCommand>,
+    buf_l: Vec<f32>,
+    buf_r: Vec<f32>,
+}
+
+struct StreamRuntimeGuard {
+    runtime: Option<AudioDspRuntime>,
+    return_slot: Arc<Mutex<Option<AudioDspRuntime>>>,
+}
+
+impl Drop for StreamRuntimeGuard {
+    fn drop(&mut self) {
+        if let Some(rt) = self.runtime.take() {
+            *self.return_slot.lock() = Some(rt);
+        }
+    }
 }
 
 impl Drop for AudioEngineManager {
@@ -344,9 +372,13 @@ fn process_audio_command(
             sync_start,
             bpm,
             auto_fill,
+            tempo_locked,
         } => {
             if let Some(af) = auto_fill {
                 arranger.set_auto_fill(af);
+            }
+            if let Some(tl) = tempo_locked {
+                arranger.set_tempo_locked(tl);
             }
             arranger.set_transport(playing, sync_start, bpm);
             summary_dirty = true;
@@ -486,19 +518,28 @@ impl AudioEngineManager {
             Self::midi_router_loop(midi_rx, midi_shared, midi_cmd_tx, midi_rec_events, midi_rec_start);
         });
 
+        let (reconfigure_tx, reconfigure_rx) = mpsc::channel::<u32>();
+        let requested_buffer_size = Arc::new(AtomicU32::new(256));
+
         // Start real-time cpal audio output or fallback headless DSP thread on an audio supervisor thread
         let stream_shared = Arc::clone(&shared);
         let stream_keep_alive = Arc::clone(&keep_alive);
+        let stream_req_buf = Arc::clone(&requested_buffer_size);
         std::thread::spawn(move || {
-            let _stream = Self::spawn_audio_stream(stream_shared, cmd_rx, Arc::clone(&stream_keep_alive));
-            while stream_keep_alive.load(Ordering::Relaxed) {
-                std::thread::sleep(std::time::Duration::from_millis(200));
-            }
+            Self::audio_supervisor_loop(
+                stream_shared,
+                cmd_rx,
+                reconfigure_rx,
+                stream_req_buf,
+                stream_keep_alive,
+            );
         });
 
         let mgr = Self {
             shared,
             cmd_tx: Mutex::new(cmd_tx),
+            reconfigure_tx: Mutex::new(reconfigure_tx),
+            requested_buffer_size,
             midi_handle: Mutex::new(None),
             midi_tx: Mutex::new(midi_tx),
             recorded_events,
@@ -550,33 +591,114 @@ impl AudioEngineManager {
         }
     }
 
-    fn spawn_audio_stream(
+    fn make_runtime(
+        shared: &Arc<SharedAudioState>,
+        cmd_rx: Receiver<AudioCommand>,
+        sr: f32,
+    ) -> AudioDspRuntime {
+        let synth = PianoSynthEngine::new(sr);
+        let mut arranger = MusicStudioArrangerEngine::new(sr);
+        if let Some(pkg) = shared.active_music_package.read().clone() {
+            arranger.load_package(pkg);
+        }
+        let fx = EffectsChain::new(sr);
+        let params = shared.params.read().clone();
+        arranger.set_master_gain_db(params.volume_db);
+        let pedals = shared.pedals.read().clone();
+        let inst = shared.active_instrument.read().clone();
+        AudioDspRuntime {
+            synth,
+            arranger,
+            fx,
+            params,
+            pedals,
+            inst,
+            cmd_rx,
+            buf_l: vec![0.0_f32; 2048],
+            buf_r: vec![0.0_f32; 2048],
+        }
+    }
+
+    fn audio_supervisor_loop(
         shared: Arc<SharedAudioState>,
         cmd_rx: Receiver<AudioCommand>,
+        reconfigure_rx: Receiver<u32>,
+        requested_buffer_size: Arc<AtomicU32>,
         keep_alive: Arc<AtomicBool>,
-    ) -> Option<Stream> {
+    ) {
         let host = cpal::default_host();
         if let Some(device) = host.default_output_device() {
             if let Ok(default_cfg) = device.default_output_config() {
-                if let Ok(stream) =
-                    Self::build_cpal_stream(&device, default_cfg, Arc::clone(&shared), cmd_rx)
-                {
-                    if stream.play().is_ok() {
-                        return Some(stream);
+                let sr = default_cfg.sample_rate().0;
+                let runtime_slot = Arc::new(Mutex::new(Some(Self::make_runtime(
+                    &shared,
+                    cmd_rx,
+                    sr as f32,
+                ))));
+                let target = requested_buffer_size.load(Ordering::Relaxed);
+                let mut active_stream = Self::build_cpal_stream(
+                    &device,
+                    &default_cfg,
+                    Arc::clone(&shared),
+                    target,
+                    Arc::clone(&runtime_slot),
+                )
+                .ok()
+                .filter(|s| s.play().is_ok());
+
+                if active_stream.is_none() {
+                    let rt = runtime_slot.lock().take();
+                    Self::spawn_headless_fallback(shared, rt, requested_buffer_size, keep_alive);
+                    return;
+                }
+
+                while keep_alive.load(Ordering::Relaxed) {
+                    match reconfigure_rx.recv_timeout(std::time::Duration::from_millis(200)) {
+                        Ok(mut next_frames) => {
+                            while let Ok(newer) = reconfigure_rx.try_recv() {
+                                next_frames = newer;
+                            }
+                            drop(active_stream.take());
+                            let rebuilt = Self::build_cpal_stream(
+                                &device,
+                                &default_cfg,
+                                Arc::clone(&shared),
+                                next_frames,
+                                Arc::clone(&runtime_slot),
+                            )
+                            .ok()
+                            .filter(|s| s.play().is_ok());
+                            if rebuilt.is_some() {
+                                active_stream = rebuilt;
+                            } else if let Some(rt) = runtime_slot.lock().take() {
+                                Self::spawn_headless_fallback(
+                                    shared,
+                                    Some(rt),
+                                    requested_buffer_size,
+                                    keep_alive,
+                                );
+                                return;
+                            }
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                     }
                 }
-                return Self::spawn_headless_fallback(shared, None, keep_alive);
+                drop(active_stream);
+                return;
             }
         }
 
-        Self::spawn_headless_fallback(shared, Some(cmd_rx), keep_alive)
+        let rt = Self::make_runtime(&shared, cmd_rx, 48000.0);
+        Self::spawn_headless_fallback(shared, Some(rt), requested_buffer_size, keep_alive);
     }
 
     fn spawn_headless_fallback(
         shared: Arc<SharedAudioState>,
-        cmd_rx: Option<Receiver<AudioCommand>>,
+        mut runtime_opt: Option<AudioDspRuntime>,
+        requested_buffer_size: Arc<AtomicU32>,
         keep_alive: Arc<AtomicBool>,
-    ) -> Option<Stream> {
+    ) {
         {
             let mut t = shared.telemetry.write();
             t.audio_backend = "Headless DSP Fallback (48kHz)".to_string();
@@ -584,109 +706,130 @@ impl AudioEngineManager {
         }
         std::thread::spawn(move || {
             let sr = 48000.0_f32;
-            let mut synth = PianoSynthEngine::new(sr);
-            let mut arranger = MusicStudioArrangerEngine::new(sr);
-            if let Some(pkg) = shared.active_music_package.read().clone() {
-                arranger.load_package(pkg);
-            }
-            let mut fx = EffectsChain::new(sr);
-            let mut params = shared.params.read().clone();
-            arranger.set_master_gain_db(params.volume_db);
-            let mut pedals = shared.pedals.read().clone();
-            let mut inst = shared.active_instrument.read().clone();
-            let mut buf_l = vec![0.0_f32; 256];
-            let mut buf_r = vec![0.0_f32; 256];
+            let mut dummy_synth;
+            let mut dummy_arranger;
+            let mut dummy_fx;
+            let mut dummy_params;
+            let mut dummy_pedals;
+            let mut dummy_inst;
+            let mut dummy_l = vec![0.0_f32; 2048];
+            let mut dummy_r = vec![0.0_f32; 2048];
+
             while keep_alive.load(Ordering::Relaxed) {
-                std::thread::sleep(std::time::Duration::from_millis(5));
-                Self::render_dsp_slice(
-                    256,
-                    &mut buf_l,
-                    &mut buf_r,
-                    &mut synth,
-                    &mut arranger,
-                    &mut fx,
-                    &mut params,
-                    &mut pedals,
-                    &mut inst,
-                    &shared,
-                    cmd_rx.as_ref(),
-                    sr,
-                );
+                let target_frames =
+                    (requested_buffer_size.load(Ordering::Relaxed) as usize).clamp(64, 2048);
+                let sleep_ms = ((target_frames as f32 / sr) * 1000.0).clamp(2.0, 20.0) as u64;
+                std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
+
+                if let Some(ref mut rt) = runtime_opt {
+                    if rt.buf_l.len() < target_frames {
+                        rt.buf_l.resize(target_frames, 0.0);
+                        rt.buf_r.resize(target_frames, 0.0);
+                    }
+                    Self::render_dsp_slice(
+                        target_frames,
+                        &mut rt.buf_l,
+                        &mut rt.buf_r,
+                        &mut rt.synth,
+                        &mut rt.arranger,
+                        &mut rt.fx,
+                        &mut rt.params,
+                        &mut rt.pedals,
+                        &mut rt.inst,
+                        &shared,
+                        Some(&rt.cmd_rx),
+                        sr,
+                    );
+                } else {
+                    dummy_synth = PianoSynthEngine::new(sr);
+                    dummy_arranger = MusicStudioArrangerEngine::new(sr);
+                    dummy_fx = EffectsChain::new(sr);
+                    dummy_params = shared.params.read().clone();
+                    dummy_pedals = shared.pedals.read().clone();
+                    dummy_inst = shared.active_instrument.read().clone();
+                    Self::render_dsp_slice(
+                        target_frames,
+                        &mut dummy_l,
+                        &mut dummy_r,
+                        &mut dummy_synth,
+                        &mut dummy_arranger,
+                        &mut dummy_fx,
+                        &mut dummy_params,
+                        &mut dummy_pedals,
+                        &mut dummy_inst,
+                        &shared,
+                        None,
+                        sr,
+                    );
+                }
             }
         });
-        None
     }
 
     fn build_cpal_stream(
         device: &Device,
-        default_cfg: cpal::SupportedStreamConfig,
+        default_cfg: &cpal::SupportedStreamConfig,
         shared: Arc<SharedAudioState>,
-        cmd_rx: Receiver<AudioCommand>,
+        target_buffer_frames: u32,
+        runtime_slot: Arc<Mutex<Option<AudioDspRuntime>>>,
     ) -> Result<Stream, String> {
         let sr = default_cfg.sample_rate().0;
         let channels = default_cfg.channels().max(2) as usize;
         let dev_name = device.name().unwrap_or_else(|_| "Linux Audio".to_string());
 
-        let config = StreamConfig {
-            channels: channels as u16,
-            sample_rate: cpal::SampleRate(sr),
-            buffer_size: cpal::BufferSize::Default,
-        };
+        for buf_mode in [
+            cpal::BufferSize::Fixed(target_buffer_frames.clamp(64, 2048)),
+            cpal::BufferSize::Default,
+        ] {
+            let Some(rt) = runtime_slot.lock().take() else {
+                return Err("Audio DSP runtime unavailable".to_string());
+            };
+            let config = StreamConfig {
+                channels: channels as u16,
+                sample_rate: cpal::SampleRate(sr),
+                buffer_size: buf_mode,
+            };
 
-        {
-            let mut t = shared.telemetry.write();
-            t.sample_rate = sr;
-            t.buffer_size = 256;
-            t.latency_ms = (256.0 / sr as f32) * 1000.0;
-            t.audio_backend = format!("PipeWire/ALSA ({})", dev_name);
-            t.audio_active = true;
-        }
+            let mut guard = StreamRuntimeGuard {
+                runtime: Some(rt),
+                return_slot: Arc::clone(&runtime_slot),
+            };
+            let cb_shared = Arc::clone(&shared);
+            let mut telemetry_tick: u32 = 0;
 
-        let mut synth = PianoSynthEngine::new(sr as f32);
-        let mut arranger = MusicStudioArrangerEngine::new(sr as f32);
-        if let Some(pkg) = shared.active_music_package.read().clone() {
-            arranger.load_package(pkg);
-        }
-        let mut fx = EffectsChain::new(sr as f32);
-        let mut params = shared.params.read().clone();
-        arranger.set_master_gain_db(params.volume_db);
-        let mut pedals = PedalState::default();
-        let mut inst = shared.active_instrument.read().clone();
-        let mut buf_l = vec![0.0_f32; 2048];
-        let mut buf_r = vec![0.0_f32; 2048];
-        let mut telemetry_tick: u32 = 0;
-
-        let stream = device
-            .build_output_stream(
+            let attempt = device.build_output_stream(
                 &config,
                 move |output: &mut [f32], _| {
+                    let Some(rt) = guard.runtime.as_mut() else {
+                        output.fill(0.0);
+                        return;
+                    };
                     let start = Instant::now();
                     let frames = output.len() / channels;
-                    if frames > buf_l.len() {
-                        buf_l.resize(frames, 0.0);
-                        buf_r.resize(frames, 0.0);
+                    if frames > rt.buf_l.len() {
+                        rt.buf_l.resize(frames, 0.0);
+                        rt.buf_r.resize(frames, 0.0);
                     }
 
-                    // Drain lock-free command queue
-                    while let Ok(cmd) = cmd_rx.try_recv() {
+                    while let Ok(cmd) = rt.cmd_rx.try_recv() {
                         process_audio_command(
                             cmd,
-                            &mut synth,
-                            &mut arranger,
-                            &mut params,
-                            &mut pedals,
-                            &mut inst,
-                            &shared,
+                            &mut rt.synth,
+                            &mut rt.arranger,
+                            &mut rt.params,
+                            &mut rt.pedals,
+                            &mut rt.inst,
+                            &cb_shared,
                         );
                     }
 
-                    let slice_l = &mut buf_l[..frames];
-                    let slice_r = &mut buf_r[..frames];
-                    if arranger.has_loaded_package() {
-                        arranger.process_block(slice_l, slice_r);
+                    let slice_l = &mut rt.buf_l[..frames];
+                    let slice_r = &mut rt.buf_r[..frames];
+                    if rt.arranger.has_loaded_package() {
+                        rt.arranger.process_block(slice_l, slice_r);
                     } else {
-                        synth.process_block(slice_l, slice_r, &params, &pedals);
-                        fx.process_block(slice_l, slice_r, &params);
+                        rt.synth.process_block(slice_l, slice_r, &rt.params, &rt.pedals);
+                        rt.fx.process_block(slice_l, slice_r, &rt.params);
                     }
 
                     let mut peak_l = 0.0_f32;
@@ -716,36 +859,46 @@ impl AudioEngineManager {
                         let elapsed_us = start.elapsed().as_secs_f32() * 1_000_000.0;
                         let budget_us = (frames as f32 / sr as f32) * 1_000_000.0;
                         let cpu = ((elapsed_us / budget_us.max(1.0)) * 100.0).clamp(0.0, 100.0);
-                        if let Some(mut t) = shared.telemetry.try_write() {
+                        if let Some(mut t) = cb_shared.telemetry.try_write() {
                             t.buffer_size = frames;
                             t.latency_ms = (frames as f32 / sr as f32) * 1000.0;
-                            if arranger.has_loaded_package() {
-                                t.active_voices = arranger.active_voice_count();
-                                t.active_notes = arranger.active_notes();
+                            if rt.arranger.has_loaded_package() {
+                                t.active_voices = rt.arranger.active_voice_count();
+                                t.active_notes = rt.arranger.active_notes();
                             } else {
-                                t.active_voices = synth.active_voice_count();
-                                t.active_notes = synth.active_notes();
+                                t.active_voices = rt.synth.active_voice_count();
+                                t.active_notes = rt.synth.active_notes();
                             }
                             t.cpu_load_pct = cpu;
                             t.peak_l = peak_l;
                             t.peak_r = peak_r;
                             t.rms_l = (sq_l / frames.max(1) as f32).sqrt();
                             t.rms_r = (sq_r / frames.max(1) as f32).sqrt();
-                            t.pedals = pedals.clone();
+                            t.pedals = rt.pedals.clone();
                         }
-                        if telemetry_tick % 8 == 0 && arranger.rhythm_playing {
-                            if let Some(mut s) = shared.arranger_summary.try_write() {
-                                *s = arranger.summary();
+                        if telemetry_tick % 8 == 0 && rt.arranger.rhythm_playing {
+                            if let Some(mut s) = cb_shared.arranger_summary.try_write() {
+                                *s = rt.arranger.summary();
                             }
                         }
                     }
                 },
                 |_err| {},
                 None,
-            )
-            .map_err(|e| e.to_string())?;
+            );
 
-        Ok(stream)
+            if let Ok(stream) = attempt {
+                let mut t = shared.telemetry.write();
+                t.sample_rate = sr;
+                t.buffer_size = target_buffer_frames.clamp(64, 2048) as usize;
+                t.latency_ms = (t.buffer_size as f32 / sr as f32) * 1000.0;
+                t.audio_backend = format!("PipeWire/ALSA ({})", dev_name);
+                t.audio_active = true;
+                return Ok(stream);
+            }
+        }
+
+        Err("Failed to build cpal output stream".to_string())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1142,12 +1295,31 @@ impl AudioEngineManager {
         self.arranger_state()
     }
 
+    pub fn set_audio_buffer_size(&self, buffer_size: u32) -> Result<EngineTelemetry, String> {
+        if !matches!(buffer_size, 128 | 256 | 512 | 1024) {
+            return Err(format!(
+                "Tamanho de buffer inválido: {} (use 128, 256, 512 ou 1024)",
+                buffer_size
+            ));
+        }
+        self.requested_buffer_size.store(buffer_size, Ordering::Relaxed);
+        {
+            let mut t = self.shared.telemetry.write();
+            let sr = t.sample_rate.max(8000) as f32;
+            t.buffer_size = buffer_size as usize;
+            t.latency_ms = (buffer_size as f32 / sr) * 1000.0;
+        }
+        let _ = self.reconfigure_tx.lock().send(buffer_size);
+        Ok(self.shared.telemetry.read().clone())
+    }
+
     pub fn set_arranger_transport(
         &self,
         playing: bool,
         sync_start: Option<bool>,
         bpm: Option<f32>,
         auto_fill: Option<bool>,
+        tempo_locked: Option<bool>,
     ) -> MusicPackageSummary {
         {
             let mut s = self.shared.arranger_summary.write();
@@ -1163,18 +1335,29 @@ impl AudioEngineManager {
             if let Some(af) = auto_fill {
                 s.auto_fill = af;
             }
+            if let Some(tl) = tempo_locked {
+                s.tempo_locked = tl;
+            }
         }
         let _ = self.cmd_tx.lock().send(AudioCommand::SetArrangerTransport {
             playing,
             sync_start,
             bpm,
             auto_fill,
+            tempo_locked,
         });
         self.arranger_state()
     }
 
     pub fn set_arranger_style(&self, style_index: usize) -> MusicPackageSummary {
         {
+            let pkg_bpm = self
+                .shared
+                .active_music_package
+                .read()
+                .as_ref()
+                .and_then(|pkg| pkg.styles.get(style_index))
+                .map(|st| st.bpm);
             let mut s = self.shared.arranger_summary.write();
             let next_sec = s.styles.get(style_index).and_then(|st| {
                 st.sections
@@ -1185,6 +1368,11 @@ impl AudioEngineManager {
             });
             if style_index < s.styles.len() {
                 s.active_style_index = style_index;
+                if !s.tempo_locked {
+                    if let Some(b) = pkg_bpm {
+                        s.bpm = b;
+                    }
+                }
                 if let Some(first_sec) = next_sec {
                     s.active_section = first_sec;
                 }
@@ -1302,6 +1490,7 @@ impl AudioEngineManager {
                 Some(s.upper_octave),
                 Some(s.transpose),
             );
+            arranger.set_tempo_locked(s.tempo_locked);
             arranger.set_transport(true, Some(s.sync_start), Some(s.bpm));
         }
         let mut fx = EffectsChain::new(sr as f32);
@@ -1686,5 +1875,18 @@ mod tests {
         assert!(!stopped.is_playing);
         assert!(!stopped.is_recording);
         assert!(stopped.current_track_name.is_none());
+    }
+
+    #[test]
+    fn test_set_audio_buffer_size() {
+        let mgr = AudioEngineManager::start();
+        assert!(mgr.set_audio_buffer_size(99).is_err());
+
+        for &sz in &[128_u32, 256, 512, 1024] {
+            let t = mgr.set_audio_buffer_size(sz).expect("valid buffer size");
+            assert_eq!(t.buffer_size, sz as usize);
+            let expected_ms = (sz as f32 / t.sample_rate.max(8000) as f32) * 1000.0;
+            assert!((t.latency_ms - expected_ms).abs() < 0.05);
+        }
     }
 }

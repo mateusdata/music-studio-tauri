@@ -131,13 +131,19 @@ export const engineClient = {
     syncStart: boolean | null,
     bpm: number | null,
     autoFill: boolean | null,
+    tempoLocked: boolean | null = null,
   ): Promise<MusicPackageSummary> {
     return invoke<MusicPackageSummary>("set_arranger_transport", {
       playing,
       syncStart,
       bpm,
       autoFill,
+      tempoLocked,
     });
+  },
+
+  async setAudioBufferSize(bufferSize: number): Promise<EngineTelemetry> {
+    return invoke<EngineTelemetry>("set_audio_buffer_size", { bufferSize });
   },
 
   async setArrangerStyle(styleIndex: number): Promise<MusicPackageSummary> {

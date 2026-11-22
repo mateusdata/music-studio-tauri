@@ -216,8 +216,17 @@ pub fn set_arranger_transport(
     sync_start: Option<bool>,
     bpm: Option<f32>,
     auto_fill: Option<bool>,
+    tempo_locked: Option<bool>,
 ) -> MusicPackageSummary {
-    engine.set_arranger_transport(playing, sync_start, bpm, auto_fill)
+    engine.set_arranger_transport(playing, sync_start, bpm, auto_fill, tempo_locked)
+}
+
+#[tauri::command]
+pub fn set_audio_buffer_size(
+    engine: State<AudioEngineManager>,
+    buffer_size: u32,
+) -> Result<EngineTelemetry, String> {
+    engine.set_audio_buffer_size(buffer_size)
 }
 
 #[tauri::command]

@@ -59,6 +59,7 @@ pub fn run() {
             commands::set_arranger_keyboard_voice,
             commands::set_arranger_chord,
             commands::set_arranger_track_volume,
+            commands::set_audio_buffer_size,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Piano Tect Tauri application");

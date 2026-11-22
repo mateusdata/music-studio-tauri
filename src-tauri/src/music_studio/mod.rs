@@ -58,6 +58,7 @@ pub struct MusicPackageSummary {
     pub upper_octave: i8,
     pub transpose: i8,
     pub bpm: f32,
+    pub tempo_locked: bool,
     pub rhythm_playing: bool,
     pub sync_start: bool,
     pub auto_fill: bool,
@@ -90,6 +91,7 @@ impl Default for MusicPackageSummary {
             upper_octave: 0,
             transpose: 0,
             bpm: 120.0,
+            tempo_locked: false,
             rhythm_playing: false,
             sync_start: true,
             auto_fill: true,
@@ -113,7 +115,10 @@ pub struct SampleZone {
     pub loop_start: usize,
     pub loop_end: usize,
     pub loop_enabled: bool,
+    pub loop_mode: u8,
     pub gain: f32,
+    pub pan: i32,
+    pub fine_tune: i32,
     pub pool_sid: u32,
     pub pcm_l: Arc<Vec<f32>>,
     pub pcm_r: Arc<Vec<f32>>,
@@ -123,6 +128,9 @@ pub struct SampleZone {
 pub struct LoadedInstrument {
     pub index: usize,
     pub name: String,
+    pub volume: f32,
+    pub pan: i32,
+    pub inst_type: u8,
     pub is_drumkit: bool,
     pub zones: Vec<SampleZone>,
 }
@@ -141,6 +149,9 @@ pub struct RhythmTrack {
     pub track_slot: usize,
     pub instrument_index: usize,
     pub volume: f32,
+    pub pan: i32,
+    pub fine_tune: i32,
+    pub key_move: i32,
     pub octave_shift: i32,
     pub is_drum: bool,
     pub events: Vec<RhythmNoteEvent>,
@@ -151,6 +162,8 @@ pub struct RhythmSection {
     pub id: u32,
     pub name: String,
     pub length_ticks: u32,
+    pub is_loop: bool,
+    pub jump_to: i32,
     pub tracks: Vec<RhythmTrack>,
 }
 
@@ -190,10 +203,35 @@ fn decode_latin1(bytes: &[u8]) -> String {
 }
 
 fn is_valid_sample_rate(sr: u32) -> bool {
-    matches!(
-        sr,
-        8000 | 11025 | 16000 | 22050 | 24000 | 31250 | 32000 | 44100 | 48000 | 88200 | 96000
-    ) || (16000..=96000).contains(&sr)
+    (4_000..=192_000).contains(&sr)
+}
+
+fn version_is_below_1_3(version: &str) -> bool {
+    let last = version.split('\r').last().unwrap_or(version).trim();
+    let mut parts = last.split('.');
+    let Ok(major) = parts.next().unwrap_or("").parse::<u32>() else {
+        return false;
+    };
+    let Ok(minor) = parts.next().unwrap_or("").parse::<u32>() else {
+        return false;
+    };
+    major == 1 && minor < 3
+}
+
+fn convert_stored_bpm(raw: u32, is_v12: bool) -> Option<f32> {
+    if raw == 0 {
+        return None;
+    }
+    let bpm = if is_v12 {
+        ((raw as f32) * 120.0 / 100.0).round()
+    } else {
+        raw as f32
+    };
+    if (40.0..=240.0).contains(&bpm) {
+        Some(bpm)
+    } else {
+        None
+    }
 }
 
 fn track_name_to_slot(name: &str) -> Option<usize> {
@@ -240,7 +278,7 @@ struct ParsedSamplePool {
     entries: HashMap<u32, (usize, usize)>,
 }
 
-fn parse_header_and_sample_pool(data: &[u8]) -> ParsedSamplePool {
+fn parse_header_and_sample_pool(data: &[u8], is_v12: bool) -> ParsedSamplePool {
     let vlen = read_u32_le(data, 0x20).unwrap_or(0) as usize;
     let mut cur = 0x24 + vlen;
     if data.get(cur..cur + 4) == Some(b"\xff\xff\x00\x00") {
@@ -264,9 +302,12 @@ fn parse_header_and_sample_pool(data: &[u8]) -> ParsedSamplePool {
         }
     }
 
-    let header_bpm = read_u32_le(data, cur + 5)
-        .filter(|&b| (40..=240).contains(&b))
-        .map(|b| b as f32);
+    let raw_hdr_bpm = data
+        .get(cur + 10..cur + 12)
+        .map(|b| u16::from_le_bytes([b[0], b[1]]) as u32)
+        .filter(|&v| v > 0)
+        .or_else(|| read_u32_le(data, cur + 10));
+    let header_bpm = raw_hdr_bpm.and_then(|raw| convert_stored_bpm(raw, is_v12));
 
     let has_pool = read_u32_le(data, 0x14) == Some(1);
     if !has_pool || cur + 142 >= data.len() {
@@ -383,39 +424,21 @@ fn looks_like_zone_97(data: &[u8], off: usize) -> bool {
     };
     let root = hdr[0];
     let nlen = hdr[1];
-    let sr = u16::from_le_bytes([hdr[33], hdr[34]]) as u32;
+    let sr_u16 = u16::from_le_bytes([hdr[33], hdr[34]]) as u32;
     let bits = hdr[35];
     let ch = hdr[36];
-    let sr2 = u32::from_le_bytes([hdr[37], hdr[38], hdr[39], hdr[40]]);
+    let sr_u32 = u32::from_le_bytes([hdr[37], hdr[38], hdr[39], hdr[40]]);
+    let eff_sr = if sr_u32 != 0 { sr_u32 } else { sr_u16 };
+    let sr_consistent = sr_u32 == 0 || sr_u32 == sr_u16 || sr_u16 == 0;
     let nfr = u32::from_le_bytes([hdr[45], hdr[46], hdr[47], hdr[48]]);
     root <= 127
-        && nlen >= 1
         && nlen <= 32
-        && is_valid_sample_rate(sr)
-        && sr == sr2
+        && sr_consistent
+        && is_valid_sample_rate(eff_sr)
         && (bits == 8 || bits == 16)
         && (ch == 1 || ch == 2)
         && nfr >= 8
         && nfr <= 15_000_000
-}
-
-fn looks_like_zone_96(data: &[u8], off: usize) -> bool {
-    let Some(hdr) = data.get(off..off + 96) else {
-        return false;
-    };
-    let sr = u16::from_le_bytes([hdr[34], hdr[35]]) as u32;
-    let bits = hdr[36];
-    let ch = hdr[37];
-    let nfr = u32::from_le_bytes([hdr[46], hdr[47], hdr[48], hdr[49]]);
-    let loop_end = u32::from_le_bytes([hdr[78], hdr[79], hdr[80], hdr[81]]);
-    let printable = hdr[2..10].iter().any(|&b| b.is_ascii_alphanumeric());
-    printable
-        && is_valid_sample_rate(sr)
-        && (bits == 8 || bits == 16)
-        && (ch == 1 || ch == 2)
-        && nfr >= 16
-        && nfr <= 15_000_000
-        && loop_end <= nfr + 16
 }
 
 fn decode_pcm_bytes(raw: &[u8], bits: u8, ch: u8, nfr_hint: usize) -> (Vec<f32>, Vec<f32>) {
@@ -465,79 +488,103 @@ fn decode_pcm_bytes(raw: &[u8], bits: u8, ch: u8, nfr_hint: usize) -> (Vec<f32>,
     (pcm_l, pcm_r)
 }
 
+fn factory_sample_pool_index() -> &'static HashMap<u32, (std::path::PathBuf, u64, usize)> {
+    static CACHE: std::sync::OnceLock<HashMap<u32, (std::path::PathBuf, u64, usize)>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| {
+        let mut map = HashMap::new();
+        for fname in ["User.Template", "Default.Template"] {
+            let p = Path::new(DEFAULT_MUSIC_STUDIO_DIR).join(fname);
+            if !p.exists() {
+                continue;
+            }
+            if let Ok(bytes) = std::fs::read(&p) {
+                let pool = parse_header_and_sample_pool(&bytes, false);
+                for (sid, (off, len)) in pool.entries {
+                    map.entry(sid).or_insert((p.clone(), off as u64, len));
+                }
+            }
+        }
+        map
+    })
+}
+
+fn read_factory_pool_bytes(sid_key: u32) -> Option<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let (path, off, len) = factory_sample_pool_index().get(&sid_key)?;
+    if *len == 0 || *len > 32 * 1024 * 1024 {
+        return None;
+    }
+    let mut file = std::fs::File::open(path).ok()?;
+    file.seek(SeekFrom::Start(*off)).ok()?;
+    let mut buf = vec![0_u8; *len];
+    file.read_exact(&mut buf).ok()?;
+    Some(buf)
+}
+
 fn parse_zone_at(
     data: &[u8],
     cur: usize,
-    is_96: bool,
-    inline_pcm: bool,
     pool: &HashMap<u32, (usize, usize)>,
     fallback_keys: &[u8],
     zone_idx: usize,
 ) -> Option<(SampleZone, usize)> {
-    let hdr_len = if is_96 { 96 } else { 97 };
-    let hdr = data.get(cur..cur + hdr_len)?;
+    let hdr = data.get(cur..cur + 97)?;
 
-    let (root_key, name, sr, bits, ch, pool_sid, nfr, loop_mode, loop_start, loop_end, gain_pct) =
-        if is_96 {
-            let rk = if hdr[1] <= 127 && hdr[1] >= 21 {
-                hdr[1]
-            } else {
-                *fallback_keys.get(zone_idx).unwrap_or(&60)
-            };
-            let sname = decode_latin1(&hdr[2..34]);
-            let sr = u16::from_le_bytes([hdr[34], hdr[35]]) as u32;
-            let bits = hdr[36];
-            let ch = hdr[37];
-            let sid = u32::from_le_bytes([hdr[42], hdr[43], hdr[44], hdr[45]]);
-            let nfr = u32::from_le_bytes([hdr[46], hdr[47], hdr[48], hdr[49]]) as usize;
-            let gain = u32::from_le_bytes([hdr[54], hdr[55], hdr[56], hdr[57]]);
-            let lmode = u32::from_le_bytes([hdr[70], hdr[71], hdr[72], hdr[73]]);
-            let lstart = u32::from_le_bytes([hdr[74], hdr[75], hdr[76], hdr[77]]) as usize;
-            let lend = u32::from_le_bytes([hdr[78], hdr[79], hdr[80], hdr[81]]) as usize;
-            (rk, sname, sr, bits, ch, sid, nfr, lmode, lstart, lend, gain)
-        } else {
-            let rk = hdr[0];
-            let sname = decode_latin1(&hdr[2..33]);
-            let sr = u16::from_le_bytes([hdr[33], hdr[34]]) as u32;
-            let bits = hdr[35];
-            let ch = hdr[36];
-            let sid = u32::from_le_bytes([hdr[41], hdr[42], hdr[43], hdr[44]]);
-            let nfr = u32::from_le_bytes([hdr[45], hdr[46], hdr[47], hdr[48]]) as usize;
-            let gain = u32::from_le_bytes([hdr[53], hdr[54], hdr[55], hdr[56]]);
-            let lmode = u32::from_le_bytes([hdr[69], hdr[70], hdr[71], hdr[72]]);
-            let lstart = u32::from_le_bytes([hdr[73], hdr[74], hdr[75], hdr[76]]) as usize;
-            let lend = u32::from_le_bytes([hdr[77], hdr[78], hdr[79], hdr[80]]) as usize;
-            (rk, sname, sr, bits, ch, sid, nfr, lmode, lstart, lend, gain)
-        };
+    let rk_raw = hdr[0];
+    let root_key = if rk_raw <= 127 {
+        rk_raw
+    } else {
+        *fallback_keys.get(zone_idx).unwrap_or(&60)
+    };
+    let nlen = (hdr[1] as usize).min(31);
+    let name = decode_latin1(&hdr[2..2 + nlen]);
+    let sr_u16 = u16::from_le_bytes([hdr[33], hdr[34]]) as u32;
+    let bits = hdr[35];
+    let ch = hdr[36];
+    let sr_u32 = u32::from_le_bytes([hdr[37], hdr[38], hdr[39], hdr[40]]);
+    let sr = if sr_u32 != 0 { sr_u32 } else { sr_u16 };
+    let pool_sid = u32::from_le_bytes([hdr[41], hdr[42], hdr[43], hdr[44]]);
+    let nfr = u32::from_le_bytes([hdr[45], hdr[46], hdr[47], hdr[48]]) as usize;
+    let vol_raw = i32::from_le_bytes([hdr[53], hdr[54], hdr[55], hdr[56]]);
+    let pan = i32::from_le_bytes([hdr[57], hdr[58], hdr[59], hdr[60]]).clamp(-100, 100);
+    let fine_tune = i32::from_le_bytes([hdr[61], hdr[62], hdr[63], hdr[64]]).clamp(-12000, 12000);
+    let loop_mode = hdr[69];
+    let loop_start = u32::from_le_bytes([hdr[73], hdr[74], hdr[75], hdr[76]]) as usize;
+    let loop_end = u32::from_le_bytes([hdr[77], hdr[78], hdr[79], hdr[80]]) as usize;
 
     let bytes_per_sample = (bits as usize / 8).max(1);
     let pcm_bytes = nfr.saturating_mul(ch as usize).saturating_mul(bytes_per_sample);
-    let pcm_start = cur + hdr_len;
+    let pcm_start = cur + 97;
 
-    let (pcm_l, pcm_r, next_cur) = if inline_pcm
-        && pcm_bytes > 0
-        && pcm_start + pcm_bytes <= data.len()
-    {
-        let (l, r) = decode_pcm_bytes(&data[pcm_start..pcm_start + pcm_bytes], bits, ch, nfr);
-        (l, r, pcm_start + pcm_bytes)
-    } else if let Some(&(pool_off, pool_len)) = pool_sid
-        .checked_sub(1)
-        .and_then(|id| pool.get(&id))
-        .or_else(|| pool.get(&pool_sid))
-    {
-        let avail = pool_len.min(data.len().saturating_sub(pool_off));
-        let (l, r) = decode_pcm_bytes(&data[pool_off..pool_off + avail], bits, ch, nfr);
-        (l, r, pcm_start)
+    let (pcm_l, pcm_r, next_cur) = if pool_sid == 0 {
+        if pcm_bytes > 0 && pcm_start + pcm_bytes <= data.len() {
+            let (l, r) = decode_pcm_bytes(&data[pcm_start..pcm_start + pcm_bytes], bits, ch, nfr);
+            (l, r, pcm_start + pcm_bytes)
+        } else {
+            (Vec::new(), Vec::new(), pcm_start)
+        }
     } else {
-        (Vec::new(), Vec::new(), pcm_start)
+        let pool_key = pool_sid - 1;
+        if let Some(&(pool_off, pool_len)) = pool.get(&pool_key) {
+            let avail = pool_len.min(data.len().saturating_sub(pool_off));
+            let (l, r) = decode_pcm_bytes(&data[pool_off..pool_off + avail], bits, ch, nfr);
+            (l, r, pcm_start)
+        } else if let Some(ext_bytes) = read_factory_pool_bytes(pool_key) {
+            let (l, r) = decode_pcm_bytes(&ext_bytes, bits, ch, nfr);
+            (l, r, pcm_start)
+        } else {
+            (Vec::new(), Vec::new(), pcm_start)
+        }
     };
 
-    let gain_norm = if (1..=250).contains(&gain_pct) {
-        gain_pct as f32 / 100.0
+    let gain_norm = if (1..=250).contains(&vol_raw) {
+        vol_raw as f32 / 100.0
     } else {
         1.0
     };
-    let valid_loop = loop_mode != 0 && loop_end > loop_start + 48 && loop_end <= pcm_l.len();
+    let valid_loop =
+        (loop_mode == 2 || loop_mode == 3) && loop_end > loop_start + 32 && loop_end <= pcm_l.len();
 
     Some((
         SampleZone {
@@ -550,7 +597,10 @@ fn parse_zone_at(
             loop_start,
             loop_end,
             loop_enabled: valid_loop,
+            loop_mode,
             gain: gain_norm,
+            pan,
+            fine_tune,
             pool_sid,
             pcm_l: Arc::new(pcm_l),
             pcm_r: Arc::new(pcm_r),
@@ -564,42 +614,19 @@ fn parse_zones_sequence(
     start: usize,
     nzones: usize,
     block_end: usize,
-    is_96: bool,
     fallback_keys: &[u8],
     pool: &HashMap<u32, (usize, usize)>,
 ) -> Vec<SampleZone> {
     let mut zones = Vec::new();
-    let hdr_len = if is_96 { 96 } else { 97 };
     let mut cur = start;
     for z in 0..nzones.max(1).min(128) {
-        if cur >= block_end {
+        if cur + 97 > block_end {
             break;
         }
-        let valid_hdr = if is_96 {
-            looks_like_zone_96(data, cur)
-        } else {
-            looks_like_zone_97(data, cur)
-        };
-        if !valid_hdr {
+        if !looks_like_zone_97(data, cur) {
             break;
         }
-        let nfr = read_u32_le(data, cur + if is_96 { 46 } else { 45 }).unwrap_or(0) as usize;
-        let bits = data[cur + if is_96 { 36 } else { 35 }] as usize;
-        let ch = data[cur + if is_96 { 37 } else { 36 }] as usize;
-        let pcm_bytes = nfr.saturating_mul(ch).saturating_mul((bits / 8).max(1));
-        let next_is_hdr = if z + 1 < nzones {
-            if is_96 {
-                looks_like_zone_96(data, cur + hdr_len)
-            } else {
-                looks_like_zone_97(data, cur + hdr_len)
-            }
-        } else {
-            cur + hdr_len + 16 >= block_end
-        };
-        let inline_pcm = pcm_bytes > 0 && !next_is_hdr && cur + hdr_len + pcm_bytes <= block_end;
-        if let Some((zone, nxt)) =
-            parse_zone_at(data, cur, is_96, inline_pcm, pool, fallback_keys, z)
-        {
+        if let Some((zone, nxt)) = parse_zone_at(data, cur, pool, fallback_keys, z) {
             zones.push(zone);
             cur = nxt;
         } else {
@@ -646,12 +673,14 @@ fn factory_fallback_instruments() -> &'static HashMap<String, Vec<SampleZone>> {
         std::sync::OnceLock::new();
     CACHE.get_or_init(|| {
         let mut map = HashMap::new();
-        let template_path = Path::new(DEFAULT_MUSIC_STUDIO_DIR).join("Default.Template");
-        if template_path.exists() {
-            if let Ok(pkg) = parse_music_file_internal(&template_path, false) {
-                for inst in pkg.instruments {
-                    if inst.zones.iter().any(|z| !z.pcm_l.is_empty()) {
-                        map.insert(inst.name.to_lowercase(), inst.zones);
+        for fname in ["Default.Template", "User.Template"] {
+            let template_path = Path::new(DEFAULT_MUSIC_STUDIO_DIR).join(fname);
+            if template_path.exists() {
+                if let Ok(pkg) = parse_music_file_internal(&template_path, false) {
+                    for inst in pkg.instruments {
+                        if inst.zones.iter().any(|z| !z.pcm_l.is_empty()) {
+                            map.entry(inst.name.to_lowercase()).or_insert(inst.zones);
+                        }
                     }
                 }
             }
@@ -669,14 +698,26 @@ fn parse_instrument_block(
     pool: &HashMap<u32, (usize, usize)>,
     use_factory_fallback: bool,
 ) -> LoadedInstrument {
+    let inst_vol_raw = read_i32_le(data, hdr_end + 116).unwrap_or(100);
+    let inst_volume = if (1..=250).contains(&inst_vol_raw) {
+        inst_vol_raw as f32 / 100.0
+    } else {
+        1.0
+    };
+    let inst_pan = read_i32_le(data, hdr_end + 120)
+        .unwrap_or(0)
+        .clamp(-100, 100);
+    let inst_type = data.get(hdr_end + 124).copied().unwrap_or(0);
+
     let fallback_keys: Vec<u8> = data
         .get(hdr_end + 5..hdr_end + 133)
         .map(|s| s.iter().copied().filter(|&k| k >= 12 && k <= 127).collect())
         .unwrap_or_default();
 
+    let scan_limit = block_end.min(hdr_end + 65_536);
     let mut zones = Vec::new();
     let prim_rel = data
-        .get(hdr_end..block_end.min(hdr_end + 3000))
+        .get(hdr_end..scan_limit)
         .and_then(|slice| {
             slice
                 .windows(11)
@@ -685,58 +726,38 @@ fn parse_instrument_block(
 
     if let Some(rel) = prim_rel {
         let after_prim = hdr_end + rel + 11;
-        if let Some(&nz) = data.get(after_prim + 6) {
-            zones = parse_zones_sequence(
-                data,
-                after_prim + 7,
-                nz as usize,
-                block_end,
-                false,
-                &fallback_keys,
-                pool,
-            );
+        for delta in [7_usize, 4, 6, 5, 8] {
+            let z0 = after_prim + delta;
+            if looks_like_zone_97(data, z0) {
+                let nz = data.get(z0 - 1).copied().unwrap_or(1).max(1) as usize;
+                zones = parse_zones_sequence(data, z0, nz, block_end, &fallback_keys, pool);
+                if !zones.is_empty() {
+                    break;
+                }
+            }
         }
     }
 
     if zones.is_empty() {
-        let scan_start = hdr_end + 128;
-        let scan_end = block_end.min(hdr_end + 3000);
+        let scan_start = hdr_end + 125;
         let mut found_97 = None;
-        let mut found_96 = None;
-        for off in scan_start..scan_end {
+        for off in scan_start..scan_limit {
             if looks_like_zone_97(data, off) {
                 found_97 = Some(off);
                 break;
             }
-            if found_96.is_none() && looks_like_zone_96(data, off) {
-                found_96 = Some(off);
-            }
         }
 
         if let Some(z0) = found_97 {
-            let nzones = data.get(z0 - 1).copied().unwrap_or(0) as usize;
-            zones = parse_zones_sequence(
-                data,
-                z0,
-                nzones,
-                block_end,
-                false,
-                &fallback_keys,
-                pool,
-            );
-        } else if let Some(z0) = found_96 {
-            let nzones = read_u32_le(data, z0 - 4)
-                .filter(|&v| (1..=128).contains(&v))
-                .unwrap_or(1) as usize;
-            zones = parse_zones_sequence(
-                data,
-                z0,
-                nzones,
-                block_end,
-                true,
-                &fallback_keys,
-                pool,
-            );
+            let nz_u8 = data.get(z0.saturating_sub(1)).copied().unwrap_or(0) as usize;
+            let nzones = if (1..=128).contains(&nz_u8) {
+                nz_u8
+            } else {
+                read_u32_le(data, z0.saturating_sub(4))
+                    .filter(|&v| (1..=128).contains(&v))
+                    .unwrap_or(1) as usize
+            };
+            zones = parse_zones_sequence(data, z0, nzones, block_end, &fallback_keys, pool);
         }
     }
 
@@ -749,21 +770,19 @@ fn parse_instrument_block(
     }
 
     let up = name.to_uppercase();
-    let is_drumkit = up.contains("BTR")
-        || up.contains("DRUM")
-        || up.contains("BATERIA")
-        || up.contains("KIT")
-        || up.contains("PERC")
-        || up.contains("VINHETA")
-        || up.contains("HIT HAT")
-        || up == "GENERAL"
-        || name == "-"
-        || (zones.len() >= 20
-            && zones
-                .iter()
-                .filter(|z| (33..=75).contains(&z.root_key))
-                .count()
-                >= 18);
+    let is_drumkit = if inst_type <= 2 {
+        inst_type != 0
+    } else {
+        up.contains("BTR")
+            || up.contains("DRUM")
+            || up.contains("BATERIA")
+            || up.contains("KIT")
+            || up.contains("PERC")
+            || up.contains("VINHETA")
+            || up.contains("HIT HAT")
+            || up == "GENERAL"
+            || name == "-"
+    };
 
     assign_key_ranges(&mut zones, is_drumkit);
 
@@ -776,6 +795,9 @@ fn parse_instrument_block(
     LoadedInstrument {
         index,
         name: display_name,
+        volume: inst_volume,
+        pan: inst_pan,
+        inst_type,
         is_drumkit,
         zones,
     }
@@ -786,17 +808,49 @@ struct TailNode {
     id: u32,
     parent_id: u32,
     code: u8,
+    section_code: u8,
     name: String,
     order: usize,
-    length_ticks: u32,
+    is_loop: bool,
+    is_limited: bool,
+    limit_start: u32,
+    limit_end: u32,
+    jump_to: i32,
     bpm: Option<f32>,
-    slot_code: u8,
+    vkey: u32,
 }
 
-fn canonical_section_name(raw: &str, slot_code: u8) -> (String, bool) {
+fn canonical_section_name(raw: &str, section_code: u8) -> (String, bool) {
     let trimmed = raw.trim();
     let lower = trimmed.to_lowercase();
     let is_cv_alt = lower.contains(" cv2") || lower.contains(" cv3");
+
+    let by_code = match section_code {
+        0x10 => Some("Intro 1"),
+        0x11 => Some("Intro 2"),
+        0x12 | 0x13 => Some("Intro 3"),
+        0x20 => Some("Variation 1"),
+        0x21 => Some("Variation 2"),
+        0x22 => Some("Variation 3"),
+        0x23 => Some("Variation 4"),
+        0x30 => Some("Fill 1"),
+        0x31 => Some("Fill 2"),
+        0x32 => Some("Fill 3"),
+        0x33 => Some("Fill 4"),
+        0x40..=0x43 => Some("Break"),
+        0x50 => Some("Ending 1"),
+        0x51 => Some("Ending 2"),
+        0x52 | 0x53 => Some("Ending 3"),
+        0x60 => Some("Pad 1"),
+        0x61 => Some("Pad 2"),
+        0x62 => Some("Pad 3"),
+        0x63 => Some("Pad 4"),
+        _ => None,
+    };
+    if let Some(canon) = by_code {
+        return (canon.to_string(), is_cv_alt);
+    }
+
     let base = lower
         .split(" cv")
         .next()
@@ -816,51 +870,42 @@ fn canonical_section_name(raw: &str, slot_code: u8) -> (String, bool) {
         "fill 3" | "virada 3" => "Fill 3",
         "fill 4" | "virada 4" => "Fill 4",
         "break" | "default break" | "gta off/on" => "Break",
+        "pad 1" | "default pad 1" => "Pad 1",
+        "pad 2" | "default pad 2" => "Pad 2",
+        "pad 3" | "default pad 3" => "Pad 3",
+        "pad 4" | "default pad 4" => "Pad 4",
         "ending 1" | "final 1" => "Ending 1",
         "ending 2" | "final 2" => "Ending 2",
         "ending 3" | "final 3" => "Ending 3",
-        _ => match slot_code {
-            1 => "Intro 1",
-            2 => "Intro 2",
-            3 => "Variation 1",
-            4 => "Variation 2",
-            5 => "Variation 3",
-            6 => "Variation 4",
-            7 => "Fill 1",
-            8 => "Fill 2",
-            9 => "Ending 1",
-            10 => "Ending 2",
-            11 => "Break",
-            _ => {
-                if base.contains("varia") && base.ends_with('1') {
-                    "Variation 1"
-                } else if base.contains("varia") && base.ends_with('2') {
-                    "Variation 2"
-                } else if base.contains("varia") && base.ends_with('3') {
-                    "Variation 3"
-                } else if base.contains("varia") && base.ends_with('4') {
-                    "Variation 4"
-                } else if base.contains("virada") && base.ends_with('1') {
-                    "Fill 1"
-                } else if base.contains("virada") && base.ends_with('2') {
-                    "Fill 2"
-                } else if base.contains("virada") && base.ends_with('3') {
-                    "Fill 3"
-                } else if base.contains("virada") && base.ends_with('4') {
-                    "Fill 4"
-                } else if base.contains("intro") && base.ends_with('1') {
-                    "Intro 1"
-                } else if base.contains("intro") && base.ends_with('2') {
-                    "Intro 2"
-                } else if base.contains("intro") {
-                    "Intro 3"
-                } else if base.contains("final") || base.contains("end") {
-                    "Ending 1"
-                } else {
-                    return (trimmed.to_string(), is_cv_alt);
-                }
+        _ => {
+            if base.contains("varia") && base.ends_with('1') {
+                "Variation 1"
+            } else if base.contains("varia") && base.ends_with('2') {
+                "Variation 2"
+            } else if base.contains("varia") && base.ends_with('3') {
+                "Variation 3"
+            } else if base.contains("varia") && base.ends_with('4') {
+                "Variation 4"
+            } else if base.contains("virada") && base.ends_with('1') {
+                "Fill 1"
+            } else if base.contains("virada") && base.ends_with('2') {
+                "Fill 2"
+            } else if base.contains("virada") && base.ends_with('3') {
+                "Fill 3"
+            } else if base.contains("virada") && base.ends_with('4') {
+                "Fill 4"
+            } else if base.contains("intro") && base.ends_with('1') {
+                "Intro 1"
+            } else if base.contains("intro") && base.ends_with('2') {
+                "Intro 2"
+            } else if base.contains("intro") {
+                "Intro 3"
+            } else if base.contains("final") || base.contains("end") {
+                "Ending 1"
+            } else {
+                return (trimmed.to_string(), is_cv_alt);
             }
-        },
+        }
     };
     (canon.to_string(), is_cv_alt)
 }
@@ -869,8 +914,8 @@ fn is_music_studio_magic(data: &[u8]) -> bool {
     data.starts_with(b"Music Studio Music\x00") || data.starts_with(b"Music Studio music\x00")
 }
 
-fn parse_tail_tree(data: &[u8]) -> (usize, Vec<TailNode>) {
-    let search_start = data.len().saturating_sub(550_000);
+fn parse_tail_tree(data: &[u8], is_v12: bool) -> (usize, Vec<TailNode>) {
+    let search_start = data.len().saturating_sub(2_000_000);
     let tail = &data[search_start..];
     // Find Node 0: \x00\x00\x00\x00 \xff\xff\xff\xff <lenByte> Music \0
     let Some(rel) = tail.windows(15).position(|w| {
@@ -880,7 +925,7 @@ fn parse_tail_tree(data: &[u8]) -> (usize, Vec<TailNode>) {
     };
     let n0_off = search_start + rel;
     let count = read_u32_le(data, n0_off.saturating_sub(4)).unwrap_or(0) as usize;
-    if count == 0 || count > 2000 {
+    if count == 0 || count > 4000 {
         return (n0_off, Vec::new());
     }
 
@@ -915,26 +960,59 @@ fn parse_tail_tree(data: &[u8]) -> (usize, Vec<TailNode>) {
         }
         let nid = read_u32_le(data, cur).unwrap_or(0);
         let pid = read_u32_le(data, cur + 4).unwrap_or(0xffffffff);
-        let name = decode_latin1(&data[cur + 9..cur + 41]);
+        let raw_len = data[cur + 8] as usize;
+        let name = if raw_len == 0x20 {
+            decode_latin1(&data[cur + 9..cur + 40]).trim().to_string()
+        } else {
+            decode_latin1(&data[cur + 9..cur + 9 + raw_len.min(31)])
+                .trim()
+                .to_string()
+        };
+        let mut section_code = data[cur + 40];
         let code = data[cur + 41];
-        let length_ticks = read_u32_le(data, cur + 48)
-            .filter(|&v| (500..=64_000).contains(&v))
-            .unwrap_or(4000);
-        let bpm = data
-            .get(cur + 62)
-            .copied()
-            .filter(|&b| (40..=240).contains(&b))
-            .map(|b| b as f32);
-        let slot_code = data.get(cur + 68).copied().unwrap_or(0);
+        let is_loop = data[cur + 42] != 0;
+        let is_limited = data[cur + 43] != 0;
+        let limit_start = read_u32_le(data, cur + 44).unwrap_or(0);
+        let limit_end = read_u32_le(data, cur + 48).unwrap_or(4000);
+        let jump_to = read_i32_le(data, cur + 52).unwrap_or(0);
+        let tempo_raw = data
+            .get(cur + 62..cur + 64)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]) as u32)
+            .unwrap_or(0);
+        let bpm = convert_stored_bpm(tempo_raw, is_v12);
+        let vkey = read_u32_le(data, cur + 64).unwrap_or(0);
+
+        if code == 1 && (section_code >> 4) == 0 {
+            section_code = match vkey {
+                0x71 => 0x10,
+                0x72 => 0x11,
+                0x73 => 0x20,
+                0x74 => 0x21,
+                0x75 => 0x22,
+                0x76 => 0x23,
+                0x77 => 0x30,
+                0x78 => 0x31,
+                0x79 => 0x50,
+                0x7a => 0x51,
+                0x7b => 0x40,
+                _ => section_code,
+            };
+        }
+
         Some(TailNode {
             id: nid,
             parent_id: pid,
             code,
+            section_code,
             name,
             order,
-            length_ticks,
+            is_loop,
+            is_limited,
+            limit_start,
+            limit_end,
+            jump_to,
             bpm,
-            slot_code,
+            vkey,
         })
     };
 
@@ -953,6 +1031,9 @@ fn parse_tail_tree(data: &[u8]) -> (usize, Vec<TailNode>) {
         if base_stride == 124 {
             let extra = read_u32_le(data, cur + 120).unwrap_or(0).min(32) as usize;
             cur += 124 + extra * 16;
+        } else if base_stride == 140 {
+            let extra = read_u32_le(data, cur + 136).unwrap_or(0).min(32) as usize;
+            cur += 140 + extra * 16;
         } else {
             cur += base_stride;
         }
@@ -966,11 +1047,9 @@ fn parse_rhythm_tracks(
     headers: &[(usize, usize, String)],
     mixer_idx: usize,
     tail_start: usize,
+    instruments: &[LoadedInstrument],
 ) -> HashMap<u32, Vec<RhythmTrack>> {
     let mut by_section: HashMap<u32, Vec<RhythmTrack>> = HashMap::new();
-    // Skip Scales + Mixer channels ("Normal" -> scales -> "Master" -> "Up 1..3", "Low", "Rhythm", "Wave", Bass, Acc.1..5, Drum)
-    // First advance to "Master" (handles v1.4.6+ files where 10 microtuning scale headers sit between "Normal" and "Master"),
-    // then advance past the first "Drum" mixer entry inside the mixer block!
     let mut track_scan_start = mixer_idx + 1;
     for (idx, (_, _, nm)) in headers.iter().enumerate().skip(mixer_idx).take(28) {
         if nm == "Master" {
@@ -992,7 +1071,7 @@ fn parse_rhythm_tracks(
             break;
         }
         let clean = full_name.split(" - Copy").next().unwrap_or(full_name);
-        let Some(mut slot) = track_name_to_slot(clean) else {
+        let Some(slot) = track_name_to_slot(clean) else {
             continue;
         };
         let next_blk = headers
@@ -1003,24 +1082,17 @@ fn parse_rhythm_tracks(
         let Some(sec_id) = read_u32_le(data, hdr_end) else {
             continue;
         };
-        let inst_idx = read_u32_le(data, hdr_end + 12).unwrap_or(0) as usize;
-        let vol_raw = data.get(hdr_end + 159).copied().unwrap_or(100);
-        let vol = (vol_raw as f32 / 100.0).clamp(0.15, 1.5);
-        let octave_shift = read_i32_le(data, hdr_end + 179).unwrap_or(0).clamp(-4, 4);
-
-        let b28 = data.get(hdr_end + 28).copied().unwrap_or(0);
-        let b30 = data.get(hdr_end + 30).copied().unwrap_or(0);
-        let no_transpose_flag = read_i32_le(data, hdr_end + 143) == Some(1);
-
-        let mut is_drum = slot <= 1;
-        if b28 == 0x80 && b30 == 0xC0 {
-            slot = 2; // Authored as Bass role
-            is_drum = false;
-        } else if no_transpose_flag || (b28 == 0 && b30 == 0xC0) {
-            is_drum = true;
+        if data.get(hdr_end + 4).copied().unwrap_or(1) == 0 {
+            continue;
         }
+        let inst_idx = read_u32_le(data, hdr_end + 12).unwrap_or(0) as usize;
+        let is_drum = instruments
+            .get(inst_idx)
+            .map(|i| i.is_drumkit)
+            .unwrap_or(slot <= 1);
 
-        // Locate event_count at +531 (v1.3/1.4) or +544 (v1.2)
+        // Locate event_count at +531 (v1.3/1.4) or +544 (v1.2) FIRST so TSoundSetting offset shifts cleanly (+13)
+        let mut detected_hsz = None;
         let mut events = Vec::new();
         for &hsz in &[531_usize, 544_usize] {
             let evc_off = hdr_end + hsz;
@@ -1034,6 +1106,7 @@ fn parse_rhythm_tracks(
                 let t0 = read_i32_le(data, arr_start).unwrap_or(0);
                 let n0 = read_i32_le(data, arr_start + 8).unwrap_or(-1);
                 if (1..=4).contains(&t0) && (0..=127).contains(&n0) {
+                    detected_hsz = Some(hsz);
                     events.reserve(evc);
                     for e in 0..evc {
                         let eo = arr_start + e * 24;
@@ -1047,7 +1120,7 @@ fn parse_rhythm_tracks(
                                 midi_note: note as u8,
                                 velocity: vel.clamp(1, 127) as u8,
                                 start_tick: tick as u32,
-                                duration_ticks: dur.max(60) as u32,
+                                duration_ticks: dur.max(30) as u32,
                             });
                         }
                     }
@@ -1057,17 +1130,42 @@ fn parse_rhythm_tracks(
             }
         }
 
-        if !events.is_empty() {
-            by_section.entry(sec_id).or_default().push(RhythmTrack {
-                track_type: clean.to_string(),
-                track_slot: slot,
-                instrument_index: inst_idx,
-                volume: vol,
-                octave_shift,
-                is_drum,
-                events,
-            });
+        if events.is_empty() {
+            continue;
         }
+
+        let ss_base = if detected_hsz == Some(544) {
+            172_usize
+        } else {
+            159_usize
+        };
+        let vol_raw = read_i32_le(data, hdr_end + ss_base).unwrap_or(100);
+        let vol = (vol_raw.clamp(0, 250) as f32) / 100.0;
+        let pan = read_i32_le(data, hdr_end + ss_base + 4)
+            .unwrap_or(0)
+            .clamp(-100, 100);
+        let fine_tune = read_i32_le(data, hdr_end + ss_base + 8)
+            .unwrap_or(0)
+            .clamp(-12000, 12000);
+        let key_move = read_i32_le(data, hdr_end + ss_base + 16)
+            .unwrap_or(0)
+            .clamp(-24, 24);
+        let octave_shift = read_i32_le(data, hdr_end + ss_base + 20)
+            .unwrap_or(0)
+            .clamp(-4, 4);
+
+        by_section.entry(sec_id).or_default().push(RhythmTrack {
+            track_type: clean.to_string(),
+            track_slot: slot,
+            instrument_index: inst_idx,
+            volume: vol,
+            pan,
+            fine_tune,
+            key_move,
+            octave_shift,
+            is_drum,
+            events,
+        });
     }
 
     by_section
@@ -1099,13 +1197,12 @@ fn parse_music_file_internal(
     } else {
         "unknown".to_string()
     };
+    let is_v12 = version_is_below_1_3(&version);
 
-    let sample_pool = parse_header_and_sample_pool(&data);
-    let (tail_start, tail_nodes) = parse_tail_tree(&data);
+    let sample_pool = parse_header_and_sample_pool(&data, is_v12);
+    let (tail_start, tail_nodes) = parse_tail_tree(&data, is_v12);
     let headers = find_versioned_headers(&data[..tail_start], sample_pool.pool_end);
 
-    // Locate Mixer/Scales boundary ("Normal" followed within 24 headers by "Master",
-    // since v1.4.6+ stores 10 microtuning scale presets between "Normal" and "Master")
     let mixer_idx = headers
         .iter()
         .enumerate()
@@ -1127,8 +1224,6 @@ fn parse_music_file_internal(
         })
         .unwrap_or(headers.len());
 
-    // headers[0] is the Instrument List container header (`name == ""`, `hdr_end + 4 = inst_count`)!
-    // Skip it so instrument indices match track `inst_idx` (`hdr_end + 12`) 1-to-1!
     let mut instruments = Vec::new();
     let (inst_start_idx, inst_end_idx) = if headers.first().map(|h| h.2.is_empty()).unwrap_or(false) {
         let count = read_u32_le(&data, headers[0].1 + 4).unwrap_or(0) as usize;
@@ -1159,33 +1254,12 @@ fn parse_music_file_internal(
         ));
     }
 
-    let tracks_by_section = parse_rhythm_tracks(&data, &headers, mixer_idx, tail_start);
+    let tracks_by_section = parse_rhythm_tracks(&data, &headers, mixer_idx, tail_start, &instruments);
 
-    // Also upgrade `is_drumkit` from authoritative track role flags
-    let mut inst_has_drum_track: HashMap<usize, bool> = HashMap::new();
-    for tracks in tracks_by_section.values() {
-        for tr in tracks {
-            inst_has_drum_track
-                .entry(tr.instrument_index)
-                .and_modify(|v| *v |= tr.is_drum)
-                .or_insert(tr.is_drum);
-        }
-    }
-    for (idx, inst) in instruments.iter_mut().enumerate() {
-        if inst_has_drum_track.get(&idx).copied().unwrap_or(false) && !inst.is_drumkit {
-            inst.is_drumkit = true;
-            assign_key_ranges(&mut inst.zones, true);
-        }
-    }
-
-    // Parse initial BPM from file header (cur+5 or 0x44)
     let default_bpm = sample_pool.header_bpm.unwrap_or_else(|| {
-        let raw_bpm = read_u32_le(&data, 0x44).unwrap_or(120);
-        if (40..=240).contains(&raw_bpm) {
-            raw_bpm as f32
-        } else {
-            120.0
-        }
+        read_u32_le(&data, 0x44)
+            .and_then(|raw| convert_stored_bpm(raw, is_v12))
+            .unwrap_or(120.0)
     });
 
     // Build Styles tree from Tail Nodes
@@ -1194,10 +1268,13 @@ fn parse_music_file_internal(
 
     for node in &tail_nodes {
         if node.code == 0x01 {
-            let Some(tracks) = tracks_by_section.get(&node.id) else {
+            if (node.section_code >> 4) == 6 {
+                continue; // Skip Pad 1..4 sections from main rhythm transport
+            }
+            let Some(tracks_raw) = tracks_by_section.get(&node.id) else {
                 continue;
             };
-            if tracks.is_empty() {
+            if tracks_raw.is_empty() {
                 continue;
             }
             let parent_style = node_by_id.get(&node.parent_id).copied();
@@ -1218,18 +1295,56 @@ fn parse_music_file_internal(
                 .filter(|c| !c.is_empty() && c != "Music")
                 .unwrap_or_else(|| "Style".to_string());
 
-            let (canon_name, is_cv_alt) = canonical_section_name(&node.name, node.slot_code);
-            let section_bpm = node.bpm.unwrap_or(default_bpm);
-            let max_start_tick = tracks
-                .iter()
-                .flat_map(|t| t.events.iter())
-                .map(|ev| ev.start_tick + 1)
-                .max()
-                .unwrap_or(node.length_ticks);
-            let mut length_ticks = node.length_ticks.max(1000);
-            if max_start_tick > length_ticks {
-                length_ticks = ((max_start_tick + 999) / 1000 * 1000).max(4000);
+            let (canon_name, is_cv_alt) = canonical_section_name(&node.name, node.section_code);
+            if canon_name.starts_with("Pad ") {
+                continue;
             }
+            let _ = node.vkey;
+            let section_bpm = node.bpm.unwrap_or(default_bpm);
+
+            let (length_ticks, tracks) = if node.is_limited && node.limit_end > node.limit_start {
+                let len_ticks = (node.limit_end - node.limit_start).max(500);
+                let mut trimmed: Vec<RhythmTrack> = tracks_raw
+                    .iter()
+                    .filter_map(|t| {
+                        let filtered: Vec<RhythmNoteEvent> = t
+                            .events
+                            .iter()
+                            .filter(|ev| {
+                                ev.start_tick >= node.limit_start && ev.start_tick < node.limit_end
+                            })
+                            .map(|ev| {
+                                let mut cloned = ev.clone();
+                                cloned.start_tick -= node.limit_start;
+                                cloned
+                            })
+                            .collect();
+                        if filtered.is_empty() {
+                            None
+                        } else {
+                            let mut tr = t.clone();
+                            tr.events = filtered;
+                            Some(tr)
+                        }
+                    })
+                    .collect();
+                if trimmed.is_empty() {
+                    trimmed = tracks_raw.clone();
+                }
+                (len_ticks, trimmed)
+            } else {
+                let fallback_len = node.limit_end.saturating_sub(node.limit_start).max(1000);
+                let max_end_tick = tracks_raw
+                    .iter()
+                    .flat_map(|t| t.events.iter())
+                    .map(|ev| ev.start_tick + ev.duration_ticks.max(125))
+                    .max()
+                    .unwrap_or(fallback_len);
+                let len_ticks = ((max_end_tick + 499) / 500 * 500)
+                    .max(fallback_len)
+                    .max(1000);
+                (len_ticks, tracks_raw.clone())
+            };
 
             let entry = styles_map
                 .entry((style_order, style_id))
@@ -1252,15 +1367,19 @@ fn parse_music_file_internal(
             }
             if let Some(existing) = entry.sections.iter_mut().find(|s| s.name == canon_name) {
                 if !is_cv_alt && existing.tracks.len() < tracks.len() {
-                    existing.tracks = tracks.clone();
+                    existing.tracks = tracks;
                     existing.length_ticks = length_ticks;
+                    existing.is_loop = node.is_loop;
+                    existing.jump_to = node.jump_to;
                 }
             } else {
                 entry.sections.push(RhythmSection {
                     id: node.id,
                     name: canon_name,
                     length_ticks,
-                    tracks: tracks.clone(),
+                    is_loop: node.is_loop,
+                    jump_to: node.jump_to,
+                    tracks,
                 });
             }
         }
@@ -1290,7 +1409,9 @@ fn parse_music_file_internal(
             fallback_sections.push(RhythmSection {
                 id: sec_id,
                 name: format!("Variation {}", idx + 1),
-                length_ticks: ((max_end + 999) / 1000 * 1000).max(4000),
+                length_ticks: ((max_end + 499) / 500 * 500).max(4000),
+                is_loop: true,
+                jump_to: 0,
                 tracks: tracks.clone(),
             });
         }
@@ -1540,7 +1661,11 @@ struct SamplerVoice {
     loop_start: usize,
     loop_end: usize,
     loop_enabled: bool,
+    loop_mode: u8,
+    loop_dir: i8,
     gain: f32,
+    pan_l: f32,
+    pan_r: f32,
     env: f32,
     attack_pos: u16,
     releasing: bool,
@@ -1549,7 +1674,18 @@ struct SamplerVoice {
     from_rhythm: bool,
 }
 
-const MAX_SAMPLER_VOICES: usize = 128;
+const MAX_SAMPLER_VOICES: usize = 192;
+
+#[derive(Debug, Clone)]
+struct PendingTrigger {
+    inst_idx: usize,
+    midi_note: u8,
+    velocity: u8,
+    vol: f32,
+    pan: i32,
+    fine_tune: i32,
+    dur_samples: Option<usize>,
+}
 
 #[inline]
 fn clean_soft_limit(x: f32) -> f32 {
@@ -1561,6 +1697,101 @@ fn clean_soft_limit(x: f32) -> f32 {
         x
     } else {
         x.signum() * (0.88 + 0.115 * ((a - 0.88) / 0.12).tanh())
+    }
+}
+
+fn transpose_note_for_chord(
+    note: u8,
+    detected_chord_root: u8,
+    detected_chord_quality: ChordQuality,
+) -> u8 {
+    // Tracks inside `.Music` are authored against a C Major reference (pitch class 0 = C)
+    let mut root_shift = detected_chord_root as i16;
+    if root_shift > 6 {
+        root_shift -= 12;
+    }
+    let pc = (note % 12) as i16;
+    let chord_iv = match detected_chord_quality {
+        ChordQuality::Minor | ChordQuality::Min7 => match pc {
+            4 => 3,   // E -> Eb
+            11 => 10, // B -> Bb
+            _ => pc,
+        },
+        ChordQuality::Dom7 => match pc {
+            11 => 10, // B -> Bb
+            _ => pc,
+        },
+        ChordQuality::Dim => match pc {
+            4 => 3,
+            7 => 6,
+            _ => pc,
+        },
+        ChordQuality::Sus4 => match pc {
+            4 => 5,
+            _ => pc,
+        },
+        ChordQuality::Major | ChordQuality::Maj7 => pc,
+    };
+    let adjusted = note as i16 + (chord_iv - pc) + root_shift;
+    adjusted.clamp(24, 108) as u8
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_section_events(
+    sec: &RhythmSection,
+    instruments: &[LoadedInstrument],
+    track_volumes: &[f32; 8],
+    detected_chord_root: u8,
+    detected_chord_quality: ChordQuality,
+    bpm: f32,
+    sr: f32,
+    win_start: f64,
+    win_end: f64,
+    out: &mut Vec<PendingTrigger>,
+) {
+    if win_end <= win_start {
+        return;
+    }
+    for track in &sec.tracks {
+        let inst_is_drum = instruments
+            .get(track.instrument_index)
+            .map(|i| i.is_drumkit)
+            .unwrap_or(false);
+        let is_drum = track.is_drum || inst_is_drum;
+        let vol = track.volume * track_volumes[track.track_slot.min(7)];
+        if vol <= 0.002 {
+            continue;
+        }
+        for ev in &track.events {
+            let t = ev.start_tick as f64;
+            if t >= win_start && t < win_end {
+                let target_note = if is_drum {
+                    ev.midi_note
+                } else {
+                    let shifted = (ev.midi_note as i16
+                        + track.key_move as i16
+                        + (track.octave_shift * 12) as i16)
+                        .clamp(12, 115) as u8;
+                    transpose_note_for_chord(shifted, detected_chord_root, detected_chord_quality)
+                };
+                let dur_samples = if is_drum {
+                    None
+                } else {
+                    let dur_sec =
+                        (ev.duration_ticks.max(30) as f64 / 500.0) * (60.0 / bpm.max(40.0) as f64);
+                    Some(((dur_sec * sr as f64) as usize).max(256))
+                };
+                out.push(PendingTrigger {
+                    inst_idx: track.instrument_index,
+                    midi_note: target_note,
+                    velocity: ev.velocity,
+                    vol,
+                    pan: track.pan,
+                    fine_tune: track.fine_tune,
+                    dur_samples,
+                });
+            }
+        }
     }
 }
 
@@ -1581,6 +1812,7 @@ pub struct MusicStudioArrangerEngine {
     pub upper_octave: i8,
     pub transpose: i8,
     pub bpm: f32,
+    pub tempo_locked: bool,
     pub rhythm_playing: bool,
     pub sync_start: bool,
     pub auto_fill: bool,
@@ -1615,6 +1847,7 @@ impl MusicStudioArrangerEngine {
             upper_octave: 0,
             transpose: 0,
             bpm: 120.0,
+            tempo_locked: false,
             rhythm_playing: false,
             sync_start: true,
             auto_fill: true,
@@ -1640,6 +1873,7 @@ impl MusicStudioArrangerEngine {
         self.rhythm_playing = false;
         self.current_tick = 0.0;
         self.pending_section = None;
+        self.tempo_locked = false;
 
         // Auto-pick the best playable melodic lead instrument (prefer Accordion/Bandoneon/Sanfona/Lead/Guitar/Strings with samples)
         let mut playable: Vec<&LoadedInstrument> = pkg
@@ -1654,7 +1888,16 @@ impl MusicStudioArrangerEngine {
 
         playable.sort_by_key(|inst| {
             let up = inst.name.to_uppercase();
-            if up.contains("BANDONEON") || up.contains("ACORD") || up.contains("SANFONA") {
+            let max_zone_gain = inst
+                .zones
+                .iter()
+                .filter(|z| !z.pcm_l.is_empty())
+                .fold(0.0_f32, |m, z| m.max(z.gain));
+            let effective_gain = inst.volume * max_zone_gain;
+            let is_very_quiet = effective_gain < 0.20;
+            let is_base = up.contains("BASE");
+            let tier = if up.contains("BANDONEON") || up.contains("ACORD") || up.contains("SANFONA")
+            {
                 0
             } else if up.contains("PIANO") || up.contains("LEAD") || up.contains("ORGAN") {
                 1
@@ -1666,7 +1909,8 @@ impl MusicStudioArrangerEngine {
                 5
             } else {
                 4
-            }
+            };
+            (is_very_quiet, is_base, tier)
         });
 
         self.upper1_instrument = playable.first().map(|i| i.index).unwrap_or(0);
@@ -1740,6 +1984,7 @@ impl MusicStudioArrangerEngine {
             upper_octave: self.upper_octave,
             transpose: self.transpose,
             bpm: self.bpm,
+            tempo_locked: self.tempo_locked,
             rhythm_playing: self.rhythm_playing,
             sync_start: self.sync_start,
             auto_fill: self.auto_fill,
@@ -1779,8 +2024,14 @@ impl MusicStudioArrangerEngine {
             self.pending_section = None;
             self.current_tick = 0.0;
         } else {
-            // Queue Fill/Variation cleanly at bar/section boundary
-            if self.auto_fill && section_name.starts_with("Variation") && !self.active_section.starts_with("Fill") {
+            if section_name == self.active_section {
+                self.pending_section = None;
+                return;
+            }
+            if self.auto_fill
+                && section_name.starts_with("Variation")
+                && !self.active_section.starts_with("Fill")
+            {
                 if let Some(suffix) = section_name.strip_prefix("Variation ") {
                     let fill_name = format!("Fill {}", suffix);
                     if style.sections.iter().any(|s| s.name == fill_name) {
@@ -1813,6 +2064,10 @@ impl MusicStudioArrangerEngine {
         }
     }
 
+    pub fn set_tempo_locked(&mut self, locked: bool) {
+        self.tempo_locked = locked;
+    }
+
     pub fn set_chord(&mut self, root_pc: u8, quality: &str) {
         let root = root_pc % 12;
         let q = ChordQuality::from_str(quality);
@@ -1827,7 +2082,9 @@ impl MusicStudioArrangerEngine {
         };
         if let Some(style) = pkg.styles.get(style_index) {
             self.active_style_index = style_index;
-            self.bpm = style.bpm;
+            if !self.tempo_locked {
+                self.bpm = style.bpm;
+            }
             if let Some(sec) = style
                 .sections
                 .iter()
@@ -1911,6 +2168,7 @@ impl MusicStudioArrangerEngine {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn trigger_instrument_note(
         &mut self,
         inst_index: usize,
@@ -1918,6 +2176,8 @@ impl MusicStudioArrangerEngine {
         trigger_key: u8,
         velocity: u8,
         gain_scale: f32,
+        pan_offset: i32,
+        tune_offset: i32,
         from_rhythm: bool,
         duration_samples: Option<usize>,
     ) {
@@ -1927,38 +2187,55 @@ impl MusicStudioArrangerEngine {
         let Some(inst) = pkg.instruments.get(inst_index) else {
             return;
         };
-        // Find matching zone across key ranges, or closest root_key
-        let zone = inst
-            .zones
-            .iter()
-            .find(|z| !z.pcm_l.is_empty() && midi_note >= z.key_low && midi_note <= z.key_high)
-            .or_else(|| {
-                inst.zones
-                    .iter()
-                    .filter(|z| !z.pcm_l.is_empty())
-                    .min_by_key(|z| (z.root_key as i16 - midi_note as i16).abs())
-            });
+
+        let zone = if inst.is_drumkit {
+            inst.zones
+                .iter()
+                .find(|z| !z.pcm_l.is_empty() && z.root_key == midi_note)
+        } else {
+            inst.zones
+                .iter()
+                .find(|z| !z.pcm_l.is_empty() && midi_note >= z.key_low && midi_note <= z.key_high)
+                .or_else(|| {
+                    inst.zones
+                        .iter()
+                        .filter(|z| !z.pcm_l.is_empty())
+                        .min_by_key(|z| (z.root_key as i16 - midi_note as i16).abs())
+                })
+        };
         let Some(z) = zone else {
             return;
         };
 
+        let tune_semitones = (z.fine_tune + tune_offset) as f64 / 1000.0;
         let semitones = if inst.is_drumkit {
-            0.0
+            tune_semitones
         } else {
-            midi_note as f64 - z.root_key as f64
+            (midi_note as f64 - z.root_key as f64) + tune_semitones
         };
         let phase_inc = (z.sample_rate as f64 / self.sr as f64) * 2.0_f64.powf(semitones / 12.0);
         let vel_gain = (velocity as f32 / 127.0).powf(0.85);
+        let total_gain = vel_gain * inst.volume * z.gain * gain_scale;
+        if total_gain <= 0.0005 {
+            return;
+        }
+
+        let total_pan = (inst.pan + z.pan + pan_offset).clamp(-100, 100);
+        let pan_l = ((100 - total_pan).clamp(0, 100) as f32) / 100.0;
+        let pan_r = ((100 + total_pan).clamp(0, 100) as f32) / 100.0;
 
         if self.voices.len() >= MAX_SAMPLER_VOICES {
             if let Some(pos) = self
                 .voices
                 .iter()
-                .position(|v| v.releasing)
+                .enumerate()
+                .filter(|(_, v)| v.releasing)
+                .min_by(|(_, a), (_, b)| (a.env * a.gain).total_cmp(&(b.env * b.gain)))
+                .map(|(idx, _)| idx)
                 .or_else(|| self.voices.iter().position(|v| v.from_rhythm))
                 .or(Some(0))
             {
-                self.voices.remove(pos);
+                self.voices.swap_remove(pos);
             }
         }
 
@@ -1970,7 +2247,11 @@ impl MusicStudioArrangerEngine {
             loop_start: z.loop_start,
             loop_end: z.loop_end,
             loop_enabled: z.loop_enabled && !inst.is_drumkit,
-            gain: vel_gain * z.gain * gain_scale,
+            loop_mode: z.loop_mode,
+            loop_dir: 1,
+            gain: total_gain,
+            pan_l,
+            pan_r,
             env: 1.0,
             attack_pos: if inst.is_drumkit { 48 } else { 0 },
             releasing: false,
@@ -2004,7 +2285,7 @@ impl MusicStudioArrangerEngine {
             }
             if let Some(low_inst) = self.lower_instrument {
                 let played = (note as i16 + self.transpose as i16).clamp(0, 127) as u8;
-                self.trigger_instrument_note(low_inst, played, note, velocity, 0.72, false, None);
+                self.trigger_instrument_note(low_inst, played, note, velocity, 0.65, 0, 0, false, None);
             }
             return;
         }
@@ -2029,10 +2310,10 @@ impl MusicStudioArrangerEngine {
         let played_upper = (note as i16 + (self.upper_octave as i16 * 12) + self.transpose as i16)
             .clamp(0, 127) as u8;
         let u1 = self.upper1_instrument;
-        self.trigger_instrument_note(u1, played_upper, note, velocity, 1.0, false, None);
+        self.trigger_instrument_note(u1, played_upper, note, velocity, 0.85, 0, 0, false, None);
         if let Some(u2) = self.upper2_instrument {
             if u2 != u1 {
-                self.trigger_instrument_note(u2, played_upper, note, velocity, 0.78, false, None);
+                self.trigger_instrument_note(u2, played_upper, note, velocity, 0.68, 0, 0, false, None);
             }
         }
     }
@@ -2086,38 +2367,6 @@ impl MusicStudioArrangerEngine {
         self.voices.len()
     }
 
-    fn transpose_for_chord(&self, note: u8) -> u8 {
-        // Tracks inside `.Music` are authored against a C Major reference (pitch class 0 = C)
-        let mut root_shift = self.detected_chord_root as i16;
-        if root_shift > 6 {
-            root_shift -= 12; // Keep accompaniment & bass in natural range
-        }
-        let pc = (note % 12) as i16;
-        let chord_iv = match self.detected_chord_quality {
-            ChordQuality::Minor | ChordQuality::Min7 => match pc {
-                4 => 3,   // E -> Eb
-                11 => 10, // B -> Bb
-                _ => pc,
-            },
-            ChordQuality::Dom7 => match pc {
-                11 => 10, // B -> Bb
-                _ => pc,
-            },
-            ChordQuality::Dim => match pc {
-                4 => 3,
-                7 => 6,
-                _ => pc,
-            },
-            ChordQuality::Sus4 => match pc {
-                4 => 5,
-                _ => pc,
-            },
-            ChordQuality::Major | ChordQuality::Maj7 => pc,
-        };
-        let adjusted = note as i16 + (chord_iv - pc) + root_shift;
-        adjusted.clamp(24, 108) as u8
-    }
-
     pub fn process_block(&mut self, out_l: &mut [f32], out_r: &mut [f32]) {
         out_l.fill(0.0);
         out_r.fill(0.0);
@@ -2126,105 +2375,134 @@ impl MusicStudioArrangerEngine {
             return;
         }
 
-        // Advance rhythm sequencer if active
+        // Advance rhythm sequencer if active (Music Studio clock = 500 ticks per quarter-note beat)
         if self.rhythm_playing && self.package.is_some() {
             let ticks_per_block =
-                (frames as f64) * (self.bpm as f64 / 60.0) * 1000.0 / (self.sr as f64);
+                (frames as f64) * (self.bpm as f64 / 60.0) * 500.0 / (self.sr as f64);
             let prev_tick = self.current_tick;
             let next_tick = prev_tick + ticks_per_block;
 
-            let mut to_trigger: Vec<(usize, u8, u8, f32, Option<usize>)> = Vec::new();
+            let mut to_trigger: Vec<PendingTrigger> = Vec::new();
             let mut transition_next: Option<String> = None;
             let mut stop_at_end = false;
+            let mut wrap_tick = 0.0_f64;
+            let mut wrapped = false;
 
-            if let Some(sec) = self.active_section_ref() {
-                let sec_len = sec.length_ticks.max(1000) as f64;
-                let wrapped = next_tick >= sec_len;
-                let wrap_tick = if wrapped { next_tick - sec_len } else { 0.0 };
-                let instruments = self
-                    .package
-                    .as_ref()
-                    .map(|p| p.instruments.as_slice())
-                    .unwrap_or(&[]);
+            if let Some(pkg) = self.package.as_ref() {
+                if let Some(style) = pkg.styles.get(self.active_style_index) {
+                    if let Some(sec) = style
+                        .sections
+                        .iter()
+                        .find(|s| s.name == self.active_section)
+                        .or_else(|| style.sections.first())
+                    {
+                        let sec_len = sec.length_ticks.max(500) as f64;
+                        wrapped = next_tick >= sec_len;
+                        wrap_tick = if wrapped { next_tick - sec_len } else { 0.0 };
 
-                for track in &sec.tracks {
-                    let inst_is_drum = instruments
-                        .get(track.instrument_index)
-                        .map(|i| i.is_drumkit)
-                        .unwrap_or(false);
-                    let is_drum = track.is_drum || inst_is_drum;
-                    let vol = track.volume * self.track_volumes[track.track_slot.min(7)];
-                    if vol <= 0.005 {
-                        continue;
-                    }
-                    for ev in &track.events {
-                        let t = ev.start_tick as f64;
-                        let hit = if wrapped {
-                            t >= prev_tick || t < wrap_tick
+                        if wrapped {
+                            collect_section_events(
+                                sec,
+                                &pkg.instruments,
+                                &self.track_volumes,
+                                self.detected_chord_root,
+                                self.detected_chord_quality,
+                                self.bpm,
+                                self.sr,
+                                prev_tick,
+                                sec_len,
+                                &mut to_trigger,
+                            );
+                            if let Some(ref pend) = self.pending_section {
+                                transition_next = Some(pend.clone());
+                            } else if !sec.is_loop {
+                                if sec.jump_to == -2 {
+                                    transition_next = Some(self.last_main_variation.clone());
+                                } else if sec.jump_to > 0 {
+                                    let target_id = sec.jump_to as u32;
+                                    let next_name = style
+                                        .sections
+                                        .iter()
+                                        .find(|s| s.id == target_id)
+                                        .map(|s| s.name.clone())
+                                        .unwrap_or_else(|| self.last_main_variation.clone());
+                                    transition_next = Some(next_name);
+                                } else {
+                                    stop_at_end = true;
+                                }
+                            } else if sec.name.starts_with("Intro")
+                                || sec.name.starts_with("Fill")
+                                || sec.name == "Break"
+                            {
+                                transition_next = Some(self.last_main_variation.clone());
+                            } else if sec.name.starts_with("Ending") {
+                                stop_at_end = true;
+                            }
+
+                            if !stop_at_end {
+                                let next_sec_ref = if let Some(ref next_name) = transition_next {
+                                    style
+                                        .sections
+                                        .iter()
+                                        .find(|s| &s.name == next_name)
+                                        .unwrap_or(sec)
+                                } else {
+                                    sec
+                                };
+                                collect_section_events(
+                                    next_sec_ref,
+                                    &pkg.instruments,
+                                    &self.track_volumes,
+                                    self.detected_chord_root,
+                                    self.detected_chord_quality,
+                                    self.bpm,
+                                    self.sr,
+                                    0.0,
+                                    wrap_tick,
+                                    &mut to_trigger,
+                                );
+                            }
                         } else {
-                            t >= prev_tick && t < next_tick
-                        };
-                        if hit {
-                            let target_note = if is_drum {
-                                ev.midi_note
-                            } else {
-                                let shifted = (ev.midi_note as i16
-                                    + (track.octave_shift * 12) as i16)
-                                    .clamp(12, 115) as u8;
-                                self.transpose_for_chord(shifted)
-                            };
-                            let dur_samples = if is_drum {
-                                None
-                            } else {
-                                let dur_sec = (ev.duration_ticks.max(60) as f64 / 1000.0)
-                                    * (60.0 / self.bpm as f64);
-                                Some(((dur_sec * self.sr as f64) as usize).max(384))
-                            };
-                            to_trigger.push((
-                                track.instrument_index,
-                                target_note,
-                                ev.velocity,
-                                vol,
-                                dur_samples,
-                            ));
+                            collect_section_events(
+                                sec,
+                                &pkg.instruments,
+                                &self.track_volumes,
+                                self.detected_chord_root,
+                                self.detected_chord_quality,
+                                self.bpm,
+                                self.sr,
+                                prev_tick,
+                                next_tick,
+                                &mut to_trigger,
+                            );
                         }
                     }
-                }
-
-                if wrapped {
-                    if let Some(ref pend) = self.pending_section {
-                        transition_next = Some(pend.clone());
-                    } else if sec.name.starts_with("Intro")
-                        || sec.name.starts_with("Fill")
-                        || sec.name == "Break"
-                    {
-                        transition_next = Some(self.last_main_variation.clone());
-                    } else if sec.name.starts_with("Ending") {
-                        stop_at_end = true;
-                    }
-                    self.current_tick = wrap_tick;
-                } else {
-                    self.current_tick = next_tick;
                 }
             }
 
             if stop_at_end {
                 self.rhythm_playing = false;
-                self.current_tick = 0.0;
-            } else if let Some(next_sec) = transition_next {
-                self.active_section = next_sec;
                 self.pending_section = None;
+                self.current_tick = 0.0;
+            } else {
+                if let Some(next_sec) = transition_next {
+                    self.active_section = next_sec;
+                    self.pending_section = None;
+                }
+                self.current_tick = if wrapped { wrap_tick } else { next_tick };
             }
 
-            for (inst_idx, note, vel, vol, dur_samp) in to_trigger {
+            for trig in to_trigger {
                 self.trigger_instrument_note(
-                    inst_idx,
-                    note,
-                    note,
-                    vel,
-                    vol * 0.62,
+                    trig.inst_idx,
+                    trig.midi_note,
+                    trig.midi_note,
+                    trig.velocity,
+                    trig.vol * 0.55,
+                    trig.pan,
+                    trig.fine_tune,
                     true,
-                    dur_samp,
+                    trig.dur_samples,
                 );
             }
         }
@@ -2264,9 +2542,21 @@ impl MusicStudioArrangerEngine {
                     1.0
                 };
 
-                if v.loop_enabled && v.pos >= v.loop_end as f64 && v.loop_end > v.loop_start + 8 {
-                    let span = (v.loop_end - v.loop_start) as f64;
-                    v.pos = v.loop_start as f64 + ((v.pos - v.loop_start as f64) % span);
+                if v.loop_enabled && v.loop_end > v.loop_start + 8 {
+                    if v.loop_mode == 3 {
+                        if v.loop_dir > 0 && v.pos >= v.loop_end as f64 {
+                            v.pos = ((v.loop_end as f64) - (v.pos - v.loop_end as f64))
+                                .clamp(v.loop_start as f64, (pcm_len - 2) as f64);
+                            v.loop_dir = -1;
+                        } else if v.loop_dir < 0 && v.pos <= v.loop_start as f64 {
+                            v.pos = ((v.loop_start as f64) + (v.loop_start as f64 - v.pos))
+                                .clamp(0.0, v.loop_end as f64);
+                            v.loop_dir = 1;
+                        }
+                    } else if v.pos >= v.loop_end as f64 {
+                        let span = (v.loop_end - v.loop_start) as f64;
+                        v.pos = v.loop_start as f64 + ((v.pos - v.loop_start as f64) % span);
+                    }
                 }
 
                 let idx0 = v.pos as usize;
@@ -2279,13 +2569,35 @@ impl MusicStudioArrangerEngine {
                 let s1_l = v.pcm_l[idx0 + 1];
                 let s0_r = v.pcm_r[idx0];
                 let s1_r = v.pcm_r[idx0 + 1];
-                let l = s0_l + (s1_l - s0_l) * frac;
-                let r = s0_r + (s1_r - s0_r) * frac;
-                let g = v.gain * v.env * atk * master;
-                out_l[f] += l * g;
-                out_r[f] += r * g;
+                let mut l = s0_l + (s1_l - s0_l) * frac;
+                let mut r = s0_r + (s1_r - s0_r) * frac;
 
-                v.pos += v.phase_inc;
+                // Subtle 24-sample micro-crossfade before forward loop wrap when pre-loop audio exists
+                if v.loop_enabled && v.loop_mode == 2 && v.loop_end > v.loop_start + 32 {
+                    let xfade_len = 24_usize.min((v.loop_end - v.loop_start) / 4);
+                    if xfade_len >= 4
+                        && v.loop_start >= xfade_len
+                        && v.pos + (xfade_len as f64) >= v.loop_end as f64
+                    {
+                        let dist = v.pos + (xfade_len as f64) - (v.loop_end as f64);
+                        let alpha = (dist / xfade_len as f64).clamp(0.0, 1.0) as f32;
+                        let pre_pos = (v.loop_start - xfade_len) as f64 + dist;
+                        let pidx = pre_pos as usize;
+                        if pidx + 1 < pcm_len {
+                            let pfrac = (pre_pos - pidx as f64) as f32;
+                            let pl = v.pcm_l[pidx] + (v.pcm_l[pidx + 1] - v.pcm_l[pidx]) * pfrac;
+                            let pr = v.pcm_r[pidx] + (v.pcm_r[pidx + 1] - v.pcm_r[pidx]) * pfrac;
+                            l = l * (1.0 - alpha) + pl * alpha;
+                            r = r * (1.0 - alpha) + pr * alpha;
+                        }
+                    }
+                }
+
+                let g = v.gain * v.env * atk * master;
+                out_l[f] += l * g * v.pan_l;
+                out_r[f] += r * g * v.pan_r;
+
+                v.pos += (v.loop_dir as f64) * v.phase_inc;
             }
             if !alive {
                 self.voices.swap_remove(i);
@@ -2485,5 +2797,261 @@ mod tests {
             packs.len(),
             failures.join("\n")
         );
+    }
+
+    #[test]
+    fn test_clock_is_500_ticks_per_beat() {
+        let pcm = Arc::new(vec![0.25_f32; 4000]);
+        let pkg = Arc::new(LoadedMusicPackage {
+            file_name: "clock_test.Music".to_string(),
+            file_path: "test://clock".to_string(),
+            version: "1.4.4".to_string(),
+            instruments: vec![LoadedInstrument {
+                index: 0,
+                name: "Click".to_string(),
+                volume: 1.0,
+                pan: 0,
+                inst_type: 1,
+                is_drumkit: true,
+                zones: vec![SampleZone {
+                    root_key: 36,
+                    key_low: 36,
+                    key_high: 36,
+                    name: "Kick".to_string(),
+                    sample_rate: 48000,
+                    channels: 1,
+                    loop_start: 0,
+                    loop_end: 0,
+                    loop_enabled: false,
+                    loop_mode: 0,
+                    gain: 1.0,
+                    pan: 0,
+                    fine_tune: 0,
+                    pool_sid: 0,
+                    pcm_l: Arc::clone(&pcm),
+                    pcm_r: Arc::clone(&pcm),
+                }],
+            }],
+            styles: vec![RhythmStyle {
+                id: 1,
+                name: "Test 4/4".to_string(),
+                category: "Test".to_string(),
+                bpm: 120.0,
+                sections: vec![RhythmSection {
+                    id: 2,
+                    name: "Variation 1".to_string(),
+                    length_ticks: 2000, // 4 beats at 500 ticks/beat = exactly 2.0s @ 120 BPM
+                    is_loop: true,
+                    jump_to: 0,
+                    tracks: vec![RhythmTrack {
+                        track_type: "Drum".to_string(),
+                        track_slot: 0,
+                        instrument_index: 0,
+                        volume: 1.0,
+                        pan: 0,
+                        fine_tune: 0,
+                        key_move: 0,
+                        octave_shift: 0,
+                        is_drum: true,
+                        events: vec![RhythmNoteEvent {
+                            midi_note: 36,
+                            velocity: 100,
+                            start_tick: 0,
+                            duration_ticks: 100,
+                        }],
+                    }],
+                }],
+            }],
+        });
+
+        let mut engine = MusicStudioArrangerEngine::new(48000.0);
+        engine.load_package(pkg);
+        engine.set_transport(true, None, Some(120.0));
+
+        // After 1.0s (48000 frames), 1000 ticks elapsed = beat_position ~0.5 (halfway through 2s bar!)
+        let mut l = vec![0.0_f32; 480];
+        let mut r = vec![0.0_f32; 480];
+        for _ in 0..100 {
+            engine.process_block(&mut l, &mut r);
+        }
+        assert!(
+            (engine.summary().beat_position - 0.5).abs() < 0.02,
+            "At 120 BPM, 1.0s must be 0.5 of a 2000-tick bar (500 ticks/beat), got {}",
+            engine.summary().beat_position
+        );
+
+        // After another 1.0s (total 2.0s = 96000 frames), must have wrapped cleanly back near 0.0
+        for _ in 0..100 {
+            engine.process_block(&mut l, &mut r);
+        }
+        let bp = engine.summary().beat_position;
+        assert!(
+            bp < 0.03 || bp > 0.97,
+            "At 120 BPM, 2.0s must complete 1 full 2000-tick bar, got beat_position={}",
+            bp
+        );
+    }
+
+    #[test]
+    fn test_bpm_parsing_and_tempo_lock() {
+        let dir = Path::new(USER_DOCUMENTS_RHYTHMS_DIR);
+        if !dir.exists() {
+            return;
+        }
+        let josiran = dir.join("Josiran_Pisadinha_GR.Music");
+        if josiran.exists() {
+            let pkg = parse_music_file(&josiran).expect("parse Josiran");
+            assert!((pkg.styles[0].bpm - 85.0).abs() < 0.5, "Josiran BPM expected 85, got {}", pkg.styles[0].bpm);
+        }
+
+        let calcinha = dir.join("Calcinha_Preta_ORG2024.Music");
+        if calcinha.exists() {
+            let pkg = parse_music_file(&calcinha).expect("parse Calcinha_Preta v1.2.5");
+            assert!(
+                (pkg.styles[0].bpm - 97.0).abs() < 1.5,
+                "Calcinha Preta v1.2.5 raw=81 should scale *120/100 to ~97 BPM, got {}",
+                pkg.styles[0].bpm
+            );
+        }
+
+        let mega = dir.join("MEGA_PACK_70_RITMOS_JUNTOS_TC.Music");
+        if mega.exists() {
+            let pkg = Arc::new(parse_music_file(&mega).expect("parse MEGA_PACK_70"));
+            assert!(pkg.styles.len() >= 10, "expected many styles in MEGA_PACK_70");
+            assert!(
+                (pkg.styles[0].bpm - 90.0).abs() < 0.5,
+                "MEGA_PACK_70 style[0] expected 90 BPM, got {}",
+                pkg.styles[0].bpm
+            );
+
+            let mut engine = MusicStudioArrangerEngine::new(48000.0);
+            engine.load_package(Arc::clone(&pkg));
+            assert!((engine.bpm - 90.0).abs() < 0.5);
+
+            // Switch to style 1 without Tempo Lock -> adopts style 1's BPM (96)
+            engine.set_style(1);
+            assert!(
+                (engine.bpm - pkg.styles[1].bpm).abs() < 0.5,
+                "unlocked style change should update BPM to {}, got {}",
+                pkg.styles[1].bpm,
+                engine.bpm
+            );
+
+            // Lock Tempo at 90 BPM and switch styles -> preserves 90 BPM
+            engine.set_transport(false, None, Some(90.0));
+            engine.set_tempo_locked(true);
+            engine.set_style(0);
+            engine.set_style(1);
+            assert!(
+                (engine.bpm - 90.0).abs() < 0.5,
+                "locked tempo must stay 90 BPM across style changes, got {}",
+                engine.bpm
+            );
+        }
+    }
+
+    #[test]
+    fn test_loop_continuity_no_silence_gap() {
+        let dir = Path::new(USER_DOCUMENTS_RHYTHMS_DIR);
+        if !dir.exists() {
+            return;
+        }
+        for (fname, expected_var1_ticks) in [
+            ("Toque_Dez_GR.Music", 16000_u32),
+            ("Tarcisio_do_Acordeon_Forro_Romantico_TM.Music", 8000_u32),
+        ] {
+            let p = dir.join(fname);
+            if !p.exists() {
+                continue;
+            }
+            let pkg = Arc::new(parse_music_file(&p).expect("parse rhythm"));
+            let var1 = pkg.styles[0]
+                .sections
+                .iter()
+                .find(|s| s.name == "Variation 1")
+                .expect("Variation 1");
+            assert_eq!(
+                var1.length_ticks, expected_var1_ticks,
+                "{} Variation 1 length_ticks must equal LimitEnd={}",
+                fname, expected_var1_ticks
+            );
+
+            let mut engine = MusicStudioArrangerEngine::new(48000.0);
+            engine.load_package(pkg);
+            engine.set_section("Variation 1", true);
+            engine.set_transport(true, None, None);
+
+            // Render across loop boundary (2.25 loops worth of 4096-frame blocks)
+            let secs_per_loop = (expected_var1_ticks as f64 / 500.0) * (60.0 / engine.bpm as f64);
+            let total_blocks = ((secs_per_loop * 2.25 * 48000.0) / 4096.0).ceil() as usize;
+            let mut l = vec![0.0_f32; 4096];
+            let mut r = vec![0.0_f32; 4096];
+            let mut silent_blocks = 0_usize;
+            for _ in 0..total_blocks {
+                engine.process_block(&mut l, &mut r);
+                let rms: f32 = (l.iter().map(|s| s * s).sum::<f32>() / l.len() as f32).sqrt();
+                if rms < 0.002 {
+                    silent_blocks += 1;
+                }
+            }
+            assert_eq!(
+                silent_blocks, 0,
+                "{}: found {} silent 85ms blocks across 2.25 loop cycles",
+                fname, silent_blocks
+            );
+        }
+    }
+
+    #[test]
+    fn test_melodic_instruments_not_drumkits_and_all_sample_rates() {
+        let dir = Path::new(USER_DOCUMENTS_RHYTHMS_DIR);
+        if !dir.exists() {
+            return;
+        }
+        let toque = dir.join("Toque_Dez_GR.Music");
+        if toque.exists() {
+            let pkg = parse_music_file(&toque).expect("parse Toque_Dez");
+            let piano_base = pkg
+                .instruments
+                .iter()
+                .find(|i| i.name.contains("PIANO BASE"))
+                .expect("PIANO BASE (GR)");
+            assert!(
+                !piano_base.is_drumkit,
+                "PIANO BASE (GR) must not be marked as drumkit"
+            );
+        }
+
+        let arrasta = dir.join("Arrasta_Pe_Forro_GR.Music");
+        if arrasta.exists() {
+            let pkg = parse_music_file(&arrasta).expect("parse Arrasta_Pe");
+            for kw in ["Finger Bass", "Safona base", "Distortion GtrGM"] {
+                let inst = pkg
+                    .instruments
+                    .iter()
+                    .find(|i| i.name.contains(kw))
+                    .unwrap_or_else(|| panic!("missing {}", kw));
+                assert!(!inst.is_drumkit, "{} must be melodic", kw);
+                assert!(
+                    inst.zones.iter().any(|z| !z.pcm_l.is_empty()),
+                    "{} must have decoded PCM samples",
+                    kw
+                );
+            }
+        }
+
+        let turma = dir.join("A_Turma_da_Pisadinha_TM.Music");
+        if turma.exists() {
+            let pkg = parse_music_file(&turma).expect("parse A_Turma");
+            let btr = pkg
+                .instruments
+                .iter()
+                .find(|i| i.name.contains("BATERIA 1"))
+                .expect("BATERIA 1");
+            assert!(
+                btr.zones.iter().any(|z| !z.pcm_l.is_empty()),
+                "BATERIA 1 (52kHz) must decode zones with samples"
+            );
+        }
     }
 }

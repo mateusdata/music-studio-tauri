@@ -465,6 +465,7 @@ describe("Studio UI components", () => {
       upper_octave: 0,
       transpose: 0,
       bpm: 120,
+      tempo_locked: false,
       rhythm_playing: false,
       sync_start: true,
       auto_fill: true,
@@ -529,6 +530,7 @@ describe("Studio UI components", () => {
       upper_octave: 0,
       transpose: 0,
       bpm: 120,
+      tempo_locked: false,
       rhythm_playing: false,
       sync_start: true,
       auto_fill: true,
@@ -747,6 +749,7 @@ describe("Studio UI components", () => {
       upper_octave: 0,
       transpose: 0,
       bpm: 85,
+      tempo_locked: false,
       rhythm_playing: false,
       sync_start: true,
       auto_fill: true,
@@ -788,34 +791,35 @@ describe("Studio UI components", () => {
         reversed_sustain: false,
       },
     });
-    const loadSpy = vi.spyOn(engineClient, "loadMusicPackage").mockResolvedValue({
-      loaded: true,
-      file_name: "Custom.Music",
-      file_path: "/tmp/Custom.Music",
-      version: "1.4.4",
-      instruments: [],
-      styles: [],
-      active_style_index: 0,
-      active_section: "Variation 1",
-      pending_section: null,
-      upper1_instrument: 0,
-      upper2_instrument: null,
-      lower_instrument: null,
-      split_key: 53,
-      split_enabled: true,
-      chord_scan_lower: true,
-      chord_scan_upper: false,
-      upper_octave: 0,
-      transpose: 0,
-      bpm: 120,
-      rhythm_playing: false,
-      sync_start: true,
-      auto_fill: true,
-      detected_chord_root: 0,
-      detected_chord_quality: "Major",
-      detected_chord: "C",
-      track_volumes: [1, 1, 1, 1, 1, 1, 1, 1],
-      beat_position: 0,
+    const bufSpy = vi.spyOn(engineClient, "setAudioBufferSize").mockResolvedValue({
+      sample_rate: 48000,
+      buffer_size: 512,
+      latency_ms: 10.67,
+      active_voices: 0,
+      max_polyphony: 128,
+      cpu_load_pct: 1.5,
+      peak_l: 0,
+      peak_r: 0,
+      rms_l: 0,
+      rms_r: 0,
+      audio_backend: "PipeWire",
+      audio_active: true,
+      midi_connected: false,
+      midi_port_name: null,
+      last_midi_note: null,
+      last_midi_velocity: 84,
+      active_notes: [],
+      pedals: {
+        sustain: 0,
+        soft: 0,
+        sostenuto: 0,
+        harmonic: 0,
+        celeste: 0,
+        buff_stop: 0,
+        rattle: 0,
+        super_sostenuto: false,
+        reversed_sustain: false,
+      },
     });
     const volSpy = vi.spyOn(engineClient, "setArrangerTrackVolume").mockResolvedValue({
       loaded: true,
@@ -837,6 +841,7 @@ describe("Studio UI components", () => {
       upper_octave: 0,
       transpose: 0,
       bpm: 120,
+      tempo_locked: false,
       rhythm_playing: false,
       sync_start: true,
       auto_fill: true,
@@ -866,6 +871,7 @@ describe("Studio UI components", () => {
       upper_octave: 0,
       transpose: 0,
       bpm: 120,
+      tempo_locked: false,
       rhythm_playing: false,
       sync_start: true,
       auto_fill: true,
@@ -879,18 +885,16 @@ describe("Studio UI components", () => {
     render(<App />);
 
     expect(await screen.findByLabelText("Drum Volume")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Caminho manual .Music" })).not.toBeInTheDocument();
+
     fireEvent.change(screen.getByLabelText("Drum Volume"), { target: { value: "0.6" } });
     await waitFor(() => {
       expect(volSpy).toHaveBeenCalledWith(0, 0.6);
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Caminho manual .Music" }));
-    fireEvent.change(screen.getByLabelText("Custom .Music File Path"), {
-      target: { value: "/tmp/Custom.Music" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Carregar" }));
+    fireEvent.change(screen.getByLabelText("Audio Buffer Size"), { target: { value: "512" } });
     await waitFor(() => {
-      expect(loadSpy).toHaveBeenCalledWith("/tmp/Custom.Music");
+      expect(bufSpy).toHaveBeenCalledWith(512);
     });
 
     fireEvent.click(screen.getByRole("button", { name: "CHORD LOWER" }));
