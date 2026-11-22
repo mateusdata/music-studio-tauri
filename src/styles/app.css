@@ -884,7 +884,6 @@ input[type="range"].studio-range::-webkit-slider-thumb {
   background: #0d0f14;
   border-radius: 5px;
   border: 1px solid #2b323d;
-  border-top: 3px solid #d91616;
   box-shadow: inset 0 6px 10px rgba(0, 0, 0, 0.45), 0 6px 18px rgba(0, 0, 0, 0.45);
 }
 
@@ -973,7 +972,7 @@ input[type="range"].studio-range::-webkit-slider-thumb {
   background: #ff1a1a;
   box-shadow: 0 0 7px rgba(255, 26, 26, 0.85);
   transform: translateX(-50%);
-  z-index: 6;
+  z-index: 3;
   pointer-events: none;
 }
 
