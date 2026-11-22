@@ -10,9 +10,9 @@ use crate::midi::{
     MidiConnectionHandle, MidiEngineEvent,
 };
 use crate::music_studio::{
-    list_all_music_packages, parse_music_file, LoadedMusicPackage, MusicPackageEntry,
-    MusicPackageSummary, MusicStudioArrangerEngine, DEFAULT_MUSIC_STUDIO_DIR,
-    USER_DOCUMENTS_RHYTHMS_DIR,
+    list_all_music_packages, parse_instrument_file, parse_music_file, LoadedInstrument,
+    LoadedMusicPackage, MusicPackageEntry, MusicPackageSummary, MusicStudioArrangerEngine,
+    DEFAULT_MUSIC_STUDIO_DIR, USER_DOCUMENTS_RHYTHMS_DIR,
 };
 use crate::presets::{build_factory_presets, load_user_presets, morph_engine_params, save_user_preset};
 use crate::synthesis::{PianoSynthEngine, MAX_POLYPHONY};
@@ -34,6 +34,10 @@ pub enum AudioCommand {
     UpdateParams(Box<EngineParams>),
     UpdateInstrument(Box<InstrumentModel>),
     LoadMusicPackage(Arc<LoadedMusicPackage>),
+    ImportInstrument {
+        instrument: Box<LoadedInstrument>,
+        assign_upper1: bool,
+    },
     SetArrangerSection { section_name: String, immediate: bool },
     SetArrangerTransport {
         playing: bool,
@@ -357,6 +361,14 @@ fn process_audio_command(
         AudioCommand::UpdateInstrument(new_i) => *inst = *new_i,
         AudioCommand::LoadMusicPackage(pkg) => {
             arranger.load_package(pkg);
+            arranger.set_master_gain_db(params.volume_db);
+            summary_dirty = true;
+        }
+        AudioCommand::ImportInstrument {
+            instrument,
+            assign_upper1,
+        } => {
+            arranger.add_imported_instrument(*instrument, assign_upper1);
             arranger.set_master_gain_db(params.volume_db);
             summary_dirty = true;
         }
@@ -1276,6 +1288,65 @@ impl AudioEngineManager {
         *self.shared.arranger_summary.write() = summary.clone();
         let _ = self.cmd_tx.lock().send(AudioCommand::LoadMusicPackage(pkg_arc));
         Ok(summary)
+    }
+
+    pub fn import_instrument_file(
+        &self,
+        path: &PathBuf,
+        assign_upper1: bool,
+    ) -> Result<MusicPackageSummary, String> {
+        let next_idx = self
+            .shared
+            .active_music_package
+            .read()
+            .as_ref()
+            .map(|p| p.instruments.len())
+            .unwrap_or(0);
+        let parsed = parse_instrument_file(path, next_idx)?;
+
+        {
+            let mut pkg_guard = self.shared.active_music_package.write();
+            let mut pkg = match pkg_guard.as_ref() {
+                Some(existing) => (**existing).clone(),
+                None => LoadedMusicPackage {
+                    file_name: "Custom Instruments".to_string(),
+                    file_path: "custom://instruments".to_string(),
+                    version: "1.4".to_string(),
+                    instruments: Vec::new(),
+                    styles: Vec::new(),
+                },
+            };
+            let mut inst = parsed.clone();
+            let actual_idx = pkg.instruments.len();
+            inst.index = actual_idx;
+            let inst_summary = crate::music_studio::MusicInstrumentSummary {
+                index: actual_idx,
+                name: inst.name.clone(),
+                zone_count: inst.zones.len(),
+                has_samples: inst.zones.iter().any(|z| !z.pcm_l.is_empty()),
+                is_drumkit: inst.is_drumkit,
+            };
+            pkg.instruments.push(inst);
+            *pkg_guard = Some(Arc::new(pkg));
+
+            let mut sum = self.shared.arranger_summary.write();
+            if !sum.loaded {
+                sum.loaded = true;
+                sum.file_name = "Custom Instruments".to_string();
+                sum.file_path = "custom://instruments".to_string();
+                sum.version = "1.4".to_string();
+            }
+            sum.instruments.push(inst_summary);
+            if assign_upper1 {
+                sum.upper1_instrument = actual_idx;
+            }
+        }
+
+        let _ = self.cmd_tx.lock().send(AudioCommand::ImportInstrument {
+            instrument: Box::new(parsed),
+            assign_upper1,
+        });
+        Ok(self.arranger_state())
     }
 
     pub fn set_arranger_section(&self, section_name: &str, immediate: bool) -> MusicPackageSummary {

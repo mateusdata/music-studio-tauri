@@ -11,6 +11,33 @@ interface VirtualKeyboardProps {
 
 const BLACK_SEMITONES = new Set([1, 3, 6, 8, 10]);
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const BLACK_OFFSET_FACTOR: Record<number, number> = {
+  1: -0.08,
+  3: 0.08,
+  6: -0.1,
+  8: 0.0,
+  10: 0.1,
+};
+
+const KEY_HINT_BY_MIDI: Record<number, string> = {
+  48: "Z",
+  50: "X",
+  52: "C",
+  53: "V",
+  55: "B",
+  57: "N",
+  59: "M",
+  60: "Q",
+  62: "W",
+  64: "E",
+  65: "R",
+  67: "T",
+  69: "Y",
+  71: "U",
+  72: "I",
+  74: "O",
+  76: "P",
+};
 
 const COMPUTER_KEY_MAP: Record<string, number> = {
   z: 48,
@@ -82,7 +109,8 @@ export const VirtualKeyboard: React.FC<VirtualKeyboardProps> = ({
       if (!BLACK_SEMITONES.has(m % 12)) {
         whiteIdx++;
       } else {
-        const leftPct = (whiteIdx / totalWhites) * 100;
+        const offsetUnits = BLACK_OFFSET_FACTOR[m % 12] ?? 0;
+        const leftPct = ((whiteIdx + offsetUnits) / totalWhites) * 100;
         blacks.push({ midi: m, leftPct });
       }
     }
@@ -167,6 +195,8 @@ export const VirtualKeyboard: React.FC<VirtualKeyboardProps> = ({
           const isC = midi % 12 === 0;
           const letter = NOTE_NAMES[midi % 12];
           const displayOctave = Math.floor(midi / 12); // Music Studio numbers C2 as 3..C7 as 8
+          const octClass = `key-oct-${Math.min(8, Math.max(1, displayOctave))}`;
+          const shortcutHint = KEY_HINT_BY_MIDI[midi];
           const isActive = activeSet.has(midi);
           const isLeftSplit = splitEnabled && midi <= splitKey;
           const isSplitEdge = splitEnabled && midi === firstUpperWhite;
@@ -187,8 +217,9 @@ export const VirtualKeyboard: React.FC<VirtualKeyboardProps> = ({
                 if (pressedLocal.has(midi)) triggerUp(midi);
               }}
             >
-              {isC && <span className={`key-oct-num key-oct-${displayOctave}`}>{displayOctave}</span>}
-              <span className="key-note-letter">{letter}</span>
+              {shortcutHint && <span className="key-shortcut-hint">{shortcutHint}</span>}
+              {isC && <span className={`key-oct-num ${octClass}`}>{displayOctave}</span>}
+              <span className={`key-note-letter ${octClass}`}>{letter}</span>
             </div>
           );
         })}
@@ -213,7 +244,10 @@ export const VirtualKeyboard: React.FC<VirtualKeyboardProps> = ({
               className={`black-key ${isActive ? "active" : ""} ${
                 isLeftSplit ? "split-chord-zone" : ""
               }`}
-              style={{ left: `${leftPct}%` }}
+              style={{
+                left: `${leftPct}%`,
+                width: `calc((100% / ${whiteKeys.length}) * 0.64)`,
+              }}
               onMouseDown={(e) => {
                 e.stopPropagation();
                 triggerDown(midi, computeVelocity(e));

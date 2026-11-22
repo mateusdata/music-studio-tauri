@@ -5,7 +5,8 @@ use crate::contracts::{
 };
 use crate::midi::list_midi_input_ports;
 use crate::music_studio::{
-    MusicPackageEntry, MusicPackageSummary, USER_DOCUMENTS_RHYTHMS_DIR,
+    MusicPackageEntry, MusicPackageSummary, USER_DOCUMENTS_INSTRUMENTS_DIR,
+    USER_DOCUMENTS_RHYTHMS_DIR,
 };
 use std::path::PathBuf;
 use tauri::State;
@@ -278,4 +279,59 @@ pub fn set_arranger_track_volume(
     volume: f32,
 ) -> MusicPackageSummary {
     engine.set_arranger_track_volume(track_index, volume)
+}
+
+#[tauri::command]
+pub fn import_instrument_file(
+    engine: State<AudioEngineManager>,
+    path: String,
+    assign_upper1: Option<bool>,
+) -> Result<MusicPackageSummary, String> {
+    engine.import_instrument_file(&PathBuf::from(path), assign_upper1.unwrap_or(true))
+}
+
+#[tauri::command]
+pub fn pick_instrument_dialog(
+    engine: State<AudioEngineManager>,
+    assign_upper1: Option<bool>,
+) -> Result<Option<MusicPackageSummary>, String> {
+    let default_dir = if std::path::Path::new(USER_DOCUMENTS_INSTRUMENTS_DIR).exists() {
+        format!("{}/", USER_DOCUMENTS_INSTRUMENTS_DIR)
+    } else if std::path::Path::new(USER_DOCUMENTS_RHYTHMS_DIR).exists() {
+        format!("{}/", USER_DOCUMENTS_RHYTHMS_DIR)
+    } else {
+        "/home/data/Documents/".to_string()
+    };
+
+    let output = std::process::Command::new("/usr/bin/zenity")
+        .arg("--file-selection")
+        .arg("--multiple")
+        .arg("--separator=\n")
+        .arg("--title=Selecionar Timbre (.Instrument)")
+        .arg(format!("--filename={}", default_dir))
+        .arg("--file-filter=Music Studio Instrument (*.Instrument) | *.Instrument *.instrument")
+        .arg("--file-filter=Todos os arquivos | *")
+        .output()
+        .map_err(|e| format!("Falha ao abrir explorador de arquivos (zenity): {}", e))?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let paths: Vec<String> = raw
+        .lines()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if paths.is_empty() {
+        return Ok(None);
+    }
+
+    let assign_last = assign_upper1.unwrap_or(true);
+    let mut latest = None;
+    for (idx, p) in paths.iter().enumerate() {
+        let should_assign = assign_last && idx + 1 == paths.len();
+        latest = Some(engine.import_instrument_file(&PathBuf::from(p), should_assign)?);
+    }
+    Ok(latest)
 }

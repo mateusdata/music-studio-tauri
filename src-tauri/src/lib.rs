@@ -52,6 +52,8 @@ pub fn run() {
             commands::list_music_packages,
             commands::load_music_package,
             commands::pick_music_package_dialog,
+            commands::import_instrument_file,
+            commands::pick_instrument_dialog,
             commands::get_arranger_state,
             commands::set_arranger_section,
             commands::set_arranger_transport,

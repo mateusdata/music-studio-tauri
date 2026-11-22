@@ -323,6 +323,30 @@ export function App() {
     }
   };
 
+  const handlePickInstrumentDialog = useCallback(async () => {
+    if (!engineClient.isTauri()) {
+      setStatusMsg("Importador de timbres .Instrument disponível no aplicativo desktop Tauri");
+      return;
+    }
+    setStatusMsg("Selecionando timbre (.Instrument)...");
+    try {
+      const nextState = await engineClient.pickInstrumentDialog(true);
+      if (!nextState) {
+        setStatusMsg("Importação de timbre cancelada.");
+        return;
+      }
+      setArranger(nextState);
+      const activeInst = nextState.instruments.find(
+        (i) => i.index === nextState.upper1_instrument,
+      );
+      setStatusMsg(
+        `Timbre importado em Upper 1: ${activeInst?.name ?? "Instrument"} (${nextState.instruments.length} timbres no pacote)`,
+      );
+    } catch (err) {
+      setStatusMsg(`Falha ao importar timbre .Instrument: ${String(err)}`);
+    }
+  }, []);
+
   const handleMasterVolumeChange = useCallback(
     (nextDb: number) => {
       const clamped = Math.max(-36, Math.min(6, Math.round(nextDb * 2) / 2));
@@ -826,7 +850,18 @@ export function App() {
           <section className="panel-card arranger-voices-card">
             <div className="panel-title">
               <span>Timbres, Split Divider & Chord Scan</span>
-              <Music2 size={14} />
+              <div className="panel-title-actions">
+                <button
+                  type="button"
+                  className="btn btn-xs btn-primary"
+                  aria-label="Importar Timbre .Instrument"
+                  onClick={handlePickInstrumentDialog}
+                  title="Importar arquivo .Instrument para usar em Upper 1 / Upper 2 / Lower"
+                >
+                  <FolderOpen size={12} /> + .Instrument
+                </button>
+                <Music2 size={14} />
+              </div>
             </div>
 
             <div className="voice-slots-grid">

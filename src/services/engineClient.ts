@@ -146,6 +146,22 @@ export const engineClient = {
     return invoke<EngineTelemetry>("set_audio_buffer_size", { bufferSize });
   },
 
+  async importInstrumentFile(
+    path: string,
+    assignUpper1 = true,
+  ): Promise<MusicPackageSummary> {
+    return invoke<MusicPackageSummary>("import_instrument_file", {
+      path,
+      assignUpper1,
+    });
+  },
+
+  async pickInstrumentDialog(assignUpper1 = true): Promise<MusicPackageSummary | null> {
+    return invoke<MusicPackageSummary | null>("pick_instrument_dialog", {
+      assignUpper1,
+    });
+  },
+
   async setArrangerStyle(styleIndex: number): Promise<MusicPackageSummary> {
     return invoke<MusicPackageSummary>("set_arranger_style", { styleIndex });
   },

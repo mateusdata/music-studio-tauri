@@ -226,6 +226,9 @@ describe("Music Studio Tauri Arranger App UI", () => {
     expect(within(keyboard).getByRole("button", { name: "Key F3" })).toHaveClass("split-chord-zone");
     expect(within(keyboard).getByRole("button", { name: "Key G3" })).toHaveClass("split-point-edge");
     expect(within(keyboard).getByTestId("split-divider-line")).toBeInTheDocument();
+    for (const oct of [3, 4, 5, 6, 7, 8]) {
+      expect(keyboard.querySelector(`.key-oct-${oct}`)).toBeInTheDocument();
+    }
   });
 
   it("supports searchable filtering on Music Package Selector dropdown", () => {
@@ -334,6 +337,23 @@ describe("Music Studio Tauri Arranger App UI", () => {
     const pickSpy = vi
       .spyOn(engineClient, "pickMusicPackageDialog")
       .mockResolvedValue(buildMockArrangerState({ file_name: "Picked.Music", file_path: "/home/data/Documents/Ritmos_Forro_Music_Studio/Picked.Music" }));
+    const pickInstSpy = vi
+      .spyOn(engineClient, "pickInstrumentDialog")
+      .mockResolvedValue(
+        buildMockArrangerState({
+          upper1_instrument: 8,
+          instruments: [
+            ...initialArr.instruments,
+            {
+              index: 8,
+              name: "ACORDION (ACORDION_MT)",
+              zone_count: 6,
+              has_samples: true,
+              is_drumkit: false,
+            },
+          ],
+        }),
+      );
     const voiceSpy = vi
       .spyOn(engineClient, "setArrangerKeyboardVoice")
       .mockResolvedValue(buildMockArrangerState({ chord_scan_upper: true, split_enabled: false }));
@@ -386,6 +406,11 @@ describe("Music Studio Tauri Arranger App UI", () => {
     fireEvent.click(screen.getByRole("button", { name: /Importar \.Music/i }));
     await waitFor(() => {
       expect(pickSpy).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Importar Timbre .Instrument" }));
+    await waitFor(() => {
+      expect(pickInstSpy).toHaveBeenCalledWith(true);
     });
 
     fireEvent.click(screen.getByLabelText("Music Package Selector Trigger"));
