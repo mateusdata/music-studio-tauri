@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { AlertTriangle, Lock, Unlock } from "lucide-react";
+import { AlertTriangle, Lock, Play, Square, Unlock } from "lucide-react";
 import type { MusicPackageSummary, OtsPresetSummary } from "../types/engine";
 
 const QUICK_CHORDS: { label: string; root: number; quality: string }[] = [
@@ -21,6 +21,7 @@ const QUICK_CHORDS: { label: string; root: number; quality: string }[] = [
 
 export interface LcdPanelProps {
   arranger: MusicPackageSummary;
+  onTogglePlay: () => void;
   onBpmChange: (bpm: number) => void;
   onTempoLockToggle: () => void;
   onApplyOts: (otsIndex: number) => void;
@@ -98,6 +99,7 @@ function resolveStyWarnings(arranger: MusicPackageSummary): string[] {
  */
 export function LcdPanel({
   arranger,
+  onTogglePlay,
   onBpmChange,
   onTempoLockToggle,
   onApplyOts,
@@ -164,7 +166,16 @@ export function LcdPanel({
           />
         </div>
 
-        <div className="lcd-tempo-row">
+        <div className="lcd-tempo-row lcd-playback-row">
+          <button
+            type="button"
+            className={`btn btn-start-stop ${arranger.rhythm_playing ? "playing" : ""}`}
+            onClick={onTogglePlay}
+            aria-pressed={arranger.rhythm_playing}
+          >
+            {arranger.rhythm_playing ? <Square size={14} /> : <Play size={14} />}
+            <span>{arranger.rhythm_playing ? "STOP RITMO" : "START RITMO"}</span>
+          </button>
           <span className="lcd-label">TEMPO</span>
           <div className="tempo-stepper">
             <button

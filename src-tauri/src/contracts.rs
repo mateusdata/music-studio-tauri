@@ -641,6 +641,12 @@ impl Default for MidiTransportState {
 pub struct EngineTelemetry {
     pub sample_rate: u32,
     pub buffer_size: usize,
+    #[serde(default)]
+    pub requested_buffer_size: usize,
+    #[serde(default)]
+    pub audio_error: Option<String>,
+    #[serde(default)]
+    pub configuration_error: Option<String>,
     pub latency_ms: f32,
     pub active_voices: usize,
     pub max_polyphony: usize,

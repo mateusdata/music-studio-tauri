@@ -6,6 +6,7 @@ import {
   FolderOpen,
   Minus,
   Plus,
+  Settings2,
   Volume2,
 } from "lucide-react";
 import { SearchableSelect } from "./SearchableSelect";
@@ -35,6 +36,12 @@ export interface ArrangerTopbarProps {
   onPickStyFolderDialog: () => void;
   onMidiConnect: (portName: string) => void;
   onExportWav: () => void;
+  onResetInstruments: () => void;
+  onSaveConfiguration: () => void;
+  onClearConfiguration: () => void;
+  onScanDuplicates: () => void;
+  toolsBusy: boolean;
+  bufferBusy: boolean;
   onMasterVolumeChange: (nextDb: number) => void;
   onBufferSizeChange: (nextSize: number) => void;
 }
@@ -89,6 +96,12 @@ export function ArrangerTopbar({
   onPickStyFolderDialog,
   onMidiConnect,
   onExportWav,
+  onResetInstruments,
+  onSaveConfiguration,
+  onClearConfiguration,
+  onScanDuplicates,
+  toolsBusy,
+  bufferBusy,
   onMasterVolumeChange,
   onBufferSizeChange,
 }: ArrangerTopbarProps) {
@@ -214,9 +227,16 @@ export function ArrangerTopbar({
           ))}
         </select>
 
-        <button type="button" className="btn" onClick={onExportWav}>
-          <Disc size={13} /> WAV
-        </button>
+        <details className="tools-menu">
+          <summary className="btn" aria-label="Ferramentas"><Settings2 size={14} /> Opções</summary>
+          <div className="tools-menu-content">
+            <button type="button" className="btn" disabled={toolsBusy} onClick={onResetInstruments}>Resetar timbres</button>
+            <button type="button" className="btn" disabled={toolsBusy} onClick={onSaveConfiguration}>Salvar configuração atual</button>
+            <button type="button" className="btn" disabled={toolsBusy} onClick={onClearConfiguration}>Remover configuração salva</button>
+            <button type="button" className="btn" disabled={toolsBusy} onClick={onScanDuplicates}>Limpar ritmos duplicados</button>
+            <button type="button" className="btn" onClick={onExportWav}><Disc size={13} /> Exportar WAV</button>
+          </div>
+        </details>
       </div>
 
       <div className="telemetry-strip">
@@ -252,17 +272,24 @@ export function ArrangerTopbar({
           <select
             aria-label="Audio Buffer Size"
             className="studio-select studio-select-sm latency-select"
+            disabled={bufferBusy}
             value={String(bufferSize)}
             onChange={(e) => onBufferSizeChange(Number(e.target.value))}
-            title="Tamanho do buffer de áudio (latência)"
+            title="Buffer solicitado em frames; o dispositivo pode negociar outro tamanho"
           >
             <option value="128">128 buf</option>
+            <option value="150">150 buf</option>
+            <option value="190">190 buf</option>
+            <option value="210">210 buf</option>
             <option value="256">256 buf</option>
             <option value="512">512 buf</option>
             <option value="1024">1024 buf</option>
           </select>
-          <span className="latency-readout">
-            {(telemetry?.latency_ms ?? (bufferSize / 48000) * 1000).toFixed(1)} ms
+          <span className="latency-readout" title="Período observado do callback de áudio, não latência total de saída">
+            {telemetry?.buffer_size ? `${telemetry.latency_ms.toFixed(1)} ms` : "-- ms"}
+          </span>
+          <span className="actual-buffer-readout" title={`Buffer solicitado: ${bufferSize} frames; real: ${telemetry?.buffer_size || "aguardando áudio"}`}>
+            {telemetry?.buffer_size ? `${telemetry.buffer_size} real` : "-- real"}
           </span>
         </div>
 

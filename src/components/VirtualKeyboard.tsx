@@ -20,13 +20,13 @@ const BLACK_OFFSET_FACTOR: Record<number, number> = {
 };
 
 const KEY_HINT_BY_MIDI: Record<number, string> = {
-  48: "Z",
-  50: "X",
-  52: "C",
-  53: "V",
-  55: "B",
-  57: "N",
-  59: "M",
+  36: "Z",
+  38: "X",
+  40: "C",
+  41: "V",
+  43: "B",
+  45: "N",
+  47: "M",
   60: "Q",
   62: "W",
   64: "E",
@@ -40,18 +40,18 @@ const KEY_HINT_BY_MIDI: Record<number, string> = {
 };
 
 const COMPUTER_KEY_MAP: Record<string, number> = {
-  z: 48,
-  s: 49,
-  x: 50,
-  d: 51,
-  c: 52,
-  v: 53,
-  g: 54,
-  b: 55,
-  h: 56,
-  n: 57,
-  j: 58,
-  m: 59,
+  z: 36,
+  s: 37,
+  x: 38,
+  d: 39,
+  c: 40,
+  v: 41,
+  g: 42,
+  b: 43,
+  h: 44,
+  n: 45,
+  j: 46,
+  m: 47,
   q: 60,
   "2": 61,
   w: 62,
@@ -190,7 +190,7 @@ export const VirtualKeyboard: React.FC<VirtualKeyboardProps> = ({
 
   return (
     <div className="piano-keys-scroll" data-testid="virtual-keyboard">
-      <div className="piano-keys-track" style={{ minWidth: "960px" }}>
+      <div className="piano-keys-track" style={{ minWidth: `${whiteKeys.length * 34}px` }}>
         {whiteKeys.map((midi) => {
           const isC = midi % 12 === 0;
           const letter = NOTE_NAMES[midi % 12];

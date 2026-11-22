@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Cable, Play, Square } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { engineClient } from "./services/engineClient";
 import { ArrangerTopbar } from "./components/ArrangerTopbar";
 import { MixerPanel } from "./components/MixerPanel";
@@ -7,6 +6,8 @@ import { LcdPanel } from "./components/LcdPanel";
 import { VoicesSplitPanel } from "./components/VoicesSplitPanel";
 import { VirtualKeyboard } from "./components/VirtualKeyboard";
 import type {
+  CleanupReport,
+  DuplicateScan,
   EngineParams,
   EngineSnapshot,
   EngineTelemetry,
@@ -189,72 +190,97 @@ export function App() {
   const [selectedMidiPort, setSelectedMidiPort] = useState<string>("");
   const [sustainOn, setSustainOn] = useState(false);
   const [masterVolumeDb, setMasterVolumeDb] = useState<number>(-4.0);
-  const [bufferSize, setBufferSize] = useState<number>(1024);
+  const [bufferSize, setBufferSize] = useState<number>(256);
   const [statusMsg, setStatusMsg] = useState<string>(() =>
     engineClient.isTauri()
       ? "Pronto"
       : "Modo preview (execute com Tauri para carregar .Music e áudio nativo)",
   );
 
+  const [bufferBusy, setBufferBusy] = useState(false);
+  const bufferPending = useRef(false);
+  const bufferRevision = useRef(0);
+  const arrangerRevision = useRef(0);
+  const paramsEdited = useRef(false);
+  const midiEdited = useRef(false);
+  const [toolsBusy, setToolsBusy] = useState(false);
+  const toolsPending = useRef(false);
+  const [duplicateScan, setDuplicateScan] = useState<DuplicateScan | null>(null);
+  const [cleanupReport, setCleanupReport] = useState<CleanupReport | null>(null);
+
   useEffect(() => {
     if (!engineClient.isTauri()) return;
     let alive = true;
-
-    Promise.all([
-      engineClient.listMusicPackages(),
-      engineClient.getArrangerState(),
-      engineClient.getSnapshot(),
-      engineClient.listMidiDevices(),
-      engineClient.getTelemetry().catch(() => null),
-    ])
-      .then(([pkgs, arrState, snap, ports, tele]) => {
+    let telemetryPending = false;
+    let arrangerPending = false;
+    let snapshotPending = false;
+    const startupError = (label: string, err: unknown) => {
+      if (alive) setStatusMsg(`Erro ao inicializar ${label}: ${String(err)}`);
+    };
+    // Library discovery must never block transport, audio, MIDI, or the first frame.
+    engineClient.listMusicPackages().then((pkgs) => {
+      if (alive) setPackages((current) => [
+        ...current, ...pkgs.filter((pkg) => !current.some((p) => p.file_path === pkg.file_path)),
+      ]);
+    }).catch((err) => startupError("biblioteca", err));
+    const refreshSnapshot = () => {
+      if (snapshotPending) return;
+      snapshotPending = true;
+      engineClient.getSnapshot().then((snap) => {
         if (!alive) return;
-        setPackages(pkgs);
-        setArranger(arrState);
-        setSnapshot(snap);
-        setMasterVolumeDb(snap.params.volume_db);
-        setMidiPorts(ports);
-        setSelectedMidiPort(snap.midi_config.selected_port ?? "");
-        if (tele) {
-          setTelemetry(tele);
-          if ([128, 256, 512, 1024].includes(tele.buffer_size)) {
-            setBufferSize(tele.buffer_size);
-          }
-        }
-        if (arrState.loaded) {
-          setStatusMsg(
-            `Carregado ${arrState.file_name} (${arrState.instruments.length} timbres, v${arrState.version})`,
-          );
-        }
-      })
-      .catch((err) => {
-        if (alive) setStatusMsg(`Erro ao inicializar: ${String(err)}`);
-      });
-
-    const interval = setInterval(() => {
+        setSnapshot((current) => paramsEdited.current && current ? current : snap);
+        if (!paramsEdited.current) setMasterVolumeDb(snap.params.volume_db);
+        if (!midiEdited.current) setSelectedMidiPort(snap.midi_config.selected_port ?? "");
+      }).catch((err) => startupError("configuração", err))
+        .finally(() => { snapshotPending = false; });
+    };
+    const refreshTelemetry = () => {
+      if (telemetryPending || bufferPending.current) return;
+      telemetryPending = true;
+      const revision = bufferRevision.current;
       engineClient.getTelemetry().then((t) => {
-        if (alive) setTelemetry(t);
-      }).catch(() => {});
+        if (!alive || revision !== bufferRevision.current) return;
+        setTelemetry(t);
+        if (t.requested_buffer_size !== undefined) setBufferSize(t.requested_buffer_size);
+      }).catch((err) => startupError("áudio", err))
+        .finally(() => { telemetryPending = false; });
+    };
+    const refreshArranger = () => {
+      if (arrangerPending) return;
+      arrangerPending = true;
+      const revision = arrangerRevision.current;
       engineClient.getArrangerState().then((s) => {
-        if (alive && s.loaded) setArranger(s);
-      }).catch(() => {});
-    }, 100);
-
-    const midiPoll = setInterval(() => {
-      engineClient.listMidiDevices().then((p) => {
-        if (alive) setMidiPorts(p);
-      }).catch(() => {});
-    }, 2500);
-
+        if (alive && revision === arrangerRevision.current) setArranger(s);
+      }).catch((err) => startupError("arranjador", err))
+        .finally(() => { arrangerPending = false; });
+    };
+    const refreshMidi = () => engineClient.listMidiDevices().then((ports) => {
+      if (alive) setMidiPorts(ports);
+    }).catch((err) => startupError("MIDI", err));
+    refreshSnapshot();
+    refreshTelemetry();
+    refreshArranger();
+    refreshMidi();
+    const interval = setInterval(() => { refreshTelemetry(); refreshArranger(); }, 100);
+    // Background configuration/bootstrap can finish after the initial queries.
+    const bootstrapPoll = setInterval(() => { refreshMidi(); refreshSnapshot(); }, 2500);
     return () => {
       alive = false;
       clearInterval(interval);
-      clearInterval(midiPoll);
+      clearInterval(bootstrapPoll);
     };
   }, []);
 
+  // Routine success is transient; errors stay visible until the next action.
+  useEffect(() => {
+    if (!statusMsg || /erro|falha|aviso|recupera/i.test(statusMsg)) return;
+    const timeout = setTimeout(() => setStatusMsg(""), 4500);
+    return () => clearTimeout(timeout);
+  }, [statusMsg]);
+
   const updateParams = useCallback(
     (mutator: (draft: EngineParams) => void) => {
+      paramsEdited.current = true;
       if (!snapshot) return;
       const next: EngineParams = structuredClone(snapshot.params);
       mutator(next);
@@ -268,6 +294,7 @@ export function App() {
 
   const handleLoadPackage = useCallback(async (filePath: string) => {
     if (!filePath) return;
+    arrangerRevision.current++;
     if (!engineClient.isTauri()) {
       const name = filePath.split("/").pop() ?? filePath;
       const lower = name.toLowerCase();
@@ -288,6 +315,7 @@ export function App() {
     setStatusMsg("Importando pacote...");
     try {
       const nextState = await engineClient.loadMusicPackage(filePath);
+      arrangerRevision.current++;
       setArranger(nextState);
       setStatusMsg(
         `Carregado ${nextState.file_name}: ${nextState.instruments.length} timbres e ${nextState.styles.length} estilo(s)`,
@@ -302,6 +330,7 @@ export function App() {
       setStatusMsg("Importador nativo disponível no aplicativo desktop Tauri");
       return;
     }
+    arrangerRevision.current++;
     setStatusMsg("Abrindo explorador de arquivos...");
     try {
       const nextState = await engineClient.pickMusicPackageDialog();
@@ -309,6 +338,7 @@ export function App() {
         setStatusMsg("Importação cancelada.");
         return;
       }
+      arrangerRevision.current++;
       setArranger(nextState);
       setPackages((prev) => mergePackageEntry(prev, nextState, "music"));
       setStatusMsg(
@@ -324,6 +354,7 @@ export function App() {
       setStatusMsg("Importador de ritmos .STY disponível no aplicativo desktop Tauri");
       return;
     }
+    arrangerRevision.current++;
     setStatusMsg("Selecionando arquivo(s) .STY...");
     try {
       const nextState = await engineClient.pickStyDialog();
@@ -331,6 +362,7 @@ export function App() {
         setStatusMsg("Importação .STY cancelada.");
         return;
       }
+      arrangerRevision.current++;
       setArranger(nextState);
       setPackages((prev) => mergePackageEntry(prev, nextState, "sty"));
       const sfInfo = nextState.soundfont_name ? ` • SF2: ${nextState.soundfont_name}` : "";
@@ -347,6 +379,7 @@ export function App() {
       setStatusMsg("Importador de pasta .STY disponível no aplicativo desktop Tauri");
       return;
     }
+    arrangerRevision.current++;
     setStatusMsg("Selecionando pasta de ritmos .STY...");
     try {
       const nextState = await engineClient.pickStyFolderDialog();
@@ -354,6 +387,7 @@ export function App() {
         setStatusMsg("Seleção de pasta .STY cancelada.");
         return;
       }
+      arrangerRevision.current++;
       setArranger(nextState);
       setPackages((prev) => mergePackageEntry(prev, nextState, "sty"));
       const sfInfo = nextState.soundfont_name ? ` • SF2: ${nextState.soundfont_name}` : "";
@@ -370,6 +404,7 @@ export function App() {
       setStatusMsg("Importador de SoundFont .SF2 disponível no aplicativo desktop Tauri");
       return;
     }
+    arrangerRevision.current++;
     setStatusMsg("Selecionando SoundFont (.sf2)...");
     try {
       const nextState = await engineClient.pickSoundfontDialog();
@@ -377,6 +412,7 @@ export function App() {
         setStatusMsg("Seleção de SoundFont cancelada.");
         return;
       }
+      arrangerRevision.current++;
       setArranger(nextState);
       setStatusMsg(
         `SoundFont carregado: ${nextState.soundfont_name ?? "SF2"} (${nextState.instruments.length} timbres)`,
@@ -391,6 +427,7 @@ export function App() {
       setStatusMsg("Importador de timbres .Instrument disponível no aplicativo desktop Tauri");
       return;
     }
+    arrangerRevision.current++;
     setStatusMsg("Selecionando timbre (.Instrument)...");
     try {
       const nextState = await engineClient.pickInstrumentDialog(true);
@@ -398,6 +435,7 @@ export function App() {
         setStatusMsg("Importação de timbre cancelada.");
         return;
       }
+      arrangerRevision.current++;
       setArranger(nextState);
       const activeInst = nextState.instruments.find(
         (i) => i.index === nextState.upper1_instrument,
@@ -422,19 +460,24 @@ export function App() {
   );
 
   const handleBufferSizeChange = useCallback(async (nextSize: number) => {
-    setBufferSize(nextSize);
+    if (bufferPending.current || ![128, 150, 190, 210, 256, 512, 1024].includes(nextSize)) return;
     if (!engineClient.isTauri()) {
-      setStatusMsg(`Buffer ajustado para ${nextSize} frames (~${((nextSize / 48000) * 1000).toFixed(1)} ms)`);
+      setBufferSize(nextSize);
       return;
     }
+    bufferPending.current = true;
+    bufferRevision.current++;
+    setBufferBusy(true);
     try {
       const nextTelemetry = await engineClient.setAudioBufferSize(nextSize);
       setTelemetry(nextTelemetry);
-      setStatusMsg(
-        `Latência configurada: ${nextSize} frames (${nextTelemetry.latency_ms.toFixed(1)} ms)`,
-      );
+      setBufferSize(nextTelemetry.requested_buffer_size ?? nextSize);
+      setStatusMsg(nextTelemetry.audio_error ? `Erro de áudio: ${nextTelemetry.audio_error}` : "");
     } catch (err) {
-      setStatusMsg(`Falha ao configurar latência: ${String(err)}`);
+      setStatusMsg(`Falha ao configurar buffer: ${String(err)}`);
+    } finally {
+      bufferPending.current = false;
+      setBufferBusy(false);
     }
   }, []);
 
@@ -451,6 +494,7 @@ export function App() {
       null,
       nextLocked,
     );
+    arrangerRevision.current++;
     setArranger(nextState);
   }, [arranger.rhythm_playing, arranger.tempo_locked]);
 
@@ -461,6 +505,7 @@ export function App() {
       return;
     }
     const nextState = await engineClient.setArrangerStyle(idx);
+    arrangerRevision.current++;
     setArranger(nextState);
   }, []);
 
@@ -470,6 +515,7 @@ export function App() {
       return;
     }
     const nextState = await engineClient.setArrangerSection(sectionName, false);
+    arrangerRevision.current++;
     setArranger(nextState);
   }, []);
 
@@ -480,6 +526,7 @@ export function App() {
       return;
     }
     const nextState = await engineClient.setArrangerTransport(nextPlay, null, null, null);
+    arrangerRevision.current++;
     setArranger(nextState);
   }, [arranger.rhythm_playing]);
 
@@ -495,6 +542,7 @@ export function App() {
         null,
         field === "auto_fill" ? val : null,
       );
+      arrangerRevision.current++;
       setArranger(nextState);
     },
     [arranger.rhythm_playing],
@@ -513,6 +561,7 @@ export function App() {
         clamped,
         null,
       );
+      arrangerRevision.current++;
       setArranger(nextState);
     },
     [arranger.rhythm_playing],
@@ -569,6 +618,7 @@ export function App() {
               upperOctave,
               transpose,
             );
+      arrangerRevision.current++;
       setArranger(nextState);
     },
     [],
@@ -585,6 +635,7 @@ export function App() {
       return;
     }
     const nextState = await engineClient.setArrangerChord(root, quality);
+    arrangerRevision.current++;
     setArranger(nextState);
   }, []);
 
@@ -598,6 +649,7 @@ export function App() {
       return;
     }
     const nextState = await engineClient.setArrangerTrackVolume(slot, vol);
+    arrangerRevision.current++;
     setArranger(nextState);
   }, []);
 
@@ -616,6 +668,7 @@ export function App() {
           trackIndex,
           instrumentIndex,
         );
+        arrangerRevision.current++;
         setArranger(nextState);
       } catch (err) {
         setStatusMsg(`Falha ao alterar timbre da trilha: ${String(err)}`);
@@ -640,6 +693,7 @@ export function App() {
     }
     try {
       const nextState = await engineClient.applyArrangerOts(otsIndex);
+      arrangerRevision.current++;
       setArranger(nextState);
       const applied = (nextState.ots_presets ?? []).find((p) => p.index === otsIndex);
       if (applied) {
@@ -651,6 +705,7 @@ export function App() {
   }, []);
 
   const handleMidiConnect = useCallback(async (portName: string) => {
+    midiEdited.current = true;
     setSelectedMidiPort(portName);
     if (!portName || !engineClient.isTauri()) return;
     try {
@@ -688,6 +743,62 @@ export function App() {
     }
   }, []);
 
+  const runTool = useCallback(async (action: () => Promise<void>) => {
+    if (toolsPending.current) return;
+    if (!engineClient.isTauri()) {
+      setStatusMsg("Ferramentas disponíveis no aplicativo desktop Tauri");
+      return;
+    }
+    toolsPending.current = true;
+    setToolsBusy(true);
+    try { await action(); }
+    catch (err) { setStatusMsg(`Falha na ferramenta: ${String(err)}`); }
+    finally { toolsPending.current = false; setToolsBusy(false); }
+  }, []);
+
+  const handleResetInstruments = () => runTool(async () => {
+    arrangerRevision.current++;
+    const next = await engineClient.resetArrangerInstruments();
+    arrangerRevision.current++;
+    setArranger(next);
+    setStatusMsg("Timbres restaurados aos padrões do pacote.");
+  });
+  const handleSaveConfiguration = () => runTool(async () => {
+    await engineClient.saveCurrentConfiguration();
+    setStatusMsg("Configuração atual salva.");
+  });
+  const handleClearConfiguration = () => {
+    if (!window.confirm("Remover somente a configuração salva? Os ajustes em uso não serão alterados.")) return;
+    void runTool(async () => {
+      await engineClient.clearSavedConfiguration();
+      setStatusMsg("Configuração salva removida. Ajustes em uso preservados.");
+    });
+  };
+  const handleScanDuplicates = () => runTool(async () => {
+    setStatusMsg("Analisando conteúdo dos ritmos duplicados...");
+    const scan = await engineClient.scanStyleDuplicates();
+    setDuplicateScan(scan);
+    setStatusMsg("");
+  });
+  const handleCleanupDuplicates = () => {
+    if (!duplicateScan) return;
+    void runTool(async () => {
+      const report = await engineClient.cleanupStyleDuplicates(duplicateScan);
+      setCleanupReport(report);
+      setDuplicateScan(null);
+      setStatusMsg("");
+    });
+  };
+  const handleRestoreDuplicates = () => {
+    if (!cleanupReport?.manifest_path) return;
+    void runTool(async () => {
+      const report = await engineClient.restoreStyleDuplicates(cleanupReport.manifest_path);
+      setCleanupReport(report);
+      setStatusMsg("");
+    });
+  };
+  const importantErrors = [telemetry?.audio_error, telemetry?.configuration_error].filter(Boolean);
+
   const activeStyle = arranger.styles[arranger.active_style_index] ?? arranger.styles[0] ?? null;
   const availableSections = useMemo(
     () => new Set(activeStyle?.sections ?? []),
@@ -713,6 +824,12 @@ export function App() {
         onPickStyFolderDialog={handlePickStyFolderDialog}
         onMidiConnect={handleMidiConnect}
         onExportWav={handleExportWav}
+        onResetInstruments={handleResetInstruments}
+        onSaveConfiguration={handleSaveConfiguration}
+        onClearConfiguration={handleClearConfiguration}
+        onScanDuplicates={handleScanDuplicates}
+        toolsBusy={toolsBusy}
+        bufferBusy={bufferBusy}
         onMasterVolumeChange={handleMasterVolumeChange}
         onBufferSizeChange={handleBufferSizeChange}
       />
@@ -734,6 +851,7 @@ export function App() {
 
           <LcdPanel
             arranger={arranger}
+            onTogglePlay={handleTogglePlay}
             onBpmChange={handleBpmChange}
             onTempoLockToggle={handleTempoLockToggle}
             onApplyOts={handleApplyOts}
@@ -751,15 +869,6 @@ export function App() {
         <section className="panel-card arranger-rhythm-strip">
           <div className="rhythm-strip-top">
             <div className="arranger-transport-strip">
-              <button
-                type="button"
-                className={`btn btn-start-stop ${arranger.rhythm_playing ? "playing" : ""}`}
-                onClick={handleTogglePlay}
-              >
-                {arranger.rhythm_playing ? <Square size={14} /> : <Play size={14} />}
-                <span>{arranger.rhythm_playing ? "STOP RITMO" : "START RITMO"}</span>
-              </button>
-
               <button
                 type="button"
                 aria-pressed={arranger.sync_start}
@@ -814,6 +923,29 @@ export function App() {
         </section>
       </main>
 
+      {importantErrors.length > 0 && (
+        <div className="status-banner status-error" role="alert">{importantErrors.join(" • ")}</div>
+      )}
+      {statusMsg && <div className={`status-banner ${/erro|falha|aviso|recupera/i.test(statusMsg) ? "status-error" : ""}`} role="status">{statusMsg}</div>}
+      {duplicateScan && (
+        <section className="library-action-panel" role="dialog" aria-label="Confirmar limpeza de ritmos">
+          <strong>{duplicateScan.redundant_files} arquivo(s) redundante(s) por conteúdo idêntico</strong>
+          <p>{duplicateScan.scanned_files} arquivo(s) analisado(s) em {duplicateScan.root}. {(duplicateScan.reclaimable_bytes / 1048576).toFixed(2)} MB recuperáveis.</p>
+          <p>Apenas cópias idênticas serão movidas para quarentena recuperável. Originais preservados.</p>
+          <button type="button" className="btn" disabled={toolsBusy || !duplicateScan.redundant_files} onClick={handleCleanupDuplicates}>Confirmar quarentena</button>
+          <button type="button" className="btn" disabled={toolsBusy} onClick={() => setDuplicateScan(null)}>Cancelar</button>
+        </section>
+      )}
+      {cleanupReport && (
+        <section className="library-action-panel" aria-label="Resultado da limpeza" role={cleanupReport.status === "recovery_required" || cleanupReport.errors.length ? "alert" : "status"}>
+          <strong>{cleanupReport.status === "recovery_required" ? "Recuperação necessária — limpeza não concluída" : cleanupReport.errors.length ? "Operação com erros" : cleanupReport.status === "rolled_back" ? "Operação revertida — nenhum arquivo removido" : cleanupReport.status === "restored" ? "Restauração concluída" : cleanupReport.status === "quarantined" ? "Quarentena concluída" : cleanupReport.status === "unchanged" ? "Nenhum arquivo movido" : `Estado da operação: ${cleanupReport.status}`}</strong>
+          <span>Movidos: {cleanupReport.moved_files} • Restaurados: {cleanupReport.restored_files}</span>
+          <code>Manifesto: {cleanupReport.manifest_path}</code>
+          {cleanupReport.errors.map((error, index) => <p key={index}>{error}</p>)}
+          <button type="button" className="btn" disabled={toolsBusy || !cleanupReport.manifest_path} onClick={handleRestoreDuplicates}>Desfazer quarentena</button>
+          <button type="button" className="btn" disabled={toolsBusy} onClick={() => setCleanupReport(null)}>Fechar</button>
+        </section>
+      )}
       <footer className="keyboard-dock">
         <div className="pedals-bar">
           <div className="pedals-cluster">
@@ -825,19 +957,11 @@ export function App() {
             >
               Sustain (Damper)
             </button>
-            <div className="meter-pill">
-              <Cable size={12} color={telemetry?.midi_connected ? "#3ac982" : "#9ba3b4"} />
-              <span>
-                {telemetry?.midi_connected && telemetry.midi_port_name
-                  ? telemetry.midi_port_name
-                  : "MIDI desconectado"}
-              </span>
-            </div>
+
           </div>
 
-          <div className="status-banner">
-            {statusMsg} • Teclado PC: Z–M (Acordes) / Q–P (Solo)
-          </div>
+          <span className="keyboard-hint">Teclado PC: Z–M (Acordes) / Q–P (Solo)</span>
+
         </div>
 
         <VirtualKeyboard

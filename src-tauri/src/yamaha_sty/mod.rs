@@ -2190,7 +2190,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_all_130_real_sty_files_on_disk() {
+    fn parses_all_available_real_sty_files_on_disk() {
         let root = Path::new("/home/data/Documents/Ritmos de Teclados");
         if !root.exists() {
             return;
@@ -2198,12 +2198,9 @@ mod tests {
         let mut files = Vec::new();
         collect_sty_files(root, &mut files);
         files.sort();
-        assert_eq!(
-            files.len(),
-            130,
-            "Expected 130 STY files under {}",
-            root.display()
-        );
+        // This is the user's mutable library, not a fixed test fixture.
+        // Content-deduplication/import may legitimately change its file count.
+        assert!(!files.is_empty(), "No styles available under {}", root.display());
 
         let mut total_events = 0usize;
         for fp in &files {

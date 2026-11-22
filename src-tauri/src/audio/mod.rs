@@ -1,3 +1,5 @@
+mod configuration;
+
 use crate::contracts::{
     EngineParams, EngineSnapshot, EngineTelemetry, InstrumentModel, MidiCcMapping, MidiConfig,
     MidiTransportState, NoteEditOffset, PedalState, PresetData,
@@ -22,10 +24,25 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Stream, StreamConfig};
 use parking_lot::{Mutex, RwLock};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Instant;
+
+// Non-power-of-two requests are not universally accepted by ALSA. Exhaust
+// bounded fixed alternatives before considering a backend's high-latency default.
+fn fixed_buffer_candidates(requested: u32, range: Option<(u32, u32)>) -> Vec<u32> {
+    let mut candidates = vec![requested, requested.next_power_of_two(), requested.saturating_mul(2)];
+    let mut nearby = vec![128_u32, 256, 512, 1024];
+    nearby.sort_by_key(|size| size.abs_diff(requested));
+    candidates.extend(nearby);
+    let mut result = Vec::new();
+    for size in candidates {
+        if range.map(|(min, max)| size >= min && size <= max).unwrap_or(true)
+            && !result.contains(&size) { result.push(size); }
+    }
+    result
+}
 
 fn is_sty_path(path: &Path) -> bool {
     path.extension()
@@ -79,6 +96,9 @@ pub enum AudioCommand {
         instrument_index: Option<usize>,
     },
     ApplyArrangerOts(usize),
+    ResetArrangerInstruments(Sender<MusicPackageSummary>),
+    CaptureConfiguration(Sender<configuration::RuntimeCapture>),
+    RestoreArranger(Box<MusicPackageSummary>),
 }
 
 pub struct SharedAudioState {
@@ -100,7 +120,14 @@ pub struct SharedAudioState {
 pub struct AudioEngineManager {
     pub shared: Arc<SharedAudioState>,
     cmd_tx: Mutex<Sender<AudioCommand>>,
-    reconfigure_tx: Mutex<Sender<u32>>,
+    reconfigure_tx: Mutex<Sender<BufferRequest>>,
+    operation_lock: Mutex<()>,
+    asset_lock: Mutex<()>,
+    asset_revision: AtomicU64,
+    initialization_started: AtomicBool,
+    imported_sources: RwLock<Vec<(PathBuf, String)>>,
+    configuration_path: PathBuf,
+    package_uses_soundfont: AtomicBool,
     requested_buffer_size: Arc<AtomicU32>,
     midi_handle: Mutex<Option<MidiConnectionHandle>>,
     midi_tx: Mutex<Sender<MidiEngineEvent>>,
@@ -108,6 +135,11 @@ pub struct AudioEngineManager {
     record_start: Arc<Mutex<Option<Instant>>>,
     playback_cancel: Mutex<Option<Arc<AtomicBool>>>,
     _keep_alive: Arc<AtomicBool>,
+}
+
+struct BufferRequest {
+    frames: u32,
+    reply: Sender<Result<(), String>>,
 }
 
 struct AudioDspRuntime {
@@ -461,6 +493,22 @@ fn process_audio_command(
             arranger.set_track_instrument(track_slot, instrument_index);
             dynamic_summary_dirty = true;
         }
+        AudioCommand::ResetArrangerInstruments(reply) => {
+            arranger.reset_instruments();
+            let summary = arranger.summary();
+            *shared.arranger_summary.write() = summary.clone();
+            let _ = reply.send(summary);
+        }
+        AudioCommand::CaptureConfiguration(reply) => {
+            let _ = reply.send(configuration::RuntimeCapture {
+                params: params.clone(), instrument: inst.clone(),
+                arranger: arranger.summary(), package: arranger.package.clone(),
+            });
+        }
+        AudioCommand::RestoreArranger(state) => {
+            configuration::restore_arranger(arranger, &state);
+            full_summary_dirty = true;
+        }
         AudioCommand::ApplyArrangerOts(ots_idx) => {
             arranger.apply_ots(ots_idx);
             dynamic_summary_dirty = true;
@@ -479,51 +527,15 @@ fn process_audio_command(
 
 impl AudioEngineManager {
     pub fn start() -> Self {
-        let instruments = build_factory_instruments();
-        let mut presets = build_factory_presets(&instruments);
-        presets.extend(load_user_presets());
+        Self::start_with_options(configuration::default_configuration_path(), true)
+    }
 
+    fn start_with_options(configuration_path: PathBuf, enable_audio: bool) -> Self {
+        let instruments = build_factory_instruments();
+        let presets = build_factory_presets(&instruments);
         let first_inst = instruments[0].clone();
         let first_preset_id = presets[0].id.clone();
         let initial_params = presets[0].params.clone();
-
-        let default_sf2 = find_default_soundfont();
-        let (initial_pkg, initial_summary) = if !cfg!(test) {
-            let doc_pref = std::path::Path::new(USER_DOCUMENTS_RHYTHMS_DIR)
-                .join("Josiran_Pisadinha_GR.Music");
-            let wine_pref =
-                std::path::Path::new(DEFAULT_MUSIC_STUDIO_DIR).join("Josiran_Pisadinha_GR.Music");
-            let target_path = if doc_pref.exists() {
-                Some(doc_pref)
-            } else if wine_pref.exists() {
-                Some(wine_pref)
-            } else {
-                list_all_music_packages()
-                    .into_iter()
-                    .next()
-                    .map(|e| PathBuf::from(e.file_path))
-            };
-            if let Some(p) = target_path {
-                let parsed_res = if is_sty_path(&p) {
-                    build_sty_package(&[p], default_sf2.as_deref())
-                } else {
-                    parse_music_file(&p)
-                };
-                if let Ok(parsed) = parsed_res {
-                    let pkg_arc = Arc::new(parsed);
-                    let mut tmp = MusicStudioArrangerEngine::new(48000.0);
-                    tmp.load_package(Arc::clone(&pkg_arc));
-                    let summary = tmp.summary();
-                    (Some(pkg_arc), summary)
-                } else {
-                    (None, MusicPackageSummary::default())
-                }
-            } else {
-                (None, MusicPackageSummary::default())
-            }
-        } else {
-            (None, MusicPackageSummary::default())
-        };
 
         let (cmd_tx, cmd_rx) = mpsc::channel::<AudioCommand>();
         let (midi_tx, midi_rx) = mpsc::channel::<MidiEngineEvent>();
@@ -539,8 +551,11 @@ impl AudioEngineManager {
             presets: RwLock::new(presets),
             telemetry: RwLock::new(EngineTelemetry {
                 sample_rate: 48000,
-                buffer_size: 1024,
-                latency_ms: 21.33,
+                buffer_size: 0,
+                requested_buffer_size: 256,
+                audio_error: None,
+                configuration_error: None,
+                latency_ms: 0.0,
                 active_voices: 0,
                 max_polyphony: MAX_POLYPHONY,
                 cpu_load_pct: 0.0,
@@ -559,9 +574,9 @@ impl AudioEngineManager {
                 midi_transport: MidiTransportState::default(),
                 midi_learn_target: None,
             }),
-            active_music_package: RwLock::new(initial_pkg),
-            arranger_summary: RwLock::new(initial_summary),
-            active_soundfont_path: RwLock::new(default_sf2),
+            active_music_package: RwLock::new(None),
+            arranger_summary: RwLock::new(MusicPackageSummary::default()),
+            active_soundfont_path: RwLock::new(None),
             user_imported_instruments: RwLock::new(Vec::new()),
         });
 
@@ -578,27 +593,33 @@ impl AudioEngineManager {
             Self::midi_router_loop(midi_rx, midi_shared, midi_cmd_tx, midi_rec_events, midi_rec_start);
         });
 
-        let (reconfigure_tx, reconfigure_rx) = mpsc::channel::<u32>();
-        let requested_buffer_size = Arc::new(AtomicU32::new(1024));
+        let (reconfigure_tx, reconfigure_rx) = mpsc::channel::<BufferRequest>();
+        let requested_buffer_size = Arc::new(AtomicU32::new(256));
 
         // Start real-time cpal audio output or fallback headless DSP thread on an audio supervisor thread
         let stream_shared = Arc::clone(&shared);
         let stream_keep_alive = Arc::clone(&keep_alive);
         let stream_req_buf = Arc::clone(&requested_buffer_size);
         std::thread::spawn(move || {
-            Self::audio_supervisor_loop(
-                stream_shared,
-                cmd_rx,
-                reconfigure_rx,
-                stream_req_buf,
-                stream_keep_alive,
-            );
+            if enable_audio {
+                Self::audio_supervisor_loop(stream_shared, cmd_rx, reconfigure_rx, stream_req_buf, stream_keep_alive);
+            } else {
+                let runtime = Self::make_runtime(&stream_shared, cmd_rx, 48000.0);
+                Self::spawn_headless_fallback(stream_shared, Some(runtime), stream_req_buf, stream_keep_alive);
+            }
         });
 
         let mgr = Self {
             shared,
             cmd_tx: Mutex::new(cmd_tx),
             reconfigure_tx: Mutex::new(reconfigure_tx),
+            operation_lock: Mutex::new(()),
+            asset_lock: Mutex::new(()),
+            asset_revision: AtomicU64::new(0),
+            initialization_started: AtomicBool::new(false),
+            imported_sources: RwLock::new(Vec::new()),
+            configuration_path,
+            package_uses_soundfont: AtomicBool::new(false),
             requested_buffer_size,
             midi_handle: Mutex::new(None),
             midi_tx: Mutex::new(midi_tx),
@@ -608,13 +629,195 @@ impl AudioEngineManager {
             _keep_alive: keep_alive,
         };
 
-        // Attempt auto-connect to first non-Through MIDI input port if present
-        let ports = list_midi_input_ports();
-        if let Some(p) = ports.iter().find(|p| !p.name.contains("Midi Through")) {
-            let _ = mgr.connect_midi(&p.name);
-        }
-
         mgr
+    }
+
+    pub fn initialize_background(self: &Arc<Self>) {
+        if self.initialization_started.swap(true, Ordering::SeqCst) { return; }
+        let manager = Arc::clone(self);
+        let revision = 0;
+        std::thread::spawn(move || {
+            manager.shared.presets.write().extend(load_user_presets());
+            let result = manager.initialize_assets(revision);
+            if let Err(error) = result { manager.shared.telemetry.write().configuration_error = Some(error); }
+            let ports = list_midi_input_ports();
+            let midi_disconnected = manager.midi_handle.lock().is_none();
+            if midi_disconnected {
+                let preferred = manager.shared.midi_config.read().selected_port.clone();
+                if let Some(port) = ports.iter().find(|p| preferred.as_ref().map(|name| name == &p.name).unwrap_or(!p.name.contains("Midi Through"))) {
+                    let _ = manager.connect_midi(&port.name);
+                }
+            }
+        });
+    }
+
+    fn initialize_assets(&self, revision: u64) -> Result<(), String> {
+        if let Some(setup) = configuration::read(&self.configuration_path)? {
+            return self.restore_configuration(setup, revision);
+        }
+        let soundfont = find_default_soundfont();
+        let preferred = Path::new(USER_DOCUMENTS_RHYTHMS_DIR).join("Josiran_Pisadinha_GR.Music");
+        let legacy = Path::new(DEFAULT_MUSIC_STUDIO_DIR).join("Josiran_Pisadinha_GR.Music");
+        let target = if preferred.exists() { Some(preferred) } else if legacy.exists() { Some(legacy) }
+            else { list_all_music_packages().first().map(|entry| PathBuf::from(&entry.file_path)) };
+        let uses_soundfont = target.as_ref().map(|path| is_sty_path(path)).unwrap_or(false);
+        let parsed = target.map(|path| {
+            if is_sty_path(&path) { build_sty_package(&[path], soundfont.as_deref()) }
+            else { parse_music_file(&path) }
+        }).transpose()?;
+        let _operation = self.operation_lock.lock();
+        if self.asset_revision.load(Ordering::SeqCst) != revision { return Ok(()); }
+        *self.shared.active_soundfont_path.write() = soundfont;
+        self.package_uses_soundfont.store(uses_soundfont, Ordering::Relaxed);
+        if let Some(package) = parsed { self.commit_loaded_package_locked(package); }
+        Ok(())
+    }
+
+    pub fn reset_arranger_instruments(&self) -> MusicPackageSummary {
+        let _operation = self.operation_lock.lock();
+        self.asset_revision.fetch_add(1, Ordering::SeqCst);
+        let (reply, response) = mpsc::channel();
+        if self.cmd_tx.lock().send(AudioCommand::ResetArrangerInstruments(reply)).is_ok() {
+            if let Ok(summary) = response.recv_timeout(std::time::Duration::from_secs(2)) { return summary; }
+        }
+        self.arranger_state()
+    }
+
+    pub fn save_current_configuration(&self) -> Result<(), String> {
+        let result = self.save_configuration_inner();
+        self.shared.telemetry.write().configuration_error = result.as_ref().err().cloned();
+        result
+    }
+
+    fn save_configuration_inner(&self) -> Result<(), String> {
+        self.asset_revision.fetch_add(1, Ordering::SeqCst);
+        let _assets = self.asset_lock.lock();
+        let _operation = self.operation_lock.lock();
+        let (reply, response) = mpsc::channel();
+        self.cmd_tx.lock().send(AudioCommand::CaptureConfiguration(reply)).map_err(|e| e.to_string())?;
+        let capture = response.recv_timeout(std::time::Duration::from_secs(3))
+            .map_err(|_| "Audio configuration capture timed out".to_string())?;
+        let preset_id = self.shared.active_preset_id.read().clone();
+        let preset_b_id = self.shared.preset_b_id.read().clone();
+        let midi_config = self.shared.midi_config.read().clone();
+        let requested_buffer_size = self.requested_buffer_size.load(Ordering::Relaxed);
+        drop(_operation);
+        let instrument_names = capture.package.as_ref().map(|package| package.instruments.iter().map(|instrument| instrument.name.clone()).collect()).unwrap_or_default();
+        let package_sources = capture.package.as_ref().map(|package| {
+            package.source_paths.iter().map(|path| configuration::AssetReference::from_path(path)).collect::<Result<Vec<_>, _>>()
+        }).transpose()?.unwrap_or_default();
+        let soundfont = self.shared.active_soundfont_path.read().as_ref()
+            .map(|path| configuration::AssetReference::from_path(path)).transpose()?;
+        let imports = self.imported_sources.read().iter().map(|(path, name)| {
+            Ok((configuration::AssetReference::from_path(path)?, name.clone()))
+        }).collect::<Result<Vec<_>, String>>()?;
+        let mut arranger = capture.arranger;
+        arranger.rhythm_playing = false;
+        arranger.pending_section = None;
+        arranger.beat_position = 0.0;
+        let setup = configuration::SavedConfiguration {
+            version: configuration::VERSION,
+            params: capture.params, instrument_id: capture.instrument.id,
+            preset_id, preset_b_id, midi_config, requested_buffer_size,
+            arranger, package_sources, instrument_names, soundfont, imports,
+            package_uses_soundfont: self.package_uses_soundfont.load(Ordering::Relaxed),
+        };
+        configuration::write_atomic(&self.configuration_path, &setup)
+    }
+
+    fn restore_configuration(&self, mut setup: configuration::SavedConfiguration, revision: u64) -> Result<(), String> {
+        let paths: Vec<_> = setup.package_sources.iter().map(|asset| asset.path.clone()).collect();
+        let sf2 = setup.soundfont.as_ref().map(|asset| asset.path.as_path());
+        let mut package = if paths.is_empty() { None }
+            else if paths.iter().all(|path| is_sty_path(path)) { Some(build_sty_package(&paths, sf2)?) }
+            else if paths.len() == 1 { Some(parse_music_file(&paths[0])?) }
+            else { return Err("Invalid mixed package references".into()); };
+        if let (Some(existing), Some(soundfont)) = (package.as_ref(), sf2) {
+            if setup.package_uses_soundfont && !paths.iter().all(|path| is_sty_path(path)) { package = Some(rebuild_package_with_soundfont(existing, soundfont)?); }
+        }
+        let mut imports = Vec::new();
+        for (asset, expected_name) in &setup.imports {
+            let index = package.as_ref().map(|p| p.instruments.len()).unwrap_or(0) + imports.len();
+            let instrument = parse_instrument_file(&asset.path, index)?;
+            if &instrument.name != expected_name { return Err(format!("Imported instrument identity changed: {}", asset.path.display())); }
+            imports.push(instrument);
+        }
+        if package.is_none() && (!imports.is_empty() || setup.package_uses_soundfont) {
+            let path = sf2.map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("custom://instruments"));
+            let empty = LoadedMusicPackage {
+                file_name: path.file_name().unwrap_or_default().to_string_lossy().into_owned(), file_path: path.to_string_lossy().into_owned(),
+                version: "SF2".into(), source_format: "music".into(), soundfont_name: None,
+                instruments: Vec::new(), styles: Vec::new(), ots_presets: Vec::new(), source_paths: Vec::new(),
+                sty_warnings: Vec::new(), has_audio_style_chunks: false, uses_expansion_kit: false, sty_diagnostics_summary: None,
+            };
+            package = Some(if setup.package_uses_soundfont {
+                rebuild_package_with_soundfont(&empty, sf2.ok_or("Saved soundfont reference is missing")?)?
+            } else { empty });
+        }
+        if let Some(package) = package.as_mut() {
+            for imported in &mut imports {
+                if let Some(index) = package.instruments.iter().position(|instrument| instrument.name == imported.name) {
+                    imported.index = index;
+                    package.instruments[index] = imported.clone();
+                } else {
+                    imported.index = package.instruments.len();
+                    package.instruments.push(imported.clone());
+                }
+            }
+        }
+        if let Some(package) = package.as_ref() {
+            // SF2 palettes can be rebuilt before imports, changing numeric positions.
+            // Match the saved name plus occurrence ordinal, never silently retarget a voice.
+            let remap = |index: usize| -> Option<usize> {
+                let name = setup.instrument_names.get(index)?;
+                let ordinal = setup.instrument_names[..index].iter().filter(|other| *other == name).count();
+                package.instruments.iter().enumerate().filter(|(_, instrument)| &instrument.name == name)
+                    .nth(ordinal).map(|(index, _)| index)
+            };
+            if !setup.instrument_names.is_empty() {
+                setup.arranger.upper1_instrument = remap(setup.arranger.upper1_instrument).ok_or("Saved upper instrument identity is unavailable")?;
+                setup.arranger.upper2_instrument = setup.arranger.upper2_instrument.map(|index| remap(index).ok_or("Saved upper2 identity is unavailable")).transpose()?;
+                setup.arranger.lower_instrument = setup.arranger.lower_instrument.map(|index| remap(index).ok_or("Saved lower identity is unavailable")).transpose()?;
+                for index in &mut setup.arranger.track_instruments {
+                    *index = index.map(|value| remap(value).ok_or("Saved track instrument identity is unavailable")).transpose()?;
+                }
+            }
+        }
+        let _operation = self.operation_lock.lock();
+        if self.asset_revision.load(Ordering::SeqCst) != revision { return Ok(()); }
+        let instrument = self.shared.instruments.read().iter().find(|instrument| instrument.id == setup.instrument_id)
+            .cloned().ok_or_else(|| format!("Saved instrument not found: {}", setup.instrument_id))?;
+        *self.shared.user_imported_instruments.write() = imports.clone();
+        *self.imported_sources.write() = setup.imports.iter().map(|(asset, name)| (asset.path.clone(), name.clone())).collect();
+        *self.shared.active_soundfont_path.write() = setup.soundfont.as_ref().map(|asset| asset.path.clone());
+        self.package_uses_soundfont.store(setup.package_uses_soundfont, Ordering::Relaxed);
+        if let Some(package) = package { self.commit_loaded_package_locked(package); }
+        for imported in imports {
+            let _ = self.cmd_tx.lock().send(AudioCommand::ImportInstrument { instrument: Box::new(imported), assign_upper1: false });
+        }
+        *self.shared.params.write() = setup.params.clone();
+        *self.shared.active_instrument.write() = instrument.clone();
+        *self.shared.active_preset_id.write() = setup.preset_id;
+        *self.shared.preset_b_id.write() = setup.preset_b_id;
+        *self.shared.midi_config.write() = setup.midi_config;
+        let tx = self.cmd_tx.lock();
+        tx.send(AudioCommand::UpdateParams(Box::new(setup.params))).map_err(|e| e.to_string())?;
+        tx.send(AudioCommand::UpdateInstrument(Box::new(instrument))).map_err(|e| e.to_string())?;
+        tx.send(AudioCommand::RestoreArranger(Box::new(setup.arranger))).map_err(|e| e.to_string())?;
+        drop(tx);
+        if setup.requested_buffer_size != self.requested_buffer_size.load(Ordering::Relaxed) {
+            self.set_audio_buffer_size(setup.requested_buffer_size)?;
+        }
+        Ok(())
+    }
+
+    pub fn clear_saved_configuration(&self) -> Result<(), String> {
+        self.asset_revision.fetch_add(1, Ordering::SeqCst);
+        let _assets = self.asset_lock.lock();
+        let _operation = self.operation_lock.lock();
+        let result = configuration::clear(&self.configuration_path);
+        self.shared.telemetry.write().configuration_error = result.as_ref().err().cloned();
+        result
     }
 
     fn midi_router_loop(
@@ -682,7 +885,7 @@ impl AudioEngineManager {
     fn audio_supervisor_loop(
         shared: Arc<SharedAudioState>,
         cmd_rx: Receiver<AudioCommand>,
-        reconfigure_rx: Receiver<u32>,
+        reconfigure_rx: Receiver<BufferRequest>,
         requested_buffer_size: Arc<AtomicU32>,
         keep_alive: Arc<AtomicBool>,
     ) {
@@ -690,65 +893,60 @@ impl AudioEngineManager {
         if let Some(device) = host.default_output_device() {
             if let Ok(default_cfg) = device.default_output_config() {
                 let sr = default_cfg.sample_rate().0;
-                let runtime_slot = Arc::new(Mutex::new(Some(Self::make_runtime(
-                    &shared,
-                    cmd_rx,
-                    sr as f32,
-                ))));
-                let target = requested_buffer_size.load(Ordering::Relaxed);
-                let mut active_stream = Self::build_cpal_stream(
-                    &device,
-                    &default_cfg,
-                    Arc::clone(&shared),
-                    target,
-                    Arc::clone(&runtime_slot),
-                )
-                .ok()
-                .filter(|s| s.play().is_ok());
-
-                if active_stream.is_none() {
-                    let rt = runtime_slot.lock().take();
-                    Self::spawn_headless_fallback(shared, rt, requested_buffer_size, keep_alive);
-                    return;
-                }
-
+                let runtime_slot = Arc::new(Mutex::new(Some(Self::make_runtime(&shared, cmd_rx, sr as f32))));
+                let mut active_target = requested_buffer_size.load(Ordering::Relaxed);
+                let start_stream = |frames, allow_default| -> Result<Stream, String> {
+                    let stream = Self::build_cpal_stream(&device, &default_cfg, Arc::clone(&shared), frames, Arc::clone(&runtime_slot), allow_default)?;
+                    shared.telemetry.write().audio_active = true;
+                    Ok(stream)
+                };
+                let mut active_stream = match start_stream(active_target, true) {
+                    Ok(stream) => Some(stream),
+                    Err(error) => {
+                        shared.telemetry.write().audio_error = Some(error);
+                        Self::spawn_headless_fallback(shared, runtime_slot.lock().take(), requested_buffer_size, keep_alive);
+                        return;
+                    }
+                };
                 while keep_alive.load(Ordering::Relaxed) {
                     match reconfigure_rx.recv_timeout(std::time::Duration::from_millis(200)) {
-                        Ok(mut next_frames) => {
-                            while let Ok(newer) = reconfigure_rx.try_recv() {
-                                next_frames = newer;
-                            }
+                        Ok(request) => {
+                            // cpal owns the non-cloneable runtime; return it before reopening the device.
                             drop(active_stream.take());
-                            let rebuilt = Self::build_cpal_stream(
-                                &device,
-                                &default_cfg,
-                                Arc::clone(&shared),
-                                next_frames,
-                                Arc::clone(&runtime_slot),
-                            )
-                            .ok()
-                            .filter(|s| s.play().is_ok());
-                            if rebuilt.is_some() {
-                                active_stream = rebuilt;
-                            } else if let Some(rt) = runtime_slot.lock().take() {
-                                Self::spawn_headless_fallback(
-                                    shared,
-                                    Some(rt),
-                                    requested_buffer_size,
-                                    keep_alive,
-                                );
-                                return;
-                            }
+                            let result = match start_stream(request.frames, false) {
+                                Ok(stream) => {
+                                    active_stream = Some(stream);
+                                    active_target = request.frames;
+                                    requested_buffer_size.store(active_target, Ordering::Relaxed);
+                                    let mut t = shared.telemetry.write();
+                                    t.requested_buffer_size = active_target as usize;
+                                    Ok(())
+                                }
+                                Err(error) => {
+                                    // Failed changes must not permanently discard a working output.
+                                    match start_stream(active_target, true) {
+                                        Ok(stream) => active_stream = Some(stream),
+                                        Err(rollback) => {
+                                            shared.telemetry.write().audio_error = Some(format!("{error}; rollback failed: {rollback}"));
+                                            let _ = request.reply.send(Err(error));
+                                            Self::spawn_headless_fallback(shared, runtime_slot.lock().take(), requested_buffer_size, keep_alive);
+                                            return;
+                                        }
+                                    }
+                                    shared.telemetry.write().audio_error = Some(error.clone());
+                                    Err(error)
+                                }
+                            };
+                            let _ = request.reply.send(result);
                         }
-                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {}
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     }
                 }
                 drop(active_stream);
                 return;
             }
         }
-
         let rt = Self::make_runtime(&shared, cmd_rx, 48000.0);
         Self::spawn_headless_fallback(shared, Some(rt), requested_buffer_size, keep_alive);
     }
@@ -762,7 +960,10 @@ impl AudioEngineManager {
         {
             let mut t = shared.telemetry.write();
             t.audio_backend = "Headless DSP Fallback (48kHz)".to_string();
-            t.audio_active = true;
+            t.audio_active = false;
+            t.buffer_size = 0;
+            t.latency_ms = 0.0;
+            if t.audio_error.is_none() { t.audio_error = Some("No working audio output device".into()); }
         }
         std::thread::spawn(move || {
             let sr = 48000.0_f32;
@@ -832,18 +1033,30 @@ impl AudioEngineManager {
         shared: Arc<SharedAudioState>,
         target_buffer_frames: u32,
         runtime_slot: Arc<Mutex<Option<AudioDspRuntime>>>,
+        allow_default: bool,
     ) -> Result<Stream, String> {
         let sr = default_cfg.sample_rate().0;
+        {
+            let mut telemetry = shared.telemetry.write();
+            telemetry.buffer_size = 0;
+            telemetry.latency_ms = 0.0;
+            telemetry.audio_active = false;
+        }
         let channels = default_cfg.channels().max(2) as usize;
         let dev_name = device.name().unwrap_or_else(|_| "Linux Audio".to_string());
 
-        let ring_frames = target_buffer_frames.saturating_mul(2).clamp(256, 4096);
+        let range = match default_cfg.buffer_size() {
+            cpal::SupportedBufferSize::Range { min, max } => Some((*min, *max)),
+            cpal::SupportedBufferSize::Unknown => None,
+        };
+        let mut modes: Vec<_> = fixed_buffer_candidates(target_buffer_frames, range)
+            .into_iter().map(cpal::BufferSize::Fixed).collect();
+        // On a user change, preserve the previous output rather than silently
+        // jumping to ALSA's potentially 25 ms default period.
+        if allow_default { modes.push(cpal::BufferSize::Default); }
         let telemetry_interval_frames = (sr as usize / 25).max(512);
-
-        for buf_mode in [
-            cpal::BufferSize::Fixed(ring_frames),
-            cpal::BufferSize::Default,
-        ] {
+        let mut failures = Vec::new();
+        for buf_mode in modes {
             let Some(rt) = runtime_slot.lock().take() else {
                 return Err("Audio DSP runtime unavailable".to_string());
             };
@@ -858,7 +1071,9 @@ impl AudioEngineManager {
                 return_slot: Arc::clone(&runtime_slot),
             };
             let cb_shared = Arc::clone(&shared);
+            let error_shared = Arc::clone(&shared);
             let mut samples_since_telemetry: usize = 0;
+            let mut last_observed_frames: usize = 0;
 
             let attempt = device.build_output_stream(
                 &config,
@@ -869,6 +1084,14 @@ impl AudioEngineManager {
                     };
                     let start = Instant::now();
                     let frames = output.len() / channels;
+                    if frames != last_observed_frames {
+                        if let Some(mut t) = cb_shared.telemetry.try_write() {
+                            t.buffer_size = frames;
+                            t.latency_ms = frames as f32 / sr as f32 * 1000.0;
+                            t.audio_active = true;
+                            last_observed_frames = frames;
+                        }
+                    }
                     if frames > rt.buf_l.len() {
                         rt.buf_l.resize(frames, 0.0);
                         rt.buf_r.resize(frames, 0.0);
@@ -947,22 +1170,39 @@ impl AudioEngineManager {
                         }
                     }
                 },
-                |_err| {},
+                move |error| {
+                    let mut t = error_shared.telemetry.write();
+                    t.audio_error = Some(error.to_string());
+                    t.audio_active = false;
+                    t.buffer_size = 0;
+                    t.latency_ms = 0.0;
+                },
                 None,
             );
 
             if let Ok(stream) = attempt {
+                // Some backends only reject a fixed size when starting the stream.
+                // Drop and return the runtime before trying their default configuration.
+                if let Err(error) = stream.play() {
+                    failures.push(format!("{buf_mode:?}: {error}"));
+                    drop(stream);
+                    continue;
+                }
                 let mut t = shared.telemetry.write();
                 t.sample_rate = sr;
-                t.buffer_size = target_buffer_frames.clamp(64, 2048) as usize;
-                t.latency_ms = (t.buffer_size as f32 / sr as f32) * 1000.0;
                 t.audio_backend = format!("PipeWire/ALSA ({})", dev_name);
-                t.audio_active = true;
+                t.audio_error = match buf_mode {
+                    cpal::BufferSize::Fixed(size) if size == target_buffer_frames => None,
+                    cpal::BufferSize::Fixed(size) => Some(format!("Requested {target_buffer_frames} frames; opened fixed buffer candidate {size} frames. On ALSA this is ring capacity, not callback period or total latency.")),
+                    cpal::BufferSize::Default => Some(format!("Requested {target_buffer_frames} frames; all viable fixed buffers failed. Using backend default; callback period may be larger. Reported ms is callback duration, not total latency.")),
+                };
                 return Ok(stream);
+            } else if let Err(error) = attempt {
+                failures.push(format!("{buf_mode:?}: {error}"));
             }
         }
 
-        Err("Failed to build cpal output stream".to_string())
+        Err(format!("Failed to negotiate audio output: {}", failures.join("; ")))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1017,8 +1257,7 @@ impl AudioEngineManager {
 
         if let Some(mut t) = shared.telemetry.try_write() {
             t.sample_rate = sr as u32;
-            t.buffer_size = count;
-            t.latency_ms = (count as f32 / sr.max(1.0)) * 1000.0;
+
             if arranger.has_loaded_package() {
                 t.active_voices = arranger.active_voice_count();
                 t.active_notes = arranger.active_notes();
@@ -1058,11 +1297,15 @@ impl AudioEngineManager {
     }
 
     pub fn set_params(&self, params: EngineParams) {
+        let _operation = self.operation_lock.lock();
+        self.asset_revision.fetch_add(1, Ordering::SeqCst);
         *self.shared.params.write() = params.clone();
         let _ = self.cmd_tx.lock().send(AudioCommand::UpdateParams(Box::new(params)));
     }
 
     pub fn select_instrument(&self, instrument_id: &str) -> Result<EngineSnapshot, String> {
+        let _operation = self.operation_lock.lock();
+        self.asset_revision.fetch_add(1, Ordering::SeqCst);
         let inst = self
             .shared
             .instruments
@@ -1097,6 +1340,8 @@ impl AudioEngineManager {
     }
 
     pub fn select_preset(&self, preset_id: &str) -> Result<EngineSnapshot, String> {
+        let _operation = self.operation_lock.lock();
+        self.asset_revision.fetch_add(1, Ordering::SeqCst);
         let preset = self
             .shared
             .presets
@@ -1180,6 +1425,8 @@ impl AudioEngineManager {
     }
 
     pub fn set_midi_config(&self, cfg: MidiConfig) {
+        let _operation = self.operation_lock.lock();
+        self.asset_revision.fetch_add(1, Ordering::SeqCst);
         *self.shared.midi_config.write() = cfg;
     }
 
@@ -1323,14 +1570,26 @@ impl AudioEngineManager {
     }
 
     pub fn list_music_packages(&self) -> Vec<MusicPackageEntry> {
-        list_all_music_packages()
+        let entries = list_all_music_packages();
+        // Only hash small style assets here. Large .Music packs are not content-scanned
+        // merely to populate the browser, and uncertain/unreadable entries stay visible.
+        let styles: Vec<_> = entries.iter().map(|entry| PathBuf::from(&entry.file_path))
+            .filter(|path| is_sty_path(path)).collect();
+        let unique = match crate::style_library::deduplicate_style_paths(&styles) {
+            Ok(paths) => paths.into_iter().collect::<std::collections::HashSet<_>>(),
+            Err(_) => return entries,
+        };
+        entries.into_iter().filter(|entry| {
+            let path = PathBuf::from(&entry.file_path);
+            !is_sty_path(&path) || std::fs::canonicalize(&path).map(|canonical| unique.contains(&canonical)).unwrap_or(true)
+        }).collect()
     }
 
     pub fn arranger_state(&self) -> MusicPackageSummary {
         self.shared.arranger_summary.read().clone()
     }
 
-    fn commit_loaded_package(&self, parsed: LoadedMusicPackage) -> MusicPackageSummary {
+    fn commit_loaded_package_locked(&self, parsed: LoadedMusicPackage) -> MusicPackageSummary {
         let mut tmp = MusicStudioArrangerEngine::new(48000.0);
         tmp.user_imported_instruments = self.shared.user_imported_instruments.read().clone();
         if let Some(old_pkg) = self.shared.active_music_package.read().clone() {
@@ -1350,36 +1609,43 @@ impl AudioEngineManager {
     }
 
     pub fn load_music_package(&self, path: &PathBuf) -> Result<MusicPackageSummary, String> {
+        self.asset_revision.fetch_add(1, Ordering::SeqCst);
         if is_sty_path(path) {
             return self.load_sty_files(std::slice::from_ref(path));
         }
+        let _assets = self.asset_lock.lock();
         let parsed = parse_music_file(path)?;
-        Ok(self.commit_loaded_package(parsed))
+        let _operation = self.operation_lock.lock();
+        self.package_uses_soundfont.store(false, Ordering::Relaxed);
+        Ok(self.commit_loaded_package_locked(parsed))
     }
 
     pub fn load_sty_files(&self, paths: &[PathBuf]) -> Result<MusicPackageSummary, String> {
+        self.asset_revision.fetch_add(1, Ordering::SeqCst);
+        let _assets = self.asset_lock.lock();
         let sf2 = {
             let existing = self.shared.active_soundfont_path.read().clone();
             if existing.is_some() {
                 existing
             } else {
                 let found = find_default_soundfont();
-                if found.is_some() {
-                    *self.shared.active_soundfont_path.write() = found.clone();
-                }
                 found
             }
         };
-        let parsed = build_sty_package(paths, sf2.as_deref())?;
-        Ok(self.commit_loaded_package(parsed))
+        let unique_paths = crate::style_library::deduplicate_style_paths(paths)?;
+        let parsed = build_sty_package(&unique_paths, sf2.as_deref())?;
+        let _operation = self.operation_lock.lock();
+        *self.shared.active_soundfont_path.write() = sf2.clone();
+        self.package_uses_soundfont.store(sf2.is_some(), Ordering::Relaxed);
+        Ok(self.commit_loaded_package_locked(parsed))
     }
 
     pub fn load_soundfont_file(&self, path: &PathBuf) -> Result<MusicPackageSummary, String> {
+        self.asset_revision.fetch_add(1, Ordering::SeqCst);
+        let _assets = self.asset_lock.lock();
         let bank = crate::soundfont::SoundFontBank::open(path)?;
         let bank_name = bank.name().to_string();
         drop(bank);
-        *self.shared.active_soundfont_path.write() = Some(path.clone());
-
         let base_pkg = self
             .shared
             .active_music_package
@@ -1402,7 +1668,10 @@ impl AudioEngineManager {
                 sty_diagnostics_summary: None,
             });
         let rebuilt = rebuild_package_with_soundfont(&base_pkg, path)?;
-        Ok(self.commit_loaded_package(rebuilt))
+        let _operation = self.operation_lock.lock();
+        *self.shared.active_soundfont_path.write() = Some(path.clone());
+        self.package_uses_soundfont.store(true, Ordering::Relaxed);
+        Ok(self.commit_loaded_package_locked(rebuilt))
     }
 
     pub fn import_instrument_file(
@@ -1410,6 +1679,8 @@ impl AudioEngineManager {
         path: &PathBuf,
         assign_upper1: bool,
     ) -> Result<MusicPackageSummary, String> {
+        self.asset_revision.fetch_add(1, Ordering::SeqCst);
+        let _assets = self.asset_lock.lock();
         let next_idx = self
             .shared
             .active_music_package
@@ -1418,6 +1689,12 @@ impl AudioEngineManager {
             .map(|p| p.instruments.len())
             .unwrap_or(0);
         let parsed = parse_instrument_file(path, next_idx)?;
+        let _operation = self.operation_lock.lock();
+        {
+            let mut sources = self.imported_sources.write();
+            sources.retain(|(_, name)| name != &parsed.name);
+            sources.push((path.clone(), parsed.name.clone()));
+        }
 
         {
             let mut user_list = self.shared.user_imported_instruments.write();
@@ -1496,6 +1773,8 @@ impl AudioEngineManager {
     }
 
     pub fn set_arranger_section(&self, section_name: &str, immediate: bool) -> MusicPackageSummary {
+        let _operation = self.operation_lock.lock();
+        self.asset_revision.fetch_add(1, Ordering::SeqCst);
         {
             let mut s = self.shared.arranger_summary.write();
             if !s.rhythm_playing || immediate {
@@ -1513,20 +1792,17 @@ impl AudioEngineManager {
     }
 
     pub fn set_audio_buffer_size(&self, buffer_size: u32) -> Result<EngineTelemetry, String> {
-        if !matches!(buffer_size, 128 | 256 | 512 | 1024) {
-            return Err(format!(
-                "Tamanho de buffer inválido: {} (use 128, 256, 512 ou 1024)",
-                buffer_size
-            ));
+        if !configuration::valid_buffer_size(buffer_size) {
+            return Err(format!("Tamanho de buffer inválido: {buffer_size} (use 128, 150, 190, 210, 256, 512 ou 1024)"));
         }
-        self.requested_buffer_size.store(buffer_size, Ordering::Relaxed);
-        {
-            let mut t = self.shared.telemetry.write();
-            let sr = t.sample_rate.max(8000) as f32;
-            t.buffer_size = buffer_size as usize;
-            t.latency_ms = (buffer_size as f32 / sr) * 1000.0;
+        if !self.shared.telemetry.read().audio_active {
+            return Err("Audio output is unavailable; buffer was not changed".into());
         }
-        let _ = self.reconfigure_tx.lock().send(buffer_size);
+        let (reply, response) = mpsc::channel();
+        self.reconfigure_tx.lock().send(BufferRequest { frames: buffer_size, reply })
+            .map_err(|_| "Audio supervisor is unavailable".to_string())?;
+        response.recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(|_| "Audio reconfiguration acknowledgement timed out".to_string())??;
         Ok(self.shared.telemetry.read().clone())
     }
 
@@ -1538,6 +1814,8 @@ impl AudioEngineManager {
         auto_fill: Option<bool>,
         tempo_locked: Option<bool>,
     ) -> MusicPackageSummary {
+        let _operation = self.operation_lock.lock();
+        self.asset_revision.fetch_add(1, Ordering::SeqCst);
         {
             let mut s = self.shared.arranger_summary.write();
             s.rhythm_playing = playing;
@@ -1567,6 +1845,8 @@ impl AudioEngineManager {
     }
 
     pub fn set_arranger_style(&self, style_index: usize) -> MusicPackageSummary {
+        let _operation = self.operation_lock.lock();
+        self.asset_revision.fetch_add(1, Ordering::SeqCst);
         {
             let style_info = self
                 .shared
@@ -1631,6 +1911,8 @@ impl AudioEngineManager {
         transpose: Option<i8>,
         chord_mode: Option<&str>,
     ) -> MusicPackageSummary {
+        let _operation = self.operation_lock.lock();
+        self.asset_revision.fetch_add(1, Ordering::SeqCst);
         {
             let mut s = self.shared.arranger_summary.write();
             if let Some(sk) = split_key {
@@ -1684,6 +1966,8 @@ impl AudioEngineManager {
     }
 
     pub fn set_arranger_chord(&self, root_pc: u8, quality: &str) -> MusicPackageSummary {
+        let _operation = self.operation_lock.lock();
+        self.asset_revision.fetch_add(1, Ordering::SeqCst);
         {
             let q = crate::music_studio::ChordQuality::from_str(quality);
             let mut s = self.shared.arranger_summary.write();
@@ -1699,6 +1983,8 @@ impl AudioEngineManager {
     }
 
     pub fn set_arranger_track_volume(&self, track_slot: usize, volume: f32) -> MusicPackageSummary {
+        let _operation = self.operation_lock.lock();
+        self.asset_revision.fetch_add(1, Ordering::SeqCst);
         {
             let mut s = self.shared.arranger_summary.write();
             if track_slot < 8 && volume.is_finite() {
@@ -1717,6 +2003,8 @@ impl AudioEngineManager {
         track_index: usize,
         instrument_index: Option<usize>,
     ) -> MusicPackageSummary {
+        let _operation = self.operation_lock.lock();
+        self.asset_revision.fetch_add(1, Ordering::SeqCst);
         {
             let mut s = self.shared.arranger_summary.write();
             if track_index < 8 {
@@ -1735,6 +2023,8 @@ impl AudioEngineManager {
     }
 
     pub fn apply_arranger_ots(&self, ots_index: usize) -> MusicPackageSummary {
+        let _operation = self.operation_lock.lock();
+        self.asset_revision.fetch_add(1, Ordering::SeqCst);
         {
             let mut s = self.shared.arranger_summary.write();
             let max_idx = s.instruments.len();
@@ -1845,6 +2135,13 @@ mod tests {
     use super::*;
     use crate::contracts::TemperamentId;
 
+    fn isolated_manager() -> AudioEngineManager {
+        static NEXT_MANAGER: AtomicU64 = AtomicU64::new(0);
+        let id = NEXT_MANAGER.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("piano-tect-audio-{}-{id}/current.json", std::process::id()));
+        AudioEngineManager::start_with_options(path, false)
+    }
+
     fn make_test_shared() -> Arc<SharedAudioState> {
         let instruments = build_factory_instruments();
         let presets = build_factory_presets(&instruments);
@@ -1863,8 +2160,11 @@ mod tests {
             presets: RwLock::new(presets),
             telemetry: RwLock::new(EngineTelemetry {
                 sample_rate: 48000,
-                buffer_size: 1024,
-                latency_ms: 21.33,
+                buffer_size: 0,
+                requested_buffer_size: 256,
+                audio_error: None,
+                configuration_error: None,
+                latency_ms: 0.0,
                 active_voices: 0,
                 max_polyphony: MAX_POLYPHONY,
                 cpu_load_pct: 0.0,
@@ -1923,7 +2223,7 @@ mod tests {
 
     #[test]
     fn test_offline_wav_export_via_hound() {
-        let mgr = AudioEngineManager::start();
+        let mgr = isolated_manager();
         let path = std::env::temp_dir().join(format!(
             "piano-tect-export-test-{}-default.wav",
             std::process::id()
@@ -1936,7 +2236,7 @@ mod tests {
 
     #[test]
     fn test_offline_wav_export_with_selected_instrument() {
-        let mgr = AudioEngineManager::start();
+        let mgr = isolated_manager();
         let snap = mgr
             .select_instrument("ruckers-harpsichord")
             .expect("select harpsichord");
@@ -1956,7 +2256,7 @@ mod tests {
 
     #[test]
     fn test_audio_manager_pedals_and_preset_morph() {
-        let mgr = AudioEngineManager::start();
+        let mgr = isolated_manager();
         let snap = mgr.snapshot();
         assert!(!snap.instruments.is_empty());
         assert!(snap.presets.len() >= 2);
@@ -2071,7 +2371,7 @@ mod tests {
 
     #[test]
     fn test_midi_transport_recorder_and_cc_learn() {
-        let mgr = AudioEngineManager::start();
+        let mgr = isolated_manager();
 
         // 1. Arm MIDI CC Learn and learn CC 74 -> "reverb.mix"
         let armed = mgr.arm_midi_cc_learn(Some("reverb.mix".to_string()));
@@ -2176,15 +2476,83 @@ mod tests {
     }
 
     #[test]
-    fn test_set_audio_buffer_size() {
-        let mgr = AudioEngineManager::start();
-        assert!(mgr.set_audio_buffer_size(99).is_err());
+    fn test_live_setup_barrier_roundtrip_and_clear_does_not_reset() {
+        let manager = isolated_manager();
+        let mut params = manager.snapshot().params;
+        params.volume_db = -8.25;
+        manager.set_params(params.clone());
+        manager.set_arranger_voice("upper1", None, Some(60), Some(true), Some(true), Some(false), Some(1), Some(3), None);
+        manager.save_current_configuration().unwrap();
+        let saved = configuration::read(&manager.configuration_path).unwrap().unwrap();
+        assert_eq!(saved.params.volume_db, -8.25);
+        let restored = AudioEngineManager::start_with_options(manager.configuration_path.clone(), false);
+        restored.restore_configuration(saved, 0).unwrap();
+        let (reply, response) = mpsc::channel();
+        restored.cmd_tx.lock().send(AudioCommand::CaptureConfiguration(reply)).unwrap();
+        let state = response.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        assert_eq!(state.params.volume_db, -8.25);
+        assert!(!state.arranger.rhythm_playing);
+        restored.clear_saved_configuration().unwrap();
+        assert_eq!(restored.snapshot().params.volume_db, -8.25);
+        assert!(!restored.configuration_path.exists());
+        let _ = std::fs::remove_dir(manager.configuration_path.parent().unwrap());
+    }
 
-        for &sz in &[128_u32, 256, 512, 1024] {
-            let t = mgr.set_audio_buffer_size(sz).expect("valid buffer size");
-            assert_eq!(t.buffer_size, sz as usize);
-            let expected_ms = (sz as f32 / t.sample_rate.max(8000) as f32) * 1000.0;
-            assert!((t.latency_ms - expected_ms).abs() < 0.05);
+    #[test]
+    fn test_stale_configuration_cannot_overwrite_explicit_state() {
+        let manager = isolated_manager();
+        manager.save_current_configuration().unwrap();
+        let saved = configuration::read(&manager.configuration_path).unwrap().unwrap();
+        let mut params = manager.snapshot().params;
+        params.volume_db = -19.0;
+        manager.set_params(params);
+        manager.restore_configuration(saved, 0).unwrap();
+        assert_eq!(manager.snapshot().params.volume_db, -19.0);
+        manager.clear_saved_configuration().unwrap();
+        let _ = std::fs::remove_dir(manager.configuration_path.parent().unwrap());
+    }
+
+    #[test]
+    fn test_headless_processing_never_reports_a_hardware_buffer() {
+        let manager = isolated_manager();
+        let (reply, response) = mpsc::channel();
+        manager.cmd_tx.lock().send(AudioCommand::CaptureConfiguration(reply)).unwrap();
+        response.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        let telemetry = manager.shared.telemetry.read();
+        assert!(!telemetry.audio_active);
+        assert_eq!(telemetry.buffer_size, 0);
+        assert_eq!(telemetry.requested_buffer_size, 256);
+        assert_eq!(telemetry.latency_ms, 0.0);
+        assert!(telemetry.audio_error.is_some());
+    }
+
+    #[test]
+    fn test_fixed_buffer_candidates_precede_backend_default() {
+        for request in [150, 190, 210] {
+            let candidates = fixed_buffer_candidates(request, None);
+            assert_eq!(&candidates[..2], &[request, 256]);
+            assert!(candidates.contains(&(request * 2)));
+            assert!(candidates.contains(&128));
+            assert!(candidates.contains(&512));
+            assert!(candidates.contains(&1024));
+            assert_eq!(candidates.iter().filter(|&&size| size == 256).count(), 1);
         }
+        assert_eq!(fixed_buffer_candidates(128, None)[0], 128);
+        assert_eq!(fixed_buffer_candidates(256, None)[0], 256);
+        let ranged = fixed_buffer_candidates(210, Some((256, 512)));
+        assert_eq!(ranged[0], 256);
+        assert!(ranged.iter().all(|&size| (256..=512).contains(&size)));
+        assert!(fixed_buffer_candidates(210, Some((2048, 4096))).is_empty());
+    }
+
+    #[test]
+    fn test_set_audio_buffer_size() {
+        for size in [128, 150, 190, 210, 256, 512, 1024] { assert!(configuration::valid_buffer_size(size)); }
+        for size in [0, 99, 192, 2048] { assert!(!configuration::valid_buffer_size(size)); }
+        let mgr = isolated_manager();
+        mgr.shared.telemetry.write().audio_active = false;
+        assert!(mgr.set_audio_buffer_size(99).is_err());
+        assert!(mgr.set_audio_buffer_size(150).is_err());
+        assert_eq!(mgr.requested_buffer_size.load(Ordering::Relaxed), 256);
     }
 }

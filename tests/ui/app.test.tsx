@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "../../src/App";
 import { VirtualKeyboard } from "../../src/components/VirtualKeyboard";
 import { engineClient } from "../../src/services/engineClient";
@@ -316,7 +316,7 @@ describe("Music Studio Tauri Arranger App UI", () => {
     expect(keyG3).not.toHaveClass("split-chord-zone");
     expect(keyG3).toHaveClass("split-point-edge");
     expect(within(keyboard).getByTestId("split-divider-line")).toBeInTheDocument();
-    expect(screen.getByLabelText("Audio Buffer Size")).toHaveValue("1024");
+    expect(screen.getByLabelText("Audio Buffer Size")).toHaveValue("256");
     for (const oct of [3, 4, 5, 6, 7, 8]) {
       expect(keyboard.querySelector(`.key-oct-${oct}`)).toBeInTheDocument();
     }
@@ -942,5 +942,173 @@ describe("VirtualKeyboard component", () => {
     fireEvent.keyUp(window, { key: "q" });
     expect(onNoteOff).toHaveBeenLastCalledWith(60);
     expect(keyC4).not.toHaveClass("active");
+  });
+});
+
+describe("Startup, audio negotiation, and maintenance", () => {
+  it("offers every requested buffer size, defaults to 256, and avoids fake zero latency", () => {
+    render(<App />);
+    const buffer = screen.getByLabelText("Audio Buffer Size");
+    expect(buffer).toHaveValue("256");
+    expect(within(buffer).getAllByRole("option").map((option) => option.getAttribute("value")))
+      .toEqual(["128", "150", "190", "210", "256", "512", "1024"]);
+    expect(screen.getByText("-- ms")).toBeInTheDocument();
+    const footer = screen.getByRole("contentinfo");
+    expect(within(footer).queryByText(/MIDI desconectado/)).not.toBeInTheDocument();
+    expect(within(footer).queryByText(/Carregado/)).not.toBeInTheDocument();
+    const start = screen.getByRole("button", { name: "START RITMO" });
+    expect(start.closest(".lcd-tempo-row")).toContainElement(screen.getByLabelText("Tempo BPM"));
+    expect(screen.getByTestId("virtual-keyboard").firstElementChild).toHaveStyle({ minWidth: "1224px" });
+  });
+
+  it("initializes audio and arranger without waiting for a slow library and preserves imports", async () => {
+    setupTauriStateMocks([], buildMockArrangerState());
+    let resolveLibrary!: (value: MusicPackageEntry[]) => void;
+    vi.mocked(engineClient.listMusicPackages).mockReturnValue(new Promise((resolve) => { resolveLibrary = resolve; }));
+    let resolveInitial!: (value: MusicPackageSummary) => void;
+    vi.mocked(engineClient.getArrangerState).mockReturnValueOnce(new Promise((resolve) => { resolveInitial = resolve; }));
+    const imported = buildMockArrangerState({ file_name: "New.Music", file_path: "/music/New.Music" });
+    vi.spyOn(engineClient, "pickMusicPackageDialog").mockResolvedValue(imported);
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("256 real")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /Importar .Music/ }));
+    await waitFor(() => expect(screen.getByLabelText("Music Package Selector Trigger")).toHaveTextContent("New.Music"));
+    await act(async () => {
+      resolveInitial(buildMockArrangerState());
+      resolveLibrary([]);
+    });
+    expect(screen.getByLabelText("Music Package Selector Trigger")).toHaveTextContent("New.Music");
+    expect(screen.queryByText(/^Carregado Josiran/)).not.toBeInTheDocument();
+  });
+
+  it("keeps requested and observed callback sizes distinct and serializes changes", async () => {
+    setupTauriStateMocks([], buildMockArrangerState());
+    vi.mocked(engineClient.getTelemetry).mockResolvedValue({ ...buildMockTelemetry(), requested_buffer_size: 190, buffer_size: 256 });
+    let resolveChange!: (value: EngineTelemetry) => void;
+    const change = vi.spyOn(engineClient, "setAudioBufferSize").mockReturnValue(new Promise((resolve) => { resolveChange = resolve; }));
+    render(<App />);
+    const buffer = screen.getByLabelText("Audio Buffer Size");
+    await waitFor(() => expect(buffer).toHaveValue("190"));
+    expect(screen.getByText("256 real")).toBeInTheDocument();
+    fireEvent.change(buffer, { target: { value: "150" } });
+    expect(buffer).toBeDisabled();
+    fireEvent.change(buffer, { target: { value: "210" } });
+    expect(change).toHaveBeenCalledTimes(1);
+    await act(async () => resolveChange({ ...buildMockTelemetry(), requested_buffer_size: 150, buffer_size: 0, latency_ms: 0, audio_active: false }));
+    expect(buffer).not.toBeDisabled();
+    expect(buffer).toHaveValue("150");
+    expect(screen.getByText("-- real")).toBeInTheDocument();
+    expect(screen.getByText("-- ms")).toBeInTheDocument();
+  });
+
+  it("shows persistent audio/configuration errors, not a loaded success banner", async () => {
+    setupTauriStateMocks([], buildMockArrangerState());
+    vi.mocked(engineClient.getTelemetry).mockResolvedValue({ ...buildMockTelemetry(), audio_error: "Output disconnected", configuration_error: "Saved configuration invalid" });
+    render(<App />);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Output disconnected");
+    expect(alert).toHaveTextContent("Saved configuration invalid");
+    expect(screen.queryByText(/^Carregado /)).not.toBeInTheDocument();
+  });
+
+  it("resets instruments, saves configuration, and confirms saved-only removal", async () => {
+    setupTauriStateMocks([], buildMockArrangerState());
+    const reset = vi.spyOn(engineClient, "resetArrangerInstruments").mockResolvedValue(buildMockArrangerState());
+    const save = vi.spyOn(engineClient, "saveCurrentConfiguration").mockResolvedValue();
+    const clear = vi.spyOn(engineClient, "clearSavedConfiguration").mockResolvedValue();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<App />);
+    fireEvent.click(screen.getByLabelText("Ferramentas"));
+    fireEvent.click(screen.getByRole("button", { name: "Resetar timbres" }));
+    await waitFor(() => expect(reset).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Salvar configuração atual" })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole("button", { name: "Salvar configuração atual" }));
+    await waitFor(() => expect(save).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Remover configuração salva" })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole("button", { name: "Remover configuração salva" }));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Os ajustes em uso não serão alterados"));
+    expect(clear).not.toHaveBeenCalled();
+    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "Remover configuração salva" }));
+    await waitFor(() => expect(clear).toHaveBeenCalledOnce());
+  });
+
+  it("scans before confirmation, reports recovery errors and manifest, and restores quarantine", async () => {
+    setupTauriStateMocks([], buildMockArrangerState());
+    const scan = { root: "/styles", groups: [], scanned_files: 3, redundant_files: 1, reclaimable_bytes: 1048576 };
+    const report = { manifest_path: "/quarantine/job/manifest.json", moved_files: 0, restored_files: 0, quarantined_bytes: 0, status: "recovery_required", errors: ["Restore conflict"] };
+    const scanSpy = vi.spyOn(engineClient, "scanStyleDuplicates").mockResolvedValue(scan);
+    const clean = vi.spyOn(engineClient, "cleanupStyleDuplicates").mockResolvedValue(report);
+    const restore = vi.spyOn(engineClient, "restoreStyleDuplicates").mockResolvedValue({ ...report, status: "restored", errors: [], restored_files: 1 });
+    render(<App />);
+    fireEvent.click(screen.getByLabelText("Ferramentas"));
+    fireEvent.click(screen.getByRole("button", { name: "Limpar ritmos duplicados" }));
+    const dialog = await screen.findByRole("dialog", { name: "Confirmar limpeza de ritmos" });
+    expect(scanSpy).toHaveBeenCalledOnce();
+    expect(clean).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirmar quarentena" }));
+    await waitFor(() => expect(clean).toHaveBeenCalledWith(scan));
+    const result = await screen.findByRole("alert", { name: "Resultado da limpeza" });
+    expect(result).toHaveTextContent("Recuperação necessária");
+    expect(result).toHaveTextContent("Movidos: 0");
+    expect(result).toHaveTextContent(report.manifest_path);
+    expect(result).toHaveTextContent("Restore conflict");
+    fireEvent.click(within(result).getByRole("button", { name: "Desfazer quarentena" }));
+    await waitFor(() => expect(restore).toHaveBeenCalledWith(report.manifest_path));
+    expect(await screen.findByText("Restauração concluída")).toBeInTheDocument();
+  });
+
+  it("maps the entire lower PC row below F#3 inclusive and preserves solo Q", () => {
+    const noteOn = vi.fn();
+    const noteOff = vi.fn();
+    render(<VirtualKeyboard activeNotes={[]} extendedRange={false} splitEnabled splitKey={54} onNoteOn={noteOn} onNoteOff={noteOff} />);
+    ["z", "s", "x", "d", "c", "v", "g", "b", "h", "n", "j", "m"].forEach((key, index) => {
+      fireEvent.keyDown(window, { key });
+      expect(noteOn).toHaveBeenLastCalledWith(36 + index, 88);
+      fireEvent.keyUp(window, { key });
+      expect(noteOff).toHaveBeenLastCalledWith(36 + index);
+    });
+    fireEvent.keyDown(window, { key: "q" });
+    expect(noteOn).toHaveBeenLastCalledWith(60, 88);
+    fireEvent.keyUp(window, { key: "q" });
+    expect(screen.getByRole("button", { name: "Key F#3" })).toHaveClass("split-chord-zone");
+    expect(screen.getByRole("button", { name: "Key G3" })).not.toHaveClass("split-chord-zone");
+  });
+});
+
+describe("Late saved configuration bootstrap", () => {
+  it("refreshes restored volume and MIDI, then preserves subsequent user edits", async () => {
+    vi.useFakeTimers();
+    try {
+      setupTauriStateMocks([], buildMockArrangerState());
+      vi.mocked(engineClient.listMidiDevices).mockResolvedValue([
+        { index: 0, name: "Restored MIDI" }, { index: 1, name: "User MIDI" },
+      ]);
+      vi.spyOn(engineClient, "updateParams").mockResolvedValue();
+      vi.spyOn(engineClient, "connectMidiDevice").mockResolvedValue("User MIDI");
+      render(<App />);
+      await act(async () => {});
+      const volume = screen.getByRole("group", { name: "Master Volume Controls" });
+      expect(volume).toHaveTextContent("-4.0 dB");
+      expect(screen.getByLabelText("MIDI Input")).toHaveValue("");
+      const restored = buildMockSnapshot();
+      restored.params.volume_db = -11;
+      restored.midi_config.selected_port = "Restored MIDI";
+      vi.mocked(engineClient.getSnapshot).mockResolvedValue(restored);
+      await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
+      expect(volume).toHaveTextContent("-11.0 dB");
+      expect(screen.getByLabelText("MIDI Input")).toHaveValue("Restored MIDI");
+      fireEvent.click(screen.getByRole("button", { name: "Aumentar Volume" }));
+      fireEvent.change(screen.getByLabelText("MIDI Input"), { target: { value: "User MIDI" } });
+      const stale = buildMockSnapshot();
+      stale.params.volume_db = -19;
+      stale.midi_config.selected_port = "Restored MIDI";
+      vi.mocked(engineClient.getSnapshot).mockResolvedValue(stale);
+      await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
+      expect(volume).toHaveTextContent("-9.5 dB");
+      expect(screen.getByLabelText("MIDI Input")).toHaveValue("User MIDI");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -1704,6 +1704,9 @@ fn scan_dir_for_packages(dir: &Path, depth: usize, out: &mut Vec<MusicPackageEnt
         return;
     };
     for item in rd.flatten() {
+        if item.file_type().map(|kind| kind.is_symlink()).unwrap_or(true) {
+            continue;
+        }
         let p = item.path();
         if p.is_dir() && depth > 0 {
             scan_dir_for_packages(&p, depth - 1, out);
@@ -2448,41 +2451,32 @@ pub fn detect_chord_with_mode(
     notes: &[u8],
     mode: ChordMode,
 ) -> Option<(u8, ChordQuality, String)> {
-    if notes.is_empty() {
+    // MIDI keys and pitch classes are different: octave doublings count as
+    // physical keys, but must not hide a high seventh/ninth in a lowest-7 slice.
+    // Stack-only masks also avoid sorting/allocating on every MIDI event.
+    let mut keys = [0_u64; 2];
+    let mut pcs = 0_u16;
+    let mut lowest = 128_u8;
+    for &note in notes {
+        if note < 128 {
+            keys[note as usize / 64] |= 1_u64 << (note % 64);
+            pcs |= 1_u16 << (note % 12);
+            lowest = lowest.min(note);
+        }
+    }
+    let key_count = keys[0].count_ones() + keys[1].count_ones();
+    if key_count == 0 || (mode == ChordMode::Fingered3To7 && key_count < 3) {
         return None;
     }
-    let mut sorted = notes.to_vec();
-    sorted.sort_unstable();
-    sorted.dedup();
-
-    if mode == ChordMode::Fingered3To7 && sorted.len() < 3 {
-        return None;
-    }
-    if sorted.len() > 7 {
-        sorted.truncate(7);
-    }
-
-    let lowest_pc = sorted[0] % 12;
-
-    if sorted.len() == 1 {
+    let lowest_pc = lowest % 12;
+    let pc_count = pcs.count_ones() as usize;
+    if pc_count == 1 {
         let q = ChordQuality::Major;
         return Some((lowest_pc, q, format_chord_label(lowest_pc, q)));
     }
 
-    let pcs: Vec<u8> = {
-        let mut p: Vec<u8> = sorted.iter().map(|&n| n % 12).collect();
-        p.sort_unstable();
-        p.dedup();
-        p
-    };
-
-    if pcs.len() == 1 {
-        let q = ChordQuality::Major;
-        return Some((lowest_pc, q, format_chord_label(lowest_pc, q)));
-    }
-
-    if pcs.len() == 2 {
-        let other_pc = if pcs[0] == lowest_pc { pcs[1] } else { pcs[0] };
+    if pc_count == 2 {
+        let other_pc = (pcs & !(1_u16 << lowest_pc)).trailing_zeros() as u8;
         let interval = (other_pc + 12 - lowest_pc) % 12;
         let q = match interval {
             3 => ChordQuality::Minor,
@@ -2546,24 +2540,27 @@ pub fn detect_chord_with_mode(
 
     let mut best: Option<(i32, u8, ChordQuality)> = None;
     for &(q, tpl, prio) in templates {
-        if pcs.len() < tpl.len() {
+        if pc_count < tpl.len() {
             continue;
         }
-        for &cand_root in &pcs {
-            let mut matched = 0_usize;
-            for &iv in tpl {
-                if pcs.contains(&((cand_root + iv) % 12)) {
-                    matched += 1;
-                }
+        let template_mask = tpl.iter().fold(0_u16, |mask, &iv| mask | (1_u16 << iv));
+        for cand_root in 0..12_u8 {
+            if pcs & (1_u16 << cand_root) == 0 {
+                continue;
             }
-            if matched == tpl.len() {
-                let extra = (pcs.len() - tpl.len()) as i32;
+            let rotated = (((template_mask as u32) << cand_root)
+                | ((template_mask as u32) >> (12 - cand_root))) as u16 & 0x0fff;
+            if pcs & rotated == rotated {
+                let extra = (pc_count - tpl.len()) as i32;
                 let mut score = (tpl.len() as i32) * 20 - extra * 28 + prio;
                 if extra == 0 {
                     score += 45;
                 }
                 if cand_root == lowest_pc {
-                    score += 18;
+                    // Extended voicings often put a third/seventh in the bass.
+                    // Prefer their explicit harmonic template over relabelling
+                    // an inverted m9 as the relative major's incomplete maj13.
+                    score += if tpl.len() >= 5 { 2 } else { 18 };
                 }
                 if best.map(|b| score > b.0).unwrap_or(true) {
                     best = Some((score, cand_root, q));
@@ -2577,7 +2574,7 @@ pub fn detect_chord_with_mode(
     }
 
     // Fallback: derive best quality relative to lowest pressed bass pitch class
-    let has = |iv: u8| pcs.contains(&((lowest_pc + iv) % 12));
+    let has = |iv: u8| pcs & (1_u16 << ((lowest_pc + iv) % 12)) != 0;
     let q = if has(4) && has(10) && has(2) {
         ChordQuality::Dom9
     } else if has(3) && has(10) && has(2) {
@@ -3072,6 +3069,7 @@ pub struct MusicStudioArrangerEngine {
     pub user_imported_instruments: Vec<LoadedInstrument>,
     pub master_gain: f32,
     current_tick: f64,
+    default_upper1_instrument: usize,
     held_keys: [bool; 128],
     held_lower_notes: Vec<u8>,
     held_upper_notes: Vec<u8>,
@@ -3132,9 +3130,10 @@ impl MusicStudioArrangerEngine {
             user_imported_instruments: Vec::new(),
             master_gain: 0.85,
             current_tick: 0.0,
+            default_upper1_instrument: 0,
             held_keys: [false; 128],
-            held_lower_notes: Vec::new(),
-            held_upper_notes: Vec::new(),
+            held_lower_notes: Vec::with_capacity(128),
+            held_upper_notes: Vec::with_capacity(128),
             pending_triggers: Vec::with_capacity(64),
             voices: Vec::with_capacity(MAX_SAMPLER_VOICES),
         }
@@ -3161,6 +3160,7 @@ impl MusicStudioArrangerEngine {
             })
         });
 
+        let package_instrument_count = pkg.instruments.len();
         if !self.user_imported_instruments.is_empty() {
             let mut pkg_mut = (*pkg).clone();
             for user_inst in &self.user_imported_instruments {
@@ -3177,6 +3177,7 @@ impl MusicStudioArrangerEngine {
         let mut playable: Vec<&LoadedInstrument> = pkg
             .instruments
             .iter()
+            .take(package_instrument_count)
             .filter(|inst| {
                 !inst.is_drumkit
                     && !inst.zones.is_empty()
@@ -3235,10 +3236,10 @@ impl MusicStudioArrangerEngine {
             None
         };
 
-        self.upper1_instrument = preserved_user_upper1
-            .or(sty_ots_upper1)
+        self.default_upper1_instrument = sty_ots_upper1
             .or_else(|| playable.first().map(|i| i.index))
             .unwrap_or(0);
+        self.upper1_instrument = preserved_user_upper1.unwrap_or(self.default_upper1_instrument);
         self.upper2_instrument = None;
         // Default Lower voice to None (Chord Scan only, silent left-hand keys unless user assigns a timbre)
         self.lower_instrument = None;
@@ -3456,6 +3457,10 @@ impl MusicStudioArrangerEngine {
             self.active_section = section_name.to_string();
             self.pending_section = None;
             self.current_tick = 0.0;
+            if section_name.starts_with("Intro") {
+                // Explicit Intro selection is a play command even with sync-start armed.
+                self.rhythm_playing = true;
+            }
         } else {
             if section_name == self.active_section {
                 self.pending_section = None;
@@ -3487,6 +3492,9 @@ impl MusicStudioArrangerEngine {
             if b.is_finite() {
                 self.bpm = b.clamp(40.0, 240.0);
             }
+        }
+        if !playing {
+            self.pending_section = None;
         }
         if playing && !self.rhythm_playing {
             self.rhythm_playing = true;
@@ -3570,6 +3578,42 @@ impl MusicStudioArrangerEngine {
             .map(|p| p.instruments.len())
             .unwrap_or(0);
         self.track_instrument_overrides[track_slot] = instrument_index.filter(|&i| i < max_idx);
+    }
+
+    /// Restore the active style's first OTS (or the package's original lead)
+    /// and authored track instruments, without resetting performance settings.
+    pub fn reset_instruments(&mut self) {
+        let Some(pkg) = self.package.as_ref() else {
+            return;
+        };
+        let ots = pkg.styles.get(self.active_style_index)
+            .filter(|style| !style.ots_presets.is_empty())
+            .map(|style| style.ots_presets.as_slice())
+            .unwrap_or(pkg.ots_presets.as_slice())
+            .first();
+        let playable = |index: usize| pkg.instruments.get(index)
+            .map(|inst| !inst.is_drumkit && inst.zones.iter().any(|zone| !zone.pcm_l.is_empty()))
+            .unwrap_or(false);
+        let upper1 = ots.map(|preset| preset.upper1_instrument)
+            .filter(|&index| playable(index))
+            .unwrap_or(self.default_upper1_instrument);
+        let upper2 = ots.and_then(|preset| preset.upper2_instrument)
+            .filter(|&index| playable(index));
+        let lower = ots.and_then(|preset| preset.lower_instrument)
+            .filter(|&index| playable(index));
+        let keyboard_changed = (self.upper1_instrument, self.upper2_instrument, self.lower_instrument)
+            != (upper1, upper2, lower);
+        for voice in &mut self.voices {
+            if (!voice.from_rhythm && keyboard_changed)
+                || (voice.from_rhythm && self.track_instrument_overrides.contains(&Some(voice.inst_index)))
+            {
+                voice.releasing = true;
+            }
+        }
+        self.upper1_instrument = upper1;
+        self.upper2_instrument = upper2;
+        self.lower_instrument = lower;
+        self.track_instrument_overrides = [None; 8];
     }
 
     pub fn apply_ots(&mut self, ots_index: usize) {
@@ -3935,9 +3979,28 @@ impl MusicStudioArrangerEngine {
         if note >= 128 {
             return;
         }
+        let was_lower = self.held_lower_notes.contains(&note);
+        let was_upper = self.held_upper_notes.contains(&note);
         self.held_keys[note as usize] = false;
         self.held_lower_notes.retain(|&n| n != note);
         self.held_upper_notes.retain(|&n| n != note);
+
+        let scanned = if was_lower && self.chord_scan_lower {
+            Some(self.held_lower_notes.as_slice())
+        } else if was_upper && self.chord_scan_upper
+            && (self.held_upper_notes.len() >= 3 || !self.chord_scan_lower || !self.split_enabled)
+        {
+            Some(self.held_upper_notes.as_slice())
+        } else {
+            None
+        };
+        if let Some((root, quality, label)) = scanned
+            .and_then(|notes| detect_chord_with_mode(notes, self.chord_mode))
+        {
+            self.detected_chord_root = root;
+            self.detected_chord_quality = quality;
+            self.detected_chord_label = label;
+        }
 
         if sustain_down {
             return;
@@ -4016,8 +4079,18 @@ impl MusicStudioArrangerEngine {
                         .or_else(|| style.sections.first())
                     {
                         let sec_len = sec.length_ticks.max(500) as f64;
-                        wrapped = next_tick >= sec_len;
-                        wrap_tick = if wrapped { next_tick - sec_len } else { 0.0 };
+                        // Intros are quantized to the next quarter note, not the
+                        // end of a possibly multi-bar variation. Keep authored
+                        // intro event positions (including leading rests) intact.
+                        let boundary = if self.pending_section.as_deref()
+                            .map(|name| name.starts_with("Intro")).unwrap_or(false)
+                        {
+                            (((prev_tick / 500.0).floor() + 1.0) * 500.0).min(sec_len)
+                        } else {
+                            sec_len
+                        };
+                        wrapped = next_tick >= boundary;
+                        wrap_tick = if wrapped { next_tick - boundary } else { 0.0 };
 
                         if wrapped {
                             collect_section_events(
@@ -4030,7 +4103,7 @@ impl MusicStudioArrangerEngine {
                                 self.bpm,
                                 self.sr,
                                 prev_tick,
-                                sec_len,
+                                boundary,
                                 &mut to_trigger,
                             );
                             if let Some(ref pend) = self.pending_section {
@@ -4261,6 +4334,142 @@ impl MusicStudioArrangerEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fingered_chords_all_roots_inversions_and_open_voicings() {
+        let cases: &[(ChordQuality, &[u8])] = &[
+            (ChordQuality::Major, &[0, 4, 7]),
+            (ChordQuality::Minor, &[0, 3, 7]),
+            (ChordQuality::Dom7, &[0, 4, 7, 10]),
+            (ChordQuality::Maj7, &[0, 4, 7, 11]),
+            (ChordQuality::Add9, &[0, 4, 7, 14]),
+            (ChordQuality::Dom9, &[0, 4, 10, 14]),
+            (ChordQuality::Maj9, &[0, 4, 7, 11, 14]),
+            (ChordQuality::Min9, &[0, 3, 7, 10, 14]),
+        ];
+        for root in 0..12_u8 {
+            for &(quality, intervals) in cases {
+                for inversion in 0..intervals.len() {
+                    let notes: Vec<u8> = intervals.iter().enumerate()
+                        .map(|(idx, &iv)| 24 + root + iv + if idx < inversion { 24 } else { 0 })
+                        .collect();
+                    let (actual_root, actual_quality, _) =
+                        detect_chord_with_mode(&notes, ChordMode::Fingered3To7).unwrap();
+                    assert_eq!((actual_root, actual_quality), (root, quality),
+                        "notes={notes:?} inversion={inversion}");
+                }
+            }
+        }
+        assert!(detect_chord_with_mode(&[36, 36, 40], ChordMode::Fingered3To7).is_none());
+        let (_, quality, _) = detect_chord_with_mode(&[36, 40, 48], ChordMode::Fingered3To7).unwrap();
+        assert_eq!(quality, ChordQuality::Major);
+        // Doublings must not truncate a defining high seventh/ninth.
+        let (root, quality, _) = detect_chord_with_mode(
+            &[24, 28, 31, 36, 40, 43, 48, 58, 62], ChordMode::Fingered3To7).unwrap();
+        assert_eq!((root, quality), (0, ChordQuality::Dom9));
+    }
+
+    #[test]
+    fn chord_release_recomputes_while_sustained_and_latches_below_three() {
+        let mut engine = MusicStudioArrangerEngine::new(48000.0);
+        engine.sync_start = false;
+        for note in [36, 40, 43, 46, 50] { engine.note_on(note, 90); }
+        assert_eq!(engine.detected_chord_quality, ChordQuality::Dom9);
+        engine.note_off(50, true);
+        assert_eq!(engine.detected_chord_quality, ChordQuality::Dom7);
+        engine.note_off(46, true);
+        assert_eq!(engine.detected_chord_quality, ChordQuality::Major);
+        engine.note_off(40, true);
+        assert_eq!(engine.detected_chord_quality, ChordQuality::Major);
+        assert_eq!(engine.held_lower_notes.len(), 2);
+        engine.note_on(54, 90);
+        assert!(engine.held_lower_notes.contains(&54));
+        engine.note_on(55, 90);
+        assert!(engine.held_upper_notes.contains(&55));
+        assert!(!engine.held_lower_notes.contains(&55));
+    }
+
+    fn performance_fixture() -> Arc<LoadedMusicPackage> {
+        let pcm = Arc::new(vec![0.15; 48000]);
+        let lead = LoadedInstrument {
+            index: 0, name: "Accordion".into(), volume: 1.0, pan: 0,
+            inst_type: 0, is_drumkit: false,
+            zones: vec![SampleZone {
+                root_key: 60, key_low: 0, key_high: 127, vel_low: 0, vel_high: 127,
+                name: "test".into(), sample_rate: 48000, channels: 1,
+                loop_start: 0, loop_end: 0, loop_enabled: false, loop_mode: 0,
+                gain: 1.0, pan: 0, fine_tune: 0, pool_sid: 0,
+                pcm_l: pcm.clone(), pcm_r: pcm,
+            }],
+        };
+        let mut second = lead.clone(); second.index = 1; second.name = "Piano".into();
+        let track = RhythmTrack {
+            track_type: "Acc1".into(), track_slot: 3, instrument_index: 0,
+            volume: 1.0, pan: 0, fine_tune: 0, key_move: 0, octave_shift: 0,
+            is_drum: false, casm_rule: None,
+            events: vec![RhythmNoteEvent { midi_note: 60, velocity: 90, start_tick: 0, duration_ticks: 200 }],
+        };
+        let section = |id, name: &str, length, looped| RhythmSection {
+            id, name: name.into(), length_ticks: length, is_loop: looped,
+            jump_to: if looped { 0 } else { -2 }, tracks: vec![track.clone()],
+        };
+        Arc::new(LoadedMusicPackage {
+            file_name: "test.sty".into(), file_path: "fixture://test".into(),
+            version: "1".into(), source_format: "sty".into(), soundfont_name: None,
+            instruments: vec![lead, second],
+            styles: vec![RhythmStyle {
+                id: 1, name: "test".into(), category: "test".into(), bpm: 120.0,
+                sections: vec![section(1, "Variation 1", 16000, true), section(2, "Intro 1", 1000, false)],
+                ots_presets: vec![OtsPresetSummary {index:0, name:"default".into(), upper1_instrument:0, upper2_instrument:None, lower_instrument:None}],
+                sty_warnings: vec![], has_audio_style_chunks:false, uses_expansion_kit:false, sty_diagnostics_summary:None,
+            }], ots_presets: vec![], source_paths: vec![], sty_warnings: vec![],
+            has_audio_style_chunks: false, uses_expansion_kit: false, sty_diagnostics_summary: None,
+        })
+    }
+
+    #[test]
+    fn intro_starts_stopped_and_quantizes_to_beat_not_long_section() {
+        for frames in [128, 150, 190, 210, 256, 512, 1024] {
+            let mut engine = MusicStudioArrangerEngine::new(48000.0);
+            engine.load_package(performance_fixture());
+            engine.set_section("Intro 1", false);
+            assert!(engine.rhythm_playing);
+            let mut l = vec![0.0; frames]; let mut r = l.clone();
+            engine.process_block(&mut l, &mut r);
+            assert!(engine.active_voice_count() > 0, "Intro first note missing: {frames}");
+            engine.set_section("Variation 1", true);
+            engine.current_tick = 120.0;
+            engine.set_section("Intro 1", false);
+            let max_blocks = 24000 / frames + 2;
+            let mut blocks = 0;
+            while engine.active_section != "Intro 1" && blocks < max_blocks {
+                engine.process_block(&mut l, &mut r); blocks += 1;
+            }
+            assert_eq!(engine.active_section, "Intro 1");
+            assert!(blocks * frames < 24000 + frames);
+            for _ in 0..(48000 / frames + 3) { engine.process_block(&mut l, &mut r); }
+            assert_eq!(engine.active_section, "Variation 1");
+            assert!(l.iter().chain(r.iter()).all(|x| x.is_finite()));
+        }
+    }
+
+    #[test]
+    fn instrument_reset_preserves_performance_settings() {
+        let mut engine = MusicStudioArrangerEngine::new(48000.0);
+        engine.load_package(performance_fixture());
+        engine.upper1_instrument = 1; engine.upper2_instrument = Some(1); engine.lower_instrument = Some(1);
+        engine.track_instrument_overrides = [Some(1);8];
+        engine.track_volumes = [0.37;8]; engine.bpm = 97.0;
+        engine.split_key = 54; engine.transpose = 2; engine.tempo_locked = true;
+        engine.rhythm_playing = true; engine.current_tick = 243.0;
+        engine.reset_instruments();
+        assert_eq!((engine.upper1_instrument,engine.upper2_instrument,engine.lower_instrument),(0,None,None));
+        assert_eq!(engine.track_instrument_overrides,[None;8]);
+        assert_eq!(engine.track_volumes,[0.37;8]);
+        assert_eq!((engine.bpm,engine.current_tick,engine.split_key,engine.transpose),(97.0,243.0,54,2));
+        assert!(engine.rhythm_playing && engine.tempo_locked);
+        assert_eq!(engine.package.as_ref().unwrap().instruments.len(),2);
+    }
 
     #[test]
     fn test_chord_detection_single_and_triad() {

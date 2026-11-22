@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  CleanupReport,
+  DuplicateScan,
   EngineParams,
   EngineSnapshot,
   EngineTelemetry,
@@ -116,6 +118,30 @@ export const engineClient = {
 
   async pickMusicPackageDialog(): Promise<MusicPackageSummary | null> {
     return invoke<MusicPackageSummary | null>("pick_music_package_dialog");
+  },
+
+  async resetArrangerInstruments(): Promise<MusicPackageSummary> {
+    return invoke<MusicPackageSummary>("reset_arranger_instruments");
+  },
+
+  async saveCurrentConfiguration(): Promise<void> {
+    return invoke("save_current_configuration");
+  },
+
+  async clearSavedConfiguration(): Promise<void> {
+    return invoke("clear_saved_configuration");
+  },
+
+  async scanStyleDuplicates(): Promise<DuplicateScan> {
+    return invoke<DuplicateScan>("scan_style_duplicates");
+  },
+
+  async cleanupStyleDuplicates(scan: DuplicateScan): Promise<CleanupReport> {
+    return invoke<CleanupReport>("cleanup_style_duplicates", { scan });
+  },
+
+  async restoreStyleDuplicates(manifestPath: string): Promise<CleanupReport> {
+    return invoke<CleanupReport>("restore_style_duplicates", { manifestPath });
   },
 
   async getArrangerState(): Promise<MusicPackageSummary> {

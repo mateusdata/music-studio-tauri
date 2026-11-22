@@ -7,19 +7,24 @@ pub mod midi;
 pub mod music_studio;
 pub mod presets;
 pub mod soundfont;
+pub mod style_library;
 pub mod synthesis;
 pub mod yamaha_sty;
 
 use audio::AudioEngineManager;
+use std::sync::Arc;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let engine = AudioEngineManager::start();
+    let engine = Arc::new(AudioEngineManager::start());
 
     tauri::Builder::default()
         .manage(engine)
         .setup(|app| {
+            app.state::<Arc<AudioEngineManager>>()
+                .inner()
+                .initialize_background();
             if let (Some(win), Some(icon)) = (
                 app.get_webview_window("main"),
                 app.default_window_icon().cloned(),
@@ -71,6 +76,12 @@ pub fn run() {
             commands::load_soundfont_file,
             commands::pick_soundfont_dialog,
             commands::set_audio_buffer_size,
+            commands::reset_arranger_instruments,
+            commands::save_current_configuration,
+            commands::clear_saved_configuration,
+            commands::scan_style_duplicates,
+            commands::cleanup_style_duplicates,
+            commands::restore_style_duplicates,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Piano Tect Tauri application");

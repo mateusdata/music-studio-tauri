@@ -260,6 +260,9 @@ export interface MidiConfig {
 export interface EngineTelemetry {
   sample_rate: number;
   buffer_size: number;
+  requested_buffer_size?: number;
+  audio_error?: string | null;
+  configuration_error?: string | null;
   latency_ms: number;
   active_voices: number;
   max_polyphony: number;
@@ -359,4 +362,33 @@ export interface MusicPackageSummary {
   has_audio_style_chunks?: boolean;
   uses_expansion_kit?: boolean;
   sty_diagnostics_summary?: string | null;
+}
+
+export interface StyleFingerprint {
+  path: string;
+  size: number;
+  sha256: string;
+  state: string;
+}
+
+export interface DuplicateGroup {
+  keep: StyleFingerprint;
+  redundant: StyleFingerprint[];
+}
+
+export interface DuplicateScan {
+  root: string;
+  groups: DuplicateGroup[];
+  scanned_files: number;
+  redundant_files: number;
+  reclaimable_bytes: number;
+}
+
+export interface CleanupReport {
+  manifest_path: string;
+  moved_files: number;
+  restored_files: number;
+  quarantined_bytes: number;
+  status: string;
+  errors: string[];
 }

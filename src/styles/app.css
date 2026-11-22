@@ -2382,3 +2382,68 @@ input[type="range"].studio-range::-webkit-slider-thumb {
 .white-key.split-point-edge {
   border-left: 2px solid #ff1a1a;
 }
+
+/* Compact responsive console: live numeric values never resize their cells. */
+.topbar { flex-wrap: wrap; gap: 5px 8px; }
+.brand-block { width: 170px; }
+.brand-sub { max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
+.selector-row { flex: 1 1 660px; flex-wrap: wrap; }
+.telemetry-strip { flex: 0 0 auto; margin-left: auto; }
+.actual-buffer-readout { width: 66px; text-align: right; font-variant-numeric: tabular-nums; }
+.latency-readout { width: 54px; min-width: 54px; }
+.tools-menu { position: relative; flex: 0 0 auto; }
+.tools-menu > summary { list-style: none; cursor: pointer; }
+.tools-menu > summary::-webkit-details-marker { display: none; }
+.tools-menu-content {
+  position: absolute; top: calc(100% + 5px); right: 0; z-index: 100;
+  display: grid; gap: 5px; min-width: 230px; padding: 8px;
+  border: 1px solid var(--border-subtle); border-radius: 8px;
+  background: #141c2a; box-shadow: 0 12px 30px #0009;
+}
+.tools-menu-content .btn { justify-content: flex-start; }
+.lcd-playback-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+.lcd-playback-row .btn-start-stop { min-width: 130px; }
+.lcd-playback-row .lcd-tempo-row { flex: 1; margin-top: 0; }
+.lcd-tempo-value, .lcd-chord-value { font-variant-numeric: tabular-nums; }
+.piano-keys-scroll { height: 184px; flex-shrink: 0; scrollbar-width: thin; }
+.piano-keys-track { height: 170px; }
+.white-key { flex-basis: 34px; touch-action: none; }
+.black-key { touch-action: none; }
+.keyboard-hint { font-size: 11px; color: var(--text-muted); }
+.status-banner { color: var(--text-secondary); padding: 5px 12px; flex-shrink: 0; overflow-wrap: anywhere; }
+.status-error { color: #fca5a5; background: #351b22; }
+.library-action-panel {
+  flex-shrink: 0; max-height: 30vh; overflow: auto; padding: 10px 14px;
+  border-top: 1px solid var(--border-subtle); background: #1a2535; font-size: 12px;
+}
+.library-action-panel strong, .library-action-panel code, .library-action-panel > span { display: block; margin-bottom: 5px; }
+.library-action-panel code { overflow-wrap: anywhere; user-select: text; }
+.library-action-panel .btn { margin: 4px 6px 0 0; }
+@media (max-width: 1180px) {
+  .selector-row { order: 3; flex-basis: 100%; }
+  .topbar .searchable-select-wrap { max-width: none; }
+}
+@media (max-width: 650px) {
+  .brand-block { width: auto; }
+  .brand-sub { display: none; }
+  .telemetry-strip { flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+  .topbar .searchable-select-wrap { flex-basis: calc(50% - 5px); }
+  .selector-row .format-filter-pills { flex-basis: 100%; justify-content: center; }
+  .topbar .topbar-midi-select { max-width: none; flex: 1 1 110px; }
+  .volume-pill .vu-bar-wrap, .voices-pill { display: none; }
+  .keyboard-hint { max-width: 200px; text-align: right; }
+}
+.keyboard-dock { flex-shrink: 0; }
+.lcd-tempo-row.lcd-playback-row { gap: 8px; margin-top: 0; }
+@media (max-width: 900px) {
+  .arranger-console-grid { grid-template-columns: minmax(0, 1fr); }
+  .arranger-lcd-card { order: -1; }
+}
+/* Voice rows must shrink below the generic library selector's 210px minimum. */
+.voice-slot-box, .voice-slot-box .searchable-select-wrap { min-width: 0; }
+.voice-slot-box .searchable-select-trigger { min-width: 0; }
+.voice-tag { min-width: 0; flex: 0 0 112px; }
+@media (min-width: 901px) and (max-width: 1200px) {
+  .voice-slot-box { flex-direction: column; align-items: stretch; gap: 5px; }
+  .voice-tag { flex-basis: auto; }
+}
