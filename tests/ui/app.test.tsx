@@ -193,6 +193,10 @@ function buildMockArrangerState(overrides?: Partial<MusicPackageSummary>): Music
     track_instruments: [null, null, null, null, null, null, null, null],
     ots_presets: [],
     beat_position: 0,
+    sty_warnings: [],
+    has_audio_style_chunks: false,
+    uses_expansion_kit: false,
+    sty_diagnostics_summary: null,
     ...overrides,
   };
 }
@@ -813,6 +817,74 @@ describe("Music Studio Tauri Arranger App UI", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Importar SoundFont .SF2" }));
     expect(screen.getByText(/Importador de SoundFont \.SF2 disponível no aplicativo desktop Tauri/i)).toBeInTheDocument();
+  });
+
+  it("renders STY expansion-kit and AASM audio warnings with diagnostics tooltip when sty_warnings are present", async () => {
+    const expWarning = "Expansion Kit voice bank detected (MSB 63) — remapped to GM/SF2";
+    const audioWarning = "Live Audio Style chunks (AASM/AFil/AWav) detected — audio stems skipped";
+    const diagnosticsSummary = "CFF2 | Expansion Kit MSB 63 | Audio chunks: AASM, AFil, AWav";
+
+    const initialArr = buildMockArrangerState({
+      source_format: "sty",
+      file_name: "Forro_Audio_Live.sty",
+      file_path: "/styles/Forro_Audio_Live.sty",
+      sty_warnings: [expWarning, audioWarning],
+      has_audio_style_chunks: true,
+      uses_expansion_kit: true,
+      sty_diagnostics_summary: diagnosticsSummary,
+    });
+    setupTauriStateMocks([], initialArr);
+
+    render(<App />);
+    const banner = await screen.findByTestId("sty-warning-banner");
+    expect(banner).toHaveAttribute("role", "status");
+    expect(banner).toHaveAttribute("title", diagnosticsSummary);
+    expect(banner).toHaveTextContent(expWarning);
+    expect(banner).toHaveTextContent(audioWarning);
+  });
+
+  it("renders fallback STY warning banner from boolean flags when sty_warnings is empty", async () => {
+    const flagOnlyArr = buildMockArrangerState({
+      source_format: "sty",
+      file_name: "Expansion_Only.sty",
+      file_path: "/styles/Expansion_Only.sty",
+      sty_warnings: [],
+      has_audio_style_chunks: true,
+      uses_expansion_kit: true,
+      sty_diagnostics_summary: null,
+    });
+    setupTauriStateMocks([], flagOnlyArr);
+
+    render(<App />);
+    const fallbackBanner = await screen.findByTestId("sty-warning-banner");
+    expect(fallbackBanner).toHaveTextContent(/Expansion Kit/i);
+    expect(fallbackBanner).toHaveTextContent(/AASM\/AFil\/AWav/i);
+    expect(fallbackBanner.getAttribute("title")).toContain("\n");
+  });
+
+  it("hides sty-warning-banner when sty_warnings is empty in .Music mode", async () => {
+    const musicArr = buildMockArrangerState({
+      source_format: "music",
+      styles: [
+        {
+          id: 99,
+          name: "Clean Music Style",
+          category: "Forró",
+          sections: ["Variation 1"],
+        },
+      ],
+      sty_warnings: [],
+      has_audio_style_chunks: false,
+      uses_expansion_kit: false,
+      sty_diagnostics_summary: null,
+    });
+    setupTauriStateMocks([], musicArr);
+
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByLabelText("Style Selector Trigger")).toHaveTextContent("Clean Music Style");
+    });
+    expect(screen.queryByTestId("sty-warning-banner")).not.toBeInTheDocument();
   });
 });
 

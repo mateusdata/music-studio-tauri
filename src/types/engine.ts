@@ -355,4 +355,8 @@ export interface MusicPackageSummary {
   track_instruments?: (number | null)[];
   ots_presets?: OtsPresetSummary[];
   beat_position: number;
+  sty_warnings?: string[];
+  has_audio_style_chunks?: boolean;
+  uses_expansion_kit?: boolean;
+  sty_diagnostics_summary?: string | null;
 }

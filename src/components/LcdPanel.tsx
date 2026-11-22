@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Lock, Unlock } from "lucide-react";
+import { AlertTriangle, Lock, Unlock } from "lucide-react";
 import type { MusicPackageSummary, OtsPresetSummary } from "../types/engine";
 
 const QUICK_CHORDS: { label: string; root: number; quality: string }[] = [
@@ -67,6 +67,32 @@ function buildOtsTooltip(
 }
 
 /**
+ * Resolves user-facing STY expansion kit / Live Audio Style warnings, falling back
+ * to flag-derived notices when the backend sets boolean flags without explicit lines.
+ */
+function resolveStyWarnings(arranger: MusicPackageSummary): string[] {
+  const explicitWarnings = (arranger.sty_warnings ?? []).filter(
+    (warning) => warning.trim().length > 0,
+  );
+  if (explicitWarnings.length > 0) {
+    return explicitWarnings;
+  }
+
+  const fallback: string[] = [];
+  if (arranger.uses_expansion_kit) {
+    fallback.push(
+      "Expansion Kit / MegaVoice detected in .STY (mapped to standard GM/SF2 fallback)",
+    );
+  }
+  if (arranger.has_audio_style_chunks) {
+    fallback.push(
+      "Live Audio Style chunks (AASM/AFil/AWav) present — audio stems are not played",
+    );
+  }
+  return fallback;
+}
+
+/**
  * Center hardware LCD readout displaying active style/section, detected chord,
  * beat progress bar, tempo controls, One Touch Setting (OTS) bar, and quick chords.
  */
@@ -81,6 +107,7 @@ export function LcdPanel({
     arranger.styles[arranger.active_style_index] ?? arranger.styles[0] ?? null;
   const formatPill = getFormatPillInfo(arranger);
   const otsPresets = arranger.ots_presets ?? [];
+  const styWarnings = resolveStyWarnings(arranger);
 
   const instrumentNameMap = useMemo(() => {
     const map = new Map<number, string>();
@@ -222,6 +249,18 @@ export function LcdPanel({
                 ))}
           </div>
         </div>
+
+        {styWarnings.length > 0 && (
+          <div
+            className="lcd-warning-strip"
+            data-testid="sty-warning-banner"
+            title={arranger.sty_diagnostics_summary || styWarnings.join("\n")}
+            role="status"
+          >
+            <AlertTriangle size={12} aria-hidden="true" />
+            <span>{styWarnings.join(" • ")}</span>
+          </div>
+        )}
       </div>
 
       <div className="chord-pads-section">

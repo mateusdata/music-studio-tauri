@@ -84,6 +84,10 @@ pub struct MusicPackageSummary {
     pub track_instruments: [Option<usize>; 8],
     pub ots_presets: Vec<OtsPresetSummary>,
     pub beat_position: f32,
+    pub sty_warnings: Vec<String>,
+    pub has_audio_style_chunks: bool,
+    pub uses_expansion_kit: bool,
+    pub sty_diagnostics_summary: Option<String>,
 }
 
 impl Default for MusicPackageSummary {
@@ -122,6 +126,10 @@ impl Default for MusicPackageSummary {
             track_instruments: [None; 8],
             ots_presets: Vec::new(),
             beat_position: 0.0,
+            sty_warnings: Vec::new(),
+            has_audio_style_chunks: false,
+            uses_expansion_kit: false,
+            sty_diagnostics_summary: None,
         }
     }
 }
@@ -200,6 +208,10 @@ pub struct RhythmStyle {
     pub bpm: f32,
     pub sections: Vec<RhythmSection>,
     pub ots_presets: Vec<OtsPresetSummary>,
+    pub sty_warnings: Vec<String>,
+    pub has_audio_style_chunks: bool,
+    pub uses_expansion_kit: bool,
+    pub sty_diagnostics_summary: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -213,6 +225,10 @@ pub struct LoadedMusicPackage {
     pub styles: Vec<RhythmStyle>,
     pub ots_presets: Vec<OtsPresetSummary>,
     pub source_paths: Vec<PathBuf>,
+    pub sty_warnings: Vec<String>,
+    pub has_audio_style_chunks: bool,
+    pub uses_expansion_kit: bool,
+    pub sty_diagnostics_summary: Option<String>,
 }
 
 #[inline]
@@ -1513,6 +1529,10 @@ fn parse_music_file_internal(
                     bpm: section_bpm,
                     sections: Vec::new(),
                     ots_presets: Vec::new(),
+                    sty_warnings: Vec::new(),
+                    has_audio_style_chunks: false,
+                    uses_expansion_kit: false,
+                    sty_diagnostics_summary: None,
                 });
 
             if let Some(b) = node.bpm {
@@ -1585,6 +1605,10 @@ fn parse_music_file_internal(
             bpm: default_bpm,
             sections: fallback_sections,
             ots_presets: Vec::new(),
+            sty_warnings: Vec::new(),
+            has_audio_style_chunks: false,
+            uses_expansion_kit: false,
+            sty_diagnostics_summary: None,
         }]
     } else {
         Vec::new()
@@ -1606,6 +1630,10 @@ fn parse_music_file_internal(
         styles,
         ots_presets: Vec::new(),
         source_paths: vec![path.to_path_buf()],
+        sty_warnings: Vec::new(),
+        has_audio_style_chunks: false,
+        uses_expansion_kit: false,
+        sty_diagnostics_summary: None,
     })
 }
 
@@ -1933,14 +1961,26 @@ pub fn build_sty_package(
     for doc in &docs {
         for sec in &doc.sections {
             for tr in &sec.tracks {
-                let (b, p, _) = crate::yamaha_sty::resolve_yamaha_voice_to_gm(
+                let kit_opt = crate::yamaha_sty::classify_drum_kit(
+                    tr.dest_ch,
+                    tr.voice.msb,
+                    tr.voice.lsb,
+                    tr.voice.program,
+                );
+                let (b, p, resolved_drum) = crate::yamaha_sty::resolve_yamaha_voice_to_gm(
                     tr.dest_ch,
                     tr.voice.msb,
                     tr.voice.lsb,
                     tr.voice.program,
                     &tr.voice.name_hint,
                 );
-                push_req(b, p);
+                if (tr.is_drum || kit_opt.is_some() || tr.track_slot <= 1)
+                    && (!resolved_drum || b != 128)
+                {
+                    push_req(128, 0);
+                } else {
+                    push_req(b, p);
+                }
             }
         }
         for ots in &doc.ots_presets {
@@ -1974,6 +2014,7 @@ pub fn build_sty_package(
             resolved_sf2.display()
         ));
     }
+    let fallback_drum_idx = instruments.iter().position(|i| i.is_drumkit);
 
     let mut has_sff1 = false;
     let mut has_sff2 = false;
@@ -1995,6 +2036,12 @@ pub fn build_sty_package(
                     .tracks
                     .iter()
                     .map(|tr| {
+                        let kit_opt = crate::yamaha_sty::classify_drum_kit(
+                            tr.dest_ch,
+                            tr.voice.msb,
+                            tr.voice.lsb,
+                            tr.voice.program,
+                        );
                         let (req_b, req_p, resolved_drum) =
                             crate::yamaha_sty::resolve_yamaha_voice_to_gm(
                                 tr.dest_ch,
@@ -2003,19 +2050,63 @@ pub fn build_sty_package(
                                 tr.voice.program,
                                 &tr.voice.name_hint,
                             );
-                        let inst_idx = requested_to_idx
-                            .get(&(req_b, req_p))
+                        let is_drum_track = tr.is_drum
+                            || resolved_drum
+                            || kit_opt.is_some()
+                            || tr.track_slot <= 1;
+                        let (target_b, target_p) = if is_drum_track && req_b != 128 {
+                            (128, 0)
+                        } else {
+                            (req_b, req_p)
+                        };
+                        let mut inst_idx = requested_to_idx
+                            .get(&(target_b, target_p))
                             .copied()
-                            .unwrap_or(0);
+                            .unwrap_or_else(|| {
+                                if is_drum_track {
+                                    fallback_drum_idx.unwrap_or(0)
+                                } else {
+                                    0
+                                }
+                            });
+                        if is_drum_track {
+                            let resolved_is_drumkit = instruments
+                                .get(inst_idx)
+                                .map(|i| i.is_drumkit)
+                                .unwrap_or(false);
+                            if !resolved_is_drumkit {
+                                if let Some(drum_idx) = requested_to_idx
+                                    .get(&(128, 0))
+                                    .copied()
+                                    .filter(|&idx| {
+                                        instruments.get(idx).map(|i| i.is_drumkit).unwrap_or(false)
+                                    })
+                                    .or(fallback_drum_idx)
+                                {
+                                    inst_idx = drum_idx;
+                                }
+                            }
+                        }
                         let inst_is_drum = instruments
                             .get(inst_idx)
                             .map(|i| i.is_drumkit)
                             .unwrap_or(false);
+                        let effective_is_drum = is_drum_track || inst_is_drum;
+                        let drum_kit = if effective_is_drum {
+                            Some(kit_opt.unwrap_or(crate::yamaha_sty::DrumKitKind::XgStandard))
+                        } else {
+                            None
+                        };
                         let events = tr
                             .events
                             .iter()
                             .map(|ev| RhythmNoteEvent {
-                                midi_note: ev.midi_note,
+                                midi_note: match drum_kit {
+                                    Some(kit) => {
+                                        crate::yamaha_sty::remap_yamaha_drum_note(ev.midi_note, kit)
+                                    }
+                                    None => ev.midi_note,
+                                },
                                 velocity: ev.velocity,
                                 start_tick: ev.start_tick,
                                 duration_ticks: ev.duration_ticks,
@@ -2030,7 +2121,7 @@ pub fn build_sty_package(
                             fine_tune: 0,
                             key_move: 0,
                             octave_shift: 0,
-                            is_drum: tr.is_drum || resolved_drum || inst_is_drum,
+                            is_drum: effective_is_drum,
                             casm_rule: tr.casm_rule.clone(),
                             events,
                         }
@@ -2086,6 +2177,12 @@ pub fn build_sty_package(
         }
         .to_string();
 
+        let has_audio_style_chunks =
+            doc.has_audio_style_chunks || doc.diagnostics.has_audio_style_chunks;
+        let uses_expansion_kit = doc.diagnostics.uses_expansion_kit;
+        let sty_warnings = doc.diagnostics.warnings.clone();
+        let sty_diagnostics_summary = Some(doc.diagnostics.summary_text());
+
         styles.push(RhythmStyle {
             id: (doc_idx + 1) as u32,
             name: doc.title.clone(),
@@ -2093,6 +2190,10 @@ pub fn build_sty_package(
             bpm: doc.bpm.clamp(40.0, 240.0),
             sections,
             ots_presets,
+            sty_warnings,
+            has_audio_style_chunks,
+            uses_expansion_kit,
+            sty_diagnostics_summary,
         });
     }
 
@@ -2115,6 +2216,19 @@ pub fn build_sty_package(
         .first()
         .map(|s| s.ots_presets.clone())
         .unwrap_or_default();
+    let has_audio_style_chunks = styles.iter().any(|s| s.has_audio_style_chunks);
+    let uses_expansion_kit = styles.iter().any(|s| s.uses_expansion_kit);
+    let mut sty_warnings = Vec::new();
+    for s in &styles {
+        for w in &s.sty_warnings {
+            if !sty_warnings.contains(w) {
+                sty_warnings.push(w.clone());
+            }
+        }
+    }
+    let sty_diagnostics_summary = styles
+        .first()
+        .and_then(|s| s.sty_diagnostics_summary.clone());
 
     Ok(LoadedMusicPackage {
         file_name,
@@ -2130,6 +2244,10 @@ pub fn build_sty_package(
         styles,
         ots_presets,
         source_paths: docs.iter().map(|d| PathBuf::from(&d.file_path)).collect(),
+        sty_warnings,
+        has_audio_style_chunks,
+        uses_expansion_kit,
+        sty_diagnostics_summary,
     })
 }
 
@@ -2876,7 +2994,7 @@ fn collect_section_events(
             let t = ev.start_tick as f64;
             if t >= win_start && t < win_end {
                 let target_note = if let Some(ref rule) = track.casm_rule {
-                    if effective_is_drum {
+                    if effective_is_drum || slot <= 1 {
                         ev.midi_note
                     } else {
                         let shifted = (ev.midi_note as i16
@@ -2889,7 +3007,7 @@ fn collect_section_events(
                             None => continue,
                         }
                     }
-                } else if effective_is_drum {
+                } else if effective_is_drum || slot <= 1 {
                     ev.midi_note
                 } else {
                     let shifted = (ev.midi_note as i16
@@ -2959,6 +3077,27 @@ pub struct MusicStudioArrangerEngine {
     held_upper_notes: Vec<u8>,
     pending_triggers: Vec<PendingTrigger>,
     voices: Vec<SamplerVoice>,
+}
+
+fn active_style_diagnostics<'a>(
+    pkg: &'a LoadedMusicPackage,
+    active_style_index: usize,
+) -> (&'a [String], bool, bool, Option<&'a str>) {
+    if let Some(st) = pkg.styles.get(active_style_index) {
+        (
+            st.sty_warnings.as_slice(),
+            st.has_audio_style_chunks,
+            st.uses_expansion_kit,
+            st.sty_diagnostics_summary.as_deref(),
+        )
+    } else {
+        (
+            pkg.sty_warnings.as_slice(),
+            pkg.has_audio_style_chunks,
+            pkg.uses_expansion_kit,
+            pkg.sty_diagnostics_summary.as_deref(),
+        )
+    }
 }
 
 impl MusicStudioArrangerEngine {
@@ -3137,6 +3276,8 @@ impl MusicStudioArrangerEngine {
             .filter(|st| !st.ots_presets.is_empty())
             .map(|st| st.ots_presets.clone())
             .unwrap_or_else(|| pkg.ots_presets.clone());
+        let (sty_warnings, has_audio_style_chunks, uses_expansion_kit, sty_diagnostics_summary) =
+            active_style_diagnostics(pkg, self.active_style_index);
         MusicPackageSummary {
             loaded: true,
             file_name: pkg.file_name.clone(),
@@ -3190,6 +3331,10 @@ impl MusicStudioArrangerEngine {
             track_instruments: self.track_instrument_overrides,
             ots_presets,
             beat_position: (self.current_tick / sec_len).clamp(0.0, 1.0) as f32,
+            sty_warnings: sty_warnings.to_vec(),
+            has_audio_style_chunks,
+            uses_expansion_kit,
+            sty_diagnostics_summary: sty_diagnostics_summary.map(str::to_string),
         }
     }
 
@@ -3217,6 +3362,25 @@ impl MusicStudioArrangerEngine {
             (slot, src) => *slot = src.clone(),
         }
         dst.active_style_index = self.active_style_index;
+        let (src_warnings, src_audio_chunks, src_expansion, src_diag_summary) =
+            active_style_diagnostics(pkg, self.active_style_index);
+        if dst.sty_warnings.as_slice() != src_warnings {
+            dst.sty_warnings.clear();
+            dst.sty_warnings.extend(src_warnings.iter().cloned());
+        }
+        dst.has_audio_style_chunks = src_audio_chunks;
+        dst.uses_expansion_kit = src_expansion;
+        match (&mut dst.sty_diagnostics_summary, src_diag_summary) {
+            (Some(d), Some(s)) => {
+                if d != s {
+                    d.clear();
+                    d.push_str(s);
+                }
+            }
+            (None, None) => {}
+            (Some(_), None) => dst.sty_diagnostics_summary = None,
+            (slot @ None, Some(s)) => *slot = Some(s.to_string()),
+        }
         if dst.active_section != self.active_section {
             dst.active_section.clear();
             dst.active_section.push_str(&self.active_section);
@@ -3364,6 +3528,10 @@ impl MusicStudioArrangerEngine {
                 styles: Vec::new(),
                 ots_presets: Vec::new(),
                 source_paths: Vec::new(),
+                sty_warnings: Vec::new(),
+                has_audio_style_chunks: false,
+                uses_expansion_kit: false,
+                sty_diagnostics_summary: None,
             },
         };
         let target_idx = if let Some(existing_idx) = next_pkg
@@ -4465,9 +4633,17 @@ mod tests {
                     }],
                 }],
                 ots_presets: Vec::new(),
+                sty_warnings: Vec::new(),
+                has_audio_style_chunks: false,
+                uses_expansion_kit: false,
+                sty_diagnostics_summary: None,
             }],
             ots_presets: Vec::new(),
             source_paths: Vec::new(),
+            sty_warnings: Vec::new(),
+            has_audio_style_chunks: false,
+            uses_expansion_kit: false,
+            sty_diagnostics_summary: None,
         });
 
         let mut engine = MusicStudioArrangerEngine::new(48000.0);
@@ -4874,6 +5050,10 @@ mod tests {
             styles: Vec::new(),
             ots_presets: Vec::new(),
             source_paths: Vec::new(),
+            sty_warnings: Vec::new(),
+            has_audio_style_chunks: false,
+            uses_expansion_kit: false,
+            sty_diagnostics_summary: None,
         }));
 
         // Open triangle 81 followed by Mute triangle 80 chokes 81 cleanly
@@ -5025,6 +5205,10 @@ mod tests {
             styles: Vec::new(),
             ots_presets: Vec::new(),
             source_paths: Vec::new(),
+            sty_warnings: Vec::new(),
+            has_audio_style_chunks: false,
+            uses_expansion_kit: false,
+            sty_diagnostics_summary: None,
         }));
         engine.trigger_instrument_note(0, 62, 62, 40, 1.0, 0, 0, false, None);
         assert!(Arc::ptr_eq(&engine.voices[0].pcm_l, &soft_pcm));
@@ -5278,5 +5462,418 @@ mod tests {
         let all_entries = list_all_music_packages();
         assert!(all_entries.iter().any(|e| e.format == "music"));
         assert!(all_entries.iter().any(|e| e.format == "sty"));
+    }
+
+    fn find_target_sty_files(roots: &[&Path], targets: &[&str]) -> Vec<PathBuf> {
+        fn walk(dir: &Path, targets: &[&str], out: &mut Vec<PathBuf>, seen: &mut HashSet<String>) {
+            let Ok(rd) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for entry in rd.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    walk(&p, targets, out, seen);
+                } else if let Some(fname) = p.file_name().and_then(|s| s.to_str()) {
+                    let lower = fname.to_ascii_lowercase();
+                    if let Some(&canon) = targets
+                        .iter()
+                        .find(|t| t.to_ascii_lowercase() == lower)
+                    {
+                        if seen.insert(canon.to_ascii_lowercase()) {
+                            out.push(p);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut out = Vec::new();
+        let mut seen = HashSet::new();
+        for root in roots {
+            if root.exists() {
+                walk(root, targets, &mut out, &mut seen);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn test_sty_drums_zero_pitch_transposition_and_zero_melodic_routing() {
+        // 1. Verify slot <= 1 anti-transposition guard in collect_section_events even when is_drum == false
+        //    and instrument is_drumkit == false, both with and without a CASM rule.
+        let dummy_pcm = Arc::new(vec![0.1_f32; 512]);
+        let non_drum_inst = LoadedInstrument {
+            index: 0,
+            name: "MelodicLookalike".to_string(),
+            volume: 1.0,
+            pan: 0,
+            inst_type: 0,
+            is_drumkit: false,
+            zones: vec![SampleZone {
+                root_key: 60,
+                key_low: 0,
+                key_high: 127,
+                vel_low: 0,
+                vel_high: 127,
+                name: "All".to_string(),
+                sample_rate: 48000,
+                channels: 1,
+                loop_start: 0,
+                loop_end: 0,
+                loop_enabled: false,
+                loop_mode: 0,
+                gain: 1.0,
+                pan: 0,
+                fine_tune: 0,
+                pool_sid: 0,
+                pcm_l: Arc::clone(&dummy_pcm),
+                pcm_r: Arc::clone(&dummy_pcm),
+            }],
+        };
+        let casm_rule = crate::yamaha_sty::CasmRule {
+            name: "PercGuard".to_string(),
+            src_ch: 8,
+            dest_ch: 8,
+            editable: 1,
+            note_mute: 0x0FFF,
+            chord_mute: u64::MAX,
+            src_root: 0,
+            src_chord_type: 0,
+            low_split: None,
+            high_split: None,
+            ranges: std::array::from_fn(|_| crate::yamaha_sty::CasmRangeRule {
+                ntr: crate::yamaha_sty::NtrRule::RootTrans,
+                ntt: crate::yamaha_sty::NttRule::Chord,
+                bass_on: false,
+                high_key: 11,
+                note_low: 0,
+                note_high: 127,
+                rtr: crate::yamaha_sty::RtrRule::PitchShift,
+            }),
+        };
+        let guard_sec = RhythmSection {
+            id: 1,
+            name: "Variation 1".to_string(),
+            length_ticks: 2000,
+            is_loop: true,
+            jump_to: 0,
+            tracks: vec![
+                RhythmTrack {
+                    track_type: "Drum".to_string(),
+                    track_slot: 0,
+                    instrument_index: 0,
+                    volume: 1.0,
+                    pan: 0,
+                    fine_tune: 0,
+                    key_move: 3,
+                    octave_shift: 1,
+                    is_drum: false,
+                    casm_rule: None,
+                    events: vec![RhythmNoteEvent {
+                        midi_note: 36,
+                        velocity: 110,
+                        start_tick: 0,
+                        duration_ticks: 100,
+                    }],
+                },
+                RhythmTrack {
+                    track_type: "Percussion".to_string(),
+                    track_slot: 1,
+                    instrument_index: 0,
+                    volume: 1.0,
+                    pan: 0,
+                    fine_tune: 0,
+                    key_move: -4,
+                    octave_shift: -1,
+                    is_drum: false,
+                    casm_rule: Some(casm_rule),
+                    events: vec![RhythmNoteEvent {
+                        midi_note: 54,
+                        velocity: 100,
+                        start_tick: 250,
+                        duration_ticks: 100,
+                    }],
+                },
+            ],
+        };
+        let mut trig_c = Vec::new();
+        let mut trig_fs = Vec::new();
+        collect_section_events(
+            &guard_sec,
+            std::slice::from_ref(&non_drum_inst),
+            &[1.0; 8],
+            &[None; 8],
+            0,
+            ChordQuality::Major,
+            120.0,
+            48000.0,
+            0.0,
+            1000.0,
+            &mut trig_c,
+        );
+        collect_section_events(
+            &guard_sec,
+            std::slice::from_ref(&non_drum_inst),
+            &[1.0; 8],
+            &[None; 8],
+            6,
+            ChordQuality::Minor,
+            120.0,
+            48000.0,
+            0.0,
+            1000.0,
+            &mut trig_fs,
+        );
+        assert_eq!(trig_c.len(), 2);
+        assert_eq!(trig_fs.len(), 2);
+        assert_eq!(trig_c[0].midi_note, 36);
+        assert_eq!(trig_fs[0].midi_note, 36);
+        assert_eq!(trig_c[1].midi_note, 54);
+        assert_eq!(trig_fs[1].midi_note, 54);
+
+        // 2. Verify set_style + summary + steady-state sync_dynamic_summary refresh STY diagnostics.
+        let mut sty_engine = MusicStudioArrangerEngine::new(48000.0);
+        sty_engine.load_package(Arc::new(LoadedMusicPackage {
+            file_name: "diag_switch.sty".to_string(),
+            file_path: "test://diag_switch".to_string(),
+            version: "SFF2/SF2".to_string(),
+            source_format: "sty_pack".to_string(),
+            soundfont_name: Some("TestSF2".to_string()),
+            instruments: vec![non_drum_inst],
+            styles: vec![
+                RhythmStyle {
+                    id: 1,
+                    name: "CleanStyle".to_string(),
+                    category: "Yamaha SFF1".to_string(),
+                    bpm: 120.0,
+                    sections: vec![guard_sec.clone()],
+                    ots_presets: Vec::new(),
+                    sty_warnings: Vec::new(),
+                    has_audio_style_chunks: false,
+                    uses_expansion_kit: false,
+                    sty_diagnostics_summary: Some("CleanDiag".to_string()),
+                },
+                RhythmStyle {
+                    id: 2,
+                    name: "ExpansionAudioStyle".to_string(),
+                    category: "Yamaha SFF2".to_string(),
+                    bpm: 138.0,
+                    sections: vec![guard_sec],
+                    ots_presets: Vec::new(),
+                    sty_warnings: vec!["Expansion warning".to_string()],
+                    has_audio_style_chunks: true,
+                    uses_expansion_kit: true,
+                    sty_diagnostics_summary: Some("ExpDiag".to_string()),
+                },
+            ],
+            ots_presets: Vec::new(),
+            source_paths: Vec::new(),
+            sty_warnings: vec!["Expansion warning".to_string()],
+            has_audio_style_chunks: true,
+            uses_expansion_kit: true,
+            sty_diagnostics_summary: Some("CleanDiag".to_string()),
+        }));
+        let mut dyn_sum = sty_engine.summary();
+        assert!(!dyn_sum.uses_expansion_kit);
+        assert!(!dyn_sum.has_audio_style_chunks);
+        assert!(dyn_sum.sty_warnings.is_empty());
+        assert_eq!(dyn_sum.sty_diagnostics_summary.as_deref(), Some("CleanDiag"));
+
+        sty_engine.set_style(1);
+        let switched_sum = sty_engine.summary();
+        assert!(switched_sum.uses_expansion_kit);
+        assert!(switched_sum.has_audio_style_chunks);
+        assert_eq!(switched_sum.sty_warnings, vec!["Expansion warning".to_string()]);
+        assert_eq!(
+            switched_sum.sty_diagnostics_summary.as_deref(),
+            Some("ExpDiag")
+        );
+        sty_engine.sync_dynamic_summary(&mut dyn_sum);
+        assert!(dyn_sum.uses_expansion_kit);
+        assert!(dyn_sum.has_audio_style_chunks);
+        assert_eq!(dyn_sum.sty_warnings, vec!["Expansion warning".to_string()]);
+        assert_eq!(dyn_sum.sty_diagnostics_summary.as_deref(), Some("ExpDiag"));
+        sty_engine.sync_dynamic_summary(&mut dyn_sum);
+        assert_eq!(dyn_sum.sty_warnings, vec!["Expansion warning".to_string()]);
+
+        // 3. Locate real .STY files and validate drum routing, note remapping, zero transposition, and diagnostics.
+        if crate::soundfont::find_default_soundfont().is_none() {
+            return;
+        }
+        let target_names = [
+            "(35) FORRÓ BOYS.sty",
+            "(40) GUSTAVA LIMA.sty",
+            "(44) LAMBASAIA 1.sty",
+            "O Som do Povo.S837.STY",
+        ];
+        let search_roots = [
+            Path::new(USER_DOCUMENTS_KEYBOARD_DIR),
+            Path::new(USER_DOCUMENTS_RHYTHMS_DIR),
+            Path::new("/home/data/Downloads"),
+        ];
+        let found_paths = find_target_sty_files(&search_roots, &target_names);
+        if Path::new(USER_DOCUMENTS_KEYBOARD_DIR).exists() {
+            assert!(
+                found_paths.iter().any(|p| p
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .map(|n| n.eq_ignore_ascii_case("(35) FORRÓ BOYS.sty"))
+                    .unwrap_or(false)),
+                "Expected (35) FORRÓ BOYS.sty under {}",
+                USER_DOCUMENTS_KEYBOARD_DIR
+            );
+            assert!(
+                found_paths.iter().any(|p| p
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .map(|n| n.eq_ignore_ascii_case("O Som do Povo.S837.STY"))
+                    .unwrap_or(false)),
+                "Expected O Som do Povo.S837.STY under {}",
+                USER_DOCUMENTS_KEYBOARD_DIR
+            );
+        }
+        if found_paths.is_empty() {
+            return;
+        }
+
+        for p in &found_paths {
+            let doc = crate::yamaha_sty::parse_sty_file(p)
+                .unwrap_or_else(|e| panic!("parse_sty_file {}: {}", p.display(), e));
+            let pkg = Arc::new(
+                build_sty_package(std::slice::from_ref(p), None)
+                    .unwrap_or_else(|e| panic!("build_sty_package {}: {}", p.display(), e)),
+            );
+            assert_eq!(pkg.styles.len(), 1);
+            assert!(pkg.sty_diagnostics_summary.is_some());
+            assert_eq!(
+                pkg.styles[0].sty_diagnostics_summary,
+                pkg.sty_diagnostics_summary
+            );
+            assert_eq!(pkg.styles[0].sections.len(), doc.sections.len());
+
+            for (sec_idx, pkg_sec) in pkg.styles[0].sections.iter().enumerate() {
+                let doc_sec = &doc.sections[sec_idx];
+                assert_eq!(pkg_sec.tracks.len(), doc_sec.tracks.len());
+                for (tr_idx, pkg_tr) in pkg_sec.tracks.iter().enumerate() {
+                    let doc_tr = &doc_sec.tracks[tr_idx];
+                    let kit_opt = crate::yamaha_sty::classify_drum_kit(
+                        doc_tr.dest_ch,
+                        doc_tr.voice.msb,
+                        doc_tr.voice.lsb,
+                        doc_tr.voice.program,
+                    );
+                    if pkg_tr.is_drum || pkg_tr.track_slot <= 1 {
+                        let inst = pkg
+                            .instruments
+                            .get(pkg_tr.instrument_index)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "{}: invalid instrument_index {} on drum track",
+                                    p.display(),
+                                    pkg_tr.instrument_index
+                                )
+                            });
+                        assert!(
+                            inst.is_drumkit,
+                            "{} [{} slot {}]: drum track routed to melodic instrument '{}' (idx={})",
+                            p.display(),
+                            pkg_sec.name,
+                            pkg_tr.track_slot,
+                            inst.name,
+                            pkg_tr.instrument_index
+                        );
+                        for ev in &pkg_tr.events {
+                            assert!(
+                                (27..=87).contains(&ev.midi_note),
+                                "{} [{} slot {}]: drum note {} out of 27..=87",
+                                p.display(),
+                                pkg_sec.name,
+                                pkg_tr.track_slot,
+                                ev.midi_note
+                            );
+                            assert!(
+                                ev.midi_note != 33 && ev.midi_note != 34,
+                                "{} [{} slot {}]: unremapped XG metronome note {} found",
+                                p.display(),
+                                pkg_sec.name,
+                                pkg_tr.track_slot,
+                                ev.midi_note
+                            );
+                            if kit_opt == Some(crate::yamaha_sty::DrumKitKind::XgLatinCuban) {
+                                assert!(
+                                    !matches!(ev.midi_note, 58 | 71 | 72),
+                                    "{} [{} slot {}]: unremapped MSB=126 Latin/Cuban note {} found",
+                                    p.display(),
+                                    pkg_sec.name,
+                                    pkg_tr.track_slot,
+                                    ev.midi_note
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            let render_isolated_drums = |root_pc: u8, quality: &str| -> (Vec<f32>, Vec<f32>, f32, MusicPackageSummary) {
+                let mut eng = MusicStudioArrangerEngine::new(48000.0);
+                eng.load_package(Arc::clone(&pkg));
+                for slot in 2..8 {
+                    eng.set_track_volume(slot, 0.0);
+                }
+                eng.set_track_volume(0, 1.0);
+                eng.set_track_volume(1, 1.0);
+                eng.set_chord(root_pc, quality);
+                eng.set_transport(true, None, None);
+
+                let mut all_l = Vec::with_capacity(24 * 4096);
+                let mut all_r = Vec::with_capacity(24 * 4096);
+                let mut l = vec![0.0_f32; 4096];
+                let mut r = vec![0.0_f32; 4096];
+                let mut peak = 0.0_f32;
+                for _ in 0..24 {
+                    eng.process_block(&mut l, &mut r);
+                    for (&sl, &sr) in l.iter().zip(r.iter()) {
+                        peak = peak.max(sl.abs()).max(sr.abs());
+                    }
+                    all_l.extend_from_slice(&l);
+                    all_r.extend_from_slice(&r);
+                }
+                let sum = eng.summary();
+                (all_l, all_r, peak, sum)
+            };
+
+            let (lc, rc, peak_c, sum_c) = render_isolated_drums(0, "Major");
+            let (lfs, rfs, peak_fs, _sum_fs) = render_isolated_drums(6, "Minor");
+            assert!(
+                peak_c > 0.01 && peak_fs > 0.01,
+                "{}: expected audible isolated drums, got peak_c={} peak_fs={}",
+                p.display(),
+                peak_c,
+                peak_fs
+            );
+            let max_diff = lc
+                .iter()
+                .zip(lfs.iter())
+                .chain(rc.iter().zip(rfs.iter()))
+                .fold(0.0_f32, |m, (&a, &b)| m.max((a - b).abs()));
+            assert!(
+                max_diff < 1e-6,
+                "{}: isolated Drum+Perc differed between C Major and F# Minor (max_diff={})",
+                p.display(),
+                max_diff
+            );
+
+            if p.file_name()
+                .and_then(|s| s.to_str())
+                .map(|n| n.eq_ignore_ascii_case("(35) FORRÓ BOYS.sty"))
+                .unwrap_or(false)
+            {
+                assert!(pkg.uses_expansion_kit, "FORRÓ BOYS must set uses_expansion_kit");
+                assert!(!pkg.sty_warnings.is_empty(), "FORRÓ BOYS must emit sty_warnings");
+                assert!(sum_c.uses_expansion_kit);
+                assert!(!sum_c.sty_warnings.is_empty());
+                assert!(sum_c.sty_diagnostics_summary.is_some());
+            }
+        }
     }
 }

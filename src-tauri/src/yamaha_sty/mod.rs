@@ -1,5 +1,11 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
+
+pub mod drum_mapper;
+pub use drum_mapper::{
+    classify_drum_kit, remap_yamaha_drum_note, DrumKitKind, StyChannelDiagnostic,
+    StyDiagnostics, StySectionDiagnostic,
+};
 
 /// Binary container / Style File Format dialect detected in a `.STY` file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -285,6 +291,9 @@ pub struct StyDocument {
     pub time_sig_den: u8,
     pub sections: Vec<StySection>,
     pub ots_presets: Vec<OtsPreset>,
+    pub has_audio_style_chunks: bool,
+    pub audio_chunk_tags: Vec<String>,
+    pub diagnostics: StyDiagnostics,
 }
 
 /// Resolves a Yamaha Bank MSB/LSB/Program + track hint into a GM SoundFont `(sf2_bank, sf2_program, is_drum)`.
@@ -614,7 +623,10 @@ pub fn parse_sty_file(path: &Path) -> Result<StyDocument, String> {
         .to_string();
     let file_path = path.to_string_lossy().to_string();
 
-    parse_sty_bytes(&data, file_name, file_path)
+    let doc = parse_sty_bytes(&data, file_name, file_path)?;
+    #[cfg(not(test))]
+    eprintln!("[STY DIAGNOSTICS]\n{}", doc.diagnostics.summary_text());
+    Ok(doc)
 }
 
 fn parse_sty_bytes(
@@ -649,10 +661,19 @@ fn parse_sty_bytes(
         tpqn_raw
     };
 
-    let (mtrk_chunks, casm_chunk, otsc_chunk) = collect_top_level_chunks(data, 8 + hlen);
+    let (mtrk_chunks, casm_chunk, otsc_chunk, top_audio_tags) =
+        collect_top_level_chunks(data, 8 + hlen);
     if mtrk_chunks.is_empty() {
         return Err("No MTrk MIDI data chunk found in STY file".to_string());
     }
+
+    let mut audio_chunk_tags = top_audio_tags;
+    for tag in detect_audio_style_chunks(data) {
+        if !audio_chunk_tags.contains(&tag) {
+            audio_chunk_tags.push(tag);
+        }
+    }
+    let has_audio_style_chunks = !audio_chunk_tags.is_empty();
 
     let casm = match casm_chunk {
         Some(chunk) => parse_casm_chunk(chunk),
@@ -685,7 +706,19 @@ fn parse_sty_bytes(
     let bpm = midi.bpm.clamp(20.0, 300.0);
     let time_sig_num = midi.time_sig_num;
     let time_sig_den = midi.time_sig_den;
-    let sections = build_sections(&mut midi, &casm, tpqn);
+    let (sections, section_diagnostics) = build_sections(&mut midi, &casm, tpqn);
+    let diagnostics = build_sty_diagnostics(
+        &file_name,
+        format,
+        tpqn,
+        bpm,
+        time_sig_num,
+        time_sig_den,
+        &sections,
+        section_diagnostics,
+        has_audio_style_chunks,
+        &audio_chunk_tags,
+    );
 
     Ok(StyDocument {
         title,
@@ -698,6 +731,9 @@ fn parse_sty_bytes(
         time_sig_den,
         sections,
         ots_presets,
+        has_audio_style_chunks,
+        audio_chunk_tags,
+        diagnostics,
     })
 }
 
@@ -708,8 +744,46 @@ fn is_valid_ascii_tag(tag: &[u8]) -> bool {
 fn is_known_chunk_tag(tag: &[u8]) -> bool {
     matches!(
         tag,
-        b"MTrk" | b"CASM" | b"OTSc" | b"FNRc" | b"FNRP" | b"MDB " | b"MHhd" | b"MspI" | b"CSEG"
+        b"MTrk"
+            | b"CASM"
+            | b"OTSc"
+            | b"FNRc"
+            | b"FNRP"
+            | b"MDB "
+            | b"MHhd"
+            | b"MspI"
+            | b"CSEG"
+            | b"AASM"
+            | b"AFil"
+            | b"AWav"
     )
+}
+
+fn detect_audio_style_chunks(data: &[u8]) -> Vec<String> {
+    let mut tags = Vec::new();
+    if data.len() < 8 {
+        return tags;
+    }
+    let mut i = 0usize;
+    while i + 8 <= data.len() {
+        let candidate = &data[i..i + 4];
+        if matches!(candidate, b"AASM" | b"AFil" | b"AWav") {
+            let be_len =
+                u32::from_be_bytes([data[i + 4], data[i + 5], data[i + 6], data[i + 7]]) as usize;
+            let le_len =
+                u32::from_le_bytes([data[i + 4], data[i + 5], data[i + 6], data[i + 7]]) as usize;
+            let plausible_be = be_len > 0 && be_len < data.len();
+            let plausible_le = le_len > 0 && le_len < data.len();
+            if plausible_be || plausible_le {
+                let tag_str = String::from_utf8_lossy(candidate).to_string();
+                if !tags.contains(&tag_str) {
+                    tags.push(tag_str);
+                }
+            }
+        }
+        i += 1;
+    }
+    tags
 }
 
 fn find_next_chunk_tag(data: &[u8], start: usize) -> Option<usize> {
@@ -732,10 +806,11 @@ fn find_next_chunk_tag(data: &[u8], start: usize) -> Option<usize> {
 fn collect_top_level_chunks<'a>(
     data: &'a [u8],
     start_pos: usize,
-) -> (Vec<&'a [u8]>, Option<&'a [u8]>, Option<&'a [u8]>) {
+) -> (Vec<&'a [u8]>, Option<&'a [u8]>, Option<&'a [u8]>, Vec<String>) {
     let mut mtrks = Vec::new();
     let mut casm: Option<&'a [u8]> = None;
     let mut otsc: Option<&'a [u8]> = None;
+    let mut audio_tags: Vec<String> = Vec::new();
 
     let mut pos = start_pos;
     while pos + 8 <= data.len() {
@@ -754,9 +829,34 @@ fn collect_top_level_chunks<'a>(
             }
             break;
         }
-        let clen =
+        let clen_be =
             u32::from_be_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]])
                 as usize;
+        let is_audio_chunk = matches!(tag, b"AASM" | b"AFil" | b"AWav");
+        let clen = if is_audio_chunk {
+            let clen_le = u32::from_le_bytes([
+                data[pos + 4],
+                data[pos + 5],
+                data[pos + 6],
+                data[pos + 7],
+            ]) as usize;
+            if clen_be
+                .checked_add(pos + 8)
+                .is_some_and(|end| end <= data.len())
+            {
+                clen_be
+            } else if clen_le > 0
+                && clen_le
+                    .checked_add(pos + 8)
+                    .is_some_and(|end| end <= data.len())
+            {
+                clen_le
+            } else {
+                clen_be
+            }
+        } else {
+            clen_be
+        };
         let payload_start = pos + 8;
         let payload_end = payload_start.saturating_add(clen).min(data.len());
         let payload = &data[payload_start..payload_end];
@@ -767,6 +867,11 @@ fn collect_top_level_chunks<'a>(
             casm = Some(payload);
         } else if tag == b"OTSc" {
             otsc = Some(payload);
+        } else if is_audio_chunk {
+            let tag_str = String::from_utf8_lossy(tag).to_string();
+            if !audio_tags.contains(&tag_str) {
+                audio_tags.push(tag_str);
+            }
         }
 
         pos = payload_end;
@@ -808,13 +913,14 @@ fn collect_top_level_chunks<'a>(
         }
     }
 
-    (mtrks, casm, otsc)
+    (mtrks, casm, otsc, audio_tags)
 }
 
 #[derive(Default)]
 struct CasmData {
     has_ctb2: bool,
     by_section: HashMap<String, Vec<CasmRule>>,
+    all_rules: Vec<CasmRule>,
 }
 
 fn decode_latin1(bytes: &[u8]) -> String {
@@ -980,6 +1086,7 @@ fn parse_casm_chunk(chunk: &[u8]) -> CasmData {
                 }
             }
 
+            casm.all_rules.extend(rules.iter().cloned());
             for sec_key in sdec_tokens {
                 casm.by_section
                     .entry(sec_key)
@@ -1186,6 +1293,7 @@ struct ParsedMidi {
     markers: Vec<RawMarker>,
     notes: Vec<RawNote>,
     max_tick: u32,
+    drum_msb_channels: HashSet<u8>,
 }
 
 fn cc10_to_signed_pan(cc10: u8) -> i32 {
@@ -1209,6 +1317,7 @@ fn parse_midi_tracks(mtrks: &[&[u8]]) -> Result<ParsedMidi, String> {
     let mut markers: Vec<RawMarker> = Vec::new();
     let mut notes: Vec<RawNote> = Vec::new();
     let mut max_tick = 0_u32;
+    let mut drum_msb_channels: HashSet<u8> = HashSet::new();
 
     for trk in mtrks {
         let mut p = 0usize;
@@ -1330,7 +1439,13 @@ fn parse_midi_tracks(mtrks: &[&[u8]]) -> Result<ParsedMidi, String> {
                     p += 2;
                     match cmd {
                         0xb0 => match d1 {
-                            0 => ch_state[ch].msb = d2 & 0x7f,
+                            0 => {
+                                let msb = d2 & 0x7f;
+                                ch_state[ch].msb = msb;
+                                if matches!(msb, 62 | 126 | 127) {
+                                    drum_msb_channels.insert(ch as u8);
+                                }
+                            }
                             32 => ch_state[ch].lsb = d2 & 0x7f,
                             7 => ch_state[ch].volume = d2 & 0x7f,
                             10 => ch_state[ch].pan = cc10_to_signed_pan(d2 & 0x7f),
@@ -1385,6 +1500,7 @@ fn parse_midi_tracks(mtrks: &[&[u8]]) -> Result<ParsedMidi, String> {
         markers,
         notes,
         max_tick,
+        drum_msb_channels,
     })
 }
 
@@ -1469,6 +1585,14 @@ fn lookup_casm_rules<'a>(casm: &'a CasmData, raw_name: &str) -> Vec<&'a CasmRule
         "fill in bb" => &["main b", "main a"],
         "fill in cc" => &["main c", "main a"],
         "fill in dd" => &["main d", "main a"],
+        "intro a" => &["main a"],
+        "intro b" => &["main b", "main a"],
+        "intro c" => &["main c", "main a"],
+        "intro d" => &["main d", "main a"],
+        "ending a" => &["main a"],
+        "ending b" => &["main b", "main a"],
+        "ending c" => &["main c", "main a"],
+        "ending d" => &["main d", "main a"],
         _ => &[],
     };
     for alias in aliases {
@@ -1479,7 +1603,77 @@ fn lookup_casm_rules<'a>(casm: &'a CasmData, raw_name: &str) -> Vec<&'a CasmRule
     Vec::new()
 }
 
-fn build_sections(midi: &mut ParsedMidi, casm: &CasmData, tpqn: u16) -> Vec<StySection> {
+fn is_dummy_sint_voice(v: &ChannelState) -> bool {
+    v.msb == 0 && v.program == 0 && (v.lsb == 113 || v.lsb == 0)
+}
+
+fn record_global_casm_role(
+    rule: &CasmRule,
+    global_ch_role: &mut HashMap<u8, (u8, String)>,
+    global_drum_channels: &mut HashSet<u8>,
+) {
+    let is_drum_rule = rule.dest_ch == 8 || rule.dest_ch == 9;
+    if is_drum_rule {
+        global_drum_channels.insert(rule.src_ch);
+    }
+    match global_ch_role.get_mut(&rule.src_ch) {
+        Some((existing_dest, existing_name)) => {
+            let existing_is_drum = *existing_dest == 8 || *existing_dest == 9;
+            if is_drum_rule && !existing_is_drum {
+                *existing_dest = rule.dest_ch;
+                *existing_name = rule.name.clone();
+            }
+        }
+        None => {
+            global_ch_role.insert(rule.src_ch, (rule.dest_ch, rule.name.clone()));
+        }
+    }
+}
+
+fn resolve_effective_voice(
+    raw_notes: &[&RawNote],
+    src_ch: u8,
+    target_is_drum: bool,
+    global_ch_real_voice: &HashMap<u8, ChannelState>,
+    global_ch_drum_voice: &HashMap<u8, ChannelState>,
+    global_ch_melodic_voice: &HashMap<u8, ChannelState>,
+) -> ChannelState {
+    let first_voice = raw_notes[0].voice;
+    if !is_dummy_sint_voice(&first_voice) {
+        return first_voice;
+    }
+    if let Some(n) = raw_notes.iter().find(|n| {
+        !is_dummy_sint_voice(&n.voice)
+            && (target_is_drum || !matches!(n.voice.msb, 62 | 126 | 127))
+    }) {
+        return n.voice;
+    }
+    if target_is_drum {
+        if let Some(&v) = global_ch_drum_voice.get(&src_ch) {
+            return v;
+        }
+        if let Some(&v) = global_ch_real_voice.get(&src_ch) {
+            if !matches!(v.msb, 63 | 8) {
+                return v;
+            }
+        }
+    } else if let Some(&v) = global_ch_melodic_voice.get(&src_ch) {
+        return v;
+    }
+    first_voice
+}
+
+struct BuiltSection {
+    section: StySection,
+    raw_start: u32,
+    raw_end: u32,
+}
+
+fn build_sections(
+    midi: &mut ParsedMidi,
+    casm: &CasmData,
+    tpqn: u16,
+) -> (Vec<StySection>, Vec<StySectionDiagnostic>) {
     let mut raw_sections: Vec<(String, u32, u32)> = Vec::new();
 
     if midi.markers.is_empty() {
@@ -1504,8 +1698,42 @@ fn build_sections(midi: &mut ParsedMidi, casm: &CasmData, tpqn: u16) -> Vec<StyS
         }
     }
 
+    // Build style-wide role, drum-channel, and real-voice inheritance maps before processing sections.
+    let mut casm_keys: Vec<&String> = casm.by_section.keys().collect();
+    casm_keys.sort_by_key(|k| (!k.starts_with("main "), k.as_str()));
+
+    let mut global_ch_role: HashMap<u8, (u8, String)> = HashMap::new();
+    let mut global_drum_channels: HashSet<u8> = midi.drum_msb_channels.clone();
+    for k in casm_keys {
+        for rule in &casm.by_section[k] {
+            record_global_casm_role(rule, &mut global_ch_role, &mut global_drum_channels);
+        }
+    }
+    for rule in &casm.all_rules {
+        record_global_casm_role(rule, &mut global_ch_role, &mut global_drum_channels);
+    }
+
+    let mut global_ch_real_voice: HashMap<u8, ChannelState> = HashMap::new();
+    let mut global_ch_drum_voice: HashMap<u8, ChannelState> = HashMap::new();
+    let mut global_ch_melodic_voice: HashMap<u8, ChannelState> = HashMap::new();
+    for note in &midi.notes {
+        if matches!(note.voice.msb, 62 | 126 | 127) {
+            global_drum_channels.insert(note.channel);
+            global_ch_drum_voice.entry(note.channel).or_insert(note.voice);
+        } else if !is_dummy_sint_voice(&note.voice) {
+            global_ch_melodic_voice
+                .entry(note.channel)
+                .or_insert(note.voice);
+        }
+        if !is_dummy_sint_voice(&note.voice) {
+            global_ch_real_voice
+                .entry(note.channel)
+                .or_insert(note.voice);
+        }
+    }
+
     // Deduplicate identical section names keeping the richest/longest span.
-    let mut deduped: Vec<StySection> = Vec::new();
+    let mut deduped: Vec<BuiltSection> = Vec::new();
     let mut seen_canon_idx: HashMap<String, usize> = HashMap::new();
 
     for (raw_name, raw_start, raw_end) in raw_sections {
@@ -1531,7 +1759,6 @@ fn build_sections(midi: &mut ParsedMidi, casm: &CasmData, tpqn: u16) -> Vec<StyS
             if raw_notes.is_empty() {
                 continue;
             }
-            let first_voice = raw_notes[0].voice;
 
             // Collect all distinct (src_ch, dest_ch, chord_mute) CASM rules matching src_ch.
             let mut matching_rules: Vec<&CasmRule> = Vec::new();
@@ -1546,12 +1773,49 @@ fn build_sections(midi: &mut ParsedMidi, casm: &CasmData, tpqn: u16) -> Vec<StyS
             }
 
             if matching_rules.is_empty() {
-                let dest_ch = fallback_dest_ch(src_ch);
-                let is_drum = dest_ch == 8
+                let (mut dest_ch, mut name_hint) = match global_ch_role.get(&src_ch) {
+                    Some((d, n)) => (*d, n.clone()),
+                    None => {
+                        let d = fallback_dest_ch(src_ch);
+                        (d, format!("Ch {}", d + 1))
+                    }
+                };
+                if global_drum_channels.contains(&src_ch) {
+                    dest_ch = if dest_ch == 8 || dest_ch == 9 {
+                        dest_ch
+                    } else {
+                        9
+                    };
+                    if name_hint.starts_with("Ch ") {
+                        name_hint = if dest_ch == 8 {
+                            "Rhythm1".to_string()
+                        } else {
+                            "Rhythm2".to_string()
+                        };
+                    }
+                }
+                let target_is_drum = dest_ch == 8
                     || dest_ch == 9
-                    || matches!(first_voice.msb, 62 | 126 | 127);
-                let events =
-                    build_track_events(raw_notes, raw_start, raw_end, length_ticks, tpqn, first_voice.msb == 8);
+                    || global_drum_channels.contains(&src_ch)
+                    || matches!(raw_notes[0].voice.msb, 62 | 126 | 127);
+                let effective_voice = resolve_effective_voice(
+                    raw_notes,
+                    src_ch,
+                    target_is_drum,
+                    &global_ch_real_voice,
+                    &global_ch_drum_voice,
+                    &global_ch_melodic_voice,
+                );
+                let is_drum = target_is_drum || matches!(effective_voice.msb, 62 | 126 | 127);
+                let is_megavoice = !is_drum && effective_voice.msb == 8;
+                let events = build_track_events(
+                    raw_notes,
+                    raw_start,
+                    raw_end,
+                    length_ticks,
+                    tpqn,
+                    is_megavoice,
+                );
                 if !events.is_empty() {
                     tracks.push(StyTrack {
                         src_ch,
@@ -1559,12 +1823,12 @@ fn build_sections(midi: &mut ParsedMidi, casm: &CasmData, tpqn: u16) -> Vec<StyS
                         track_slot: dest_ch_to_track_slot(dest_ch),
                         voice: StyVoiceSpec {
                             channel: src_ch,
-                            msb: first_voice.msb,
-                            lsb: first_voice.lsb,
-                            program: first_voice.program,
-                            volume: first_voice.volume,
-                            pan: first_voice.pan,
-                            name_hint: format!("Ch {}", dest_ch + 1),
+                            msb: effective_voice.msb,
+                            lsb: effective_voice.lsb,
+                            program: effective_voice.program,
+                            volume: effective_voice.volume,
+                            pan: effective_voice.pan,
+                            name_hint,
                         },
                         is_drum,
                         casm_rule: None,
@@ -1572,32 +1836,70 @@ fn build_sections(midi: &mut ParsedMidi, casm: &CasmData, tpqn: u16) -> Vec<StyS
                     });
                 }
             } else {
-                let is_megavoice = first_voice.msb == 8;
-                let events =
-                    build_track_events(raw_notes, raw_start, raw_end, length_ticks, tpqn, is_megavoice);
-                if events.is_empty() {
-                    continue;
-                }
+                let mut cached_standard: Option<Vec<StyNoteEvent>> = None;
+                let mut cached_megavoice: Option<Vec<StyNoteEvent>> = None;
                 for rule in matching_rules {
+                    let rule_is_drum = rule.dest_ch == 8
+                        || rule.dest_ch == 9
+                        || matches!(raw_notes[0].voice.msb, 62 | 126 | 127);
+                    let effective_voice = resolve_effective_voice(
+                        raw_notes,
+                        src_ch,
+                        rule_is_drum,
+                        &global_ch_real_voice,
+                        &global_ch_drum_voice,
+                        &global_ch_melodic_voice,
+                    );
                     let is_drum = rule.dest_ch == 8
                         || rule.dest_ch == 9
-                        || matches!(first_voice.msb, 62 | 126 | 127);
+                        || matches!(effective_voice.msb, 62 | 126 | 127);
+                    let is_megavoice = !is_drum && effective_voice.msb == 8;
+                    let events = if is_megavoice {
+                        cached_megavoice
+                            .get_or_insert_with(|| {
+                                build_track_events(
+                                    raw_notes,
+                                    raw_start,
+                                    raw_end,
+                                    length_ticks,
+                                    tpqn,
+                                    true,
+                                )
+                            })
+                            .clone()
+                    } else {
+                        cached_standard
+                            .get_or_insert_with(|| {
+                                build_track_events(
+                                    raw_notes,
+                                    raw_start,
+                                    raw_end,
+                                    length_ticks,
+                                    tpqn,
+                                    false,
+                                )
+                            })
+                            .clone()
+                    };
+                    if events.is_empty() {
+                        continue;
+                    }
                     tracks.push(StyTrack {
                         src_ch,
                         dest_ch: rule.dest_ch,
                         track_slot: dest_ch_to_track_slot(rule.dest_ch),
                         voice: StyVoiceSpec {
                             channel: src_ch,
-                            msb: first_voice.msb,
-                            lsb: first_voice.lsb,
-                            program: first_voice.program,
-                            volume: first_voice.volume,
-                            pan: first_voice.pan,
+                            msb: effective_voice.msb,
+                            lsb: effective_voice.lsb,
+                            program: effective_voice.program,
+                            volume: effective_voice.volume,
+                            pan: effective_voice.pan,
                             name_hint: rule.name.clone(),
                         },
                         is_drum,
                         casm_rule: Some(rule.clone()),
-                        events: events.clone(),
+                        events,
                     });
                 }
             }
@@ -1608,33 +1910,42 @@ fn build_sections(midi: &mut ParsedMidi, casm: &CasmData, tpqn: u16) -> Vec<StyS
         let total_notes: usize = tracks.iter().map(|t| t.events.len()).sum();
         if let Some(&existing_idx) = seen_canon_idx.get(&canon_name) {
             let existing_notes: usize = deduped[existing_idx]
+                .section
                 .tracks
                 .iter()
                 .map(|t| t.events.len())
                 .sum();
             if total_notes > existing_notes {
-                let keep_id = deduped[existing_idx].id;
-                deduped[existing_idx] = StySection {
-                    id: keep_id,
+                let keep_id = deduped[existing_idx].section.id;
+                deduped[existing_idx] = BuiltSection {
+                    section: StySection {
+                        id: keep_id,
+                        raw_name,
+                        name: canon_name,
+                        length_ticks,
+                        is_loop,
+                        jump_to,
+                        tracks,
+                    },
+                    raw_start,
+                    raw_end,
+                };
+            }
+        } else {
+            let id = (deduped.len() + 1) as u32;
+            seen_canon_idx.insert(canon_name.clone(), deduped.len());
+            deduped.push(BuiltSection {
+                section: StySection {
+                    id,
                     raw_name,
                     name: canon_name,
                     length_ticks,
                     is_loop,
                     jump_to,
                     tracks,
-                };
-            }
-        } else {
-            let id = (deduped.len() + 1) as u32;
-            seen_canon_idx.insert(canon_name.clone(), deduped.len());
-            deduped.push(StySection {
-                id,
-                raw_name,
-                name: canon_name,
-                length_ticks,
-                is_loop,
-                jump_to,
-                tracks,
+                },
+                raw_start,
+                raw_end,
             });
         }
     }
@@ -1642,12 +1953,12 @@ fn build_sections(midi: &mut ParsedMidi, casm: &CasmData, tpqn: u16) -> Vec<StyS
     // Wire Fill 1..4 / Fill AB `jump_to` to their target Variation section IDs (> 0).
     let variation_ids: HashMap<String, i32> = deduped
         .iter()
-        .filter(|s| s.name.starts_with("Variation "))
-        .map(|s| (s.name.clone(), s.id as i32))
+        .filter(|b| b.section.name.starts_with("Variation "))
+        .map(|b| (b.section.name.clone(), b.section.id as i32))
         .collect();
 
-    for sec in &mut deduped {
-        let target_name = match sec.name.as_str() {
+    for built in &mut deduped {
+        let target_name = match built.section.name.as_str() {
             "Fill 1" => Some("Variation 1"),
             "Fill 2" | "Fill AB" => Some("Variation 2"),
             "Fill 3" => Some("Variation 3"),
@@ -1655,11 +1966,26 @@ fn build_sections(midi: &mut ParsedMidi, casm: &CasmData, tpqn: u16) -> Vec<StyS
             _ => None,
         };
         if let Some(tname) = target_name {
-            sec.jump_to = variation_ids.get(tname).copied().unwrap_or(-2);
+            built.section.jump_to = variation_ids.get(tname).copied().unwrap_or(-2);
         }
     }
 
-    deduped
+    let mut sections = Vec::with_capacity(deduped.len());
+    let mut section_diagnostics = Vec::with_capacity(deduped.len());
+    for built in deduped {
+        let note_count = built.section.tracks.iter().map(|t| t.events.len()).sum();
+        section_diagnostics.push(StySectionDiagnostic {
+            raw_name: built.section.raw_name.clone(),
+            canonical_name: built.section.name.clone(),
+            raw_start_tick: built.raw_start,
+            raw_end_tick: built.raw_end,
+            length_ticks_500: built.section.length_ticks,
+            note_count,
+        });
+        sections.push(built.section);
+    }
+
+    (sections, section_diagnostics)
 }
 
 fn build_track_events(
@@ -1670,6 +1996,9 @@ fn build_track_events(
     tpqn: u16,
     filter_megavoice_keyswitches: bool,
 ) -> Vec<StyNoteEvent> {
+    if length_ticks == 0 {
+        return Vec::new();
+    }
     let mut events = Vec::with_capacity(raw_notes.len());
     for note in raw_notes {
         if filter_megavoice_keyswitches && (note.midi_note < 24 || note.midi_note >= 96) {
@@ -1683,10 +2012,9 @@ fn build_track_events(
         };
         let rel_dur = clamped_end.saturating_sub(note.start_tick).max(1);
 
-        let start_tick = scale_ticks(rel_start, tpqn).min(length_ticks.saturating_sub(1));
-        let duration_ticks = scale_ticks(rel_dur, tpqn)
-            .max(1)
-            .min(length_ticks.saturating_sub(start_tick).max(1));
+        let start_tick = scale_ticks(rel_start, tpqn).min(length_ticks - 1);
+        let max_dur = (length_ticks - start_tick).max(1);
+        let duration_ticks = scale_ticks(rel_dur, tpqn).clamp(1, max_dur);
 
         events.push(StyNoteEvent {
             start_tick,
@@ -1696,6 +2024,125 @@ fn build_track_events(
         });
     }
     events
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_sty_diagnostics(
+    file_name: &str,
+    format: StyFormat,
+    tpqn: u16,
+    bpm: f32,
+    time_sig_num: u8,
+    time_sig_den: u8,
+    sections: &[StySection],
+    section_diagnostics: Vec<StySectionDiagnostic>,
+    has_audio_style_chunks: bool,
+    audio_chunk_tags: &[String],
+) -> StyDiagnostics {
+    let mut channels = Vec::new();
+    let mut raw_hist: BTreeMap<u8, usize> = BTreeMap::new();
+    let mut remapped_hist: BTreeMap<u8, usize> = BTreeMap::new();
+    let mut remapped_drum_hits = 0usize;
+    let mut uses_expansion_kit = false;
+
+    for sec in sections {
+        for tr in &sec.tracks {
+            let (sf2_bank, sf2_program, _) = resolve_yamaha_voice_to_gm(
+                tr.dest_ch,
+                tr.voice.msb,
+                tr.voice.lsb,
+                tr.voice.program,
+                &tr.voice.name_hint,
+            );
+            let uses_expansion_bank = tr.voice.msb == 62 || tr.voice.msb == 63;
+            if uses_expansion_bank {
+                uses_expansion_kit = true;
+            }
+            let (casm_name, ntr, ntt) = match &tr.casm_rule {
+                Some(rule) => (
+                    rule.name.clone(),
+                    format!("{:?}", rule.ranges[0].ntr),
+                    format!("{:?}", rule.ranges[0].ntt),
+                ),
+                None => (
+                    tr.voice.name_hint.clone(),
+                    "Fallback".to_string(),
+                    "Fallback".to_string(),
+                ),
+            };
+            channels.push(StyChannelDiagnostic {
+                section: sec.name.clone(),
+                src_ch: tr.src_ch,
+                src_ch_midi_1based: tr.src_ch + 1,
+                dest_ch: tr.dest_ch,
+                dest_ch_midi_1based: tr.dest_ch + 1,
+                casm_name,
+                ntr,
+                ntt,
+                msb: tr.voice.msb,
+                lsb: tr.voice.lsb,
+                program: tr.voice.program,
+                sf2_bank,
+                sf2_program,
+                is_drum: tr.is_drum,
+                uses_expansion_bank,
+            });
+
+            let kit_opt: Option<DrumKitKind> = classify_drum_kit(
+                tr.dest_ch,
+                tr.voice.msb,
+                tr.voice.lsb,
+                tr.voice.program,
+            );
+            if tr.is_drum || kit_opt.is_some() {
+                let kit = kit_opt.unwrap_or(DrumKitKind::XgStandard);
+                for ev in &tr.events {
+                    *raw_hist.entry(ev.midi_note).or_insert(0) += 1;
+                    let remapped = remap_yamaha_drum_note(ev.midi_note, kit);
+                    *remapped_hist.entry(remapped).or_insert(0) += 1;
+                    if remapped != ev.midi_note {
+                        remapped_drum_hits += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    let mut warnings = Vec::new();
+    if uses_expansion_kit {
+        warnings.push(
+            "Este estilo usa kits/vozes de expansão Yamaha (MSB 62/63) ausentes no .STY — remapeado para GM/SF2. Você pode trocar o timbre no mixer ou importar .Instrument/.SF2.".to_string(),
+        );
+    }
+    if has_audio_style_chunks {
+        warnings.push(format!(
+            "Este estilo contém faixas de áudio proprietárias ({}) que não são reproduzidas pelo motor MIDI.",
+            audio_chunk_tags.join("/")
+        ));
+    }
+
+    let format_str = match format {
+        StyFormat::Sff1 => "SFF1".to_string(),
+        StyFormat::Sff2 => "SFF2".to_string(),
+        StyFormat::LegacyStyl => "STYL".to_string(),
+    };
+
+    StyDiagnostics {
+        file_name: file_name.to_string(),
+        format: format_str,
+        ppq: tpqn,
+        bpm,
+        time_sig: format!("{}/{}", time_sig_num, time_sig_den),
+        sections: section_diagnostics,
+        channels,
+        raw_drum_note_histogram: raw_hist.into_iter().collect(),
+        remapped_drum_note_histogram: remapped_hist.into_iter().collect(),
+        remapped_drum_hits,
+        uses_expansion_kit,
+        has_audio_style_chunks,
+        audio_chunk_tags: audio_chunk_tags.to_vec(),
+        warnings,
+    }
 }
 
 #[cfg(test)]
@@ -1773,6 +2220,21 @@ mod tests {
                 "{}: sections empty",
                 fp.display()
             );
+            assert!(
+                !doc.diagnostics.sections.is_empty(),
+                "{}: diagnostics.sections empty",
+                fp.display()
+            );
+            assert!(
+                !doc.diagnostics.channels.is_empty(),
+                "{}: diagnostics.channels empty",
+                fp.display()
+            );
+            assert!(
+                !doc.diagnostics.summary_text().is_empty(),
+                "{}: diagnostics summary empty",
+                fp.display()
+            );
             let file_notes: usize = doc
                 .sections
                 .iter()
@@ -1797,6 +2259,23 @@ mod tests {
                     );
                     assert!(gm_prog < 128);
                     assert_eq!(resolved_drum, bank == 128);
+                    if tr.is_drum
+                        || tr.dest_ch == 8
+                        || tr.dest_ch == 9
+                        || matches!(tr.voice.msb, 62 | 126 | 127)
+                    {
+                        assert_ne!(
+                            bank, 0,
+                            "{}: {} drum track src={} dst={} msb={} resolved to melodic bank 0!",
+                            fp.display(),
+                            sec.name,
+                            tr.src_ch,
+                            tr.dest_ch,
+                            tr.voice.msb
+                        );
+                        assert_eq!(bank, 128);
+                        assert!(resolved_drum);
+                    }
                     for ev in &tr.events {
                         assert!(
                             ev.start_tick < sec.length_ticks,
@@ -1807,6 +2286,15 @@ mod tests {
                             sec.length_ticks
                         );
                         assert!(ev.duration_ticks >= 1);
+                        assert!(
+                            ev.start_tick + ev.duration_ticks <= sec.length_ticks,
+                            "{}: {} start {} + dur {} > len {}",
+                            fp.display(),
+                            sec.name,
+                            ev.start_tick,
+                            ev.duration_ticks,
+                            sec.length_ticks
+                        );
                         if let Some(rule) = &tr.casm_rule {
                             for spec in [
                                 chord_spec(0, 0, 4, 7, 11, false, true),
@@ -2154,5 +2642,308 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn push_vlq(out: &mut Vec<u8>, mut val: u32) {
+        let mut buf = [0u8; 4];
+        let mut idx = 3usize;
+        buf[idx] = (val & 0x7f) as u8;
+        val >>= 7;
+        while val > 0 && idx > 0 {
+            idx -= 1;
+            buf[idx] = ((val & 0x7f) as u8) | 0x80;
+            val >>= 7;
+        }
+        out.extend_from_slice(&buf[idx..]);
+    }
+
+    fn push_chunk(out: &mut Vec<u8>, tag: &[u8; 4], payload: &[u8]) {
+        out.extend_from_slice(tag);
+        out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        out.extend_from_slice(payload);
+    }
+
+    fn push_meta_marker(trk: &mut Vec<u8>, delta: u32, text: &str) {
+        push_vlq(trk, delta);
+        trk.push(0xff);
+        trk.push(0x06);
+        push_vlq(trk, text.len() as u32);
+        trk.extend_from_slice(text.as_bytes());
+    }
+
+    fn push_cc(trk: &mut Vec<u8>, delta: u32, ch: u8, cc: u8, val: u8) {
+        push_vlq(trk, delta);
+        trk.push(0xb0 | (ch & 0x0f));
+        trk.push(cc & 0x7f);
+        trk.push(val & 0x7f);
+    }
+
+    fn push_pc(trk: &mut Vec<u8>, delta: u32, ch: u8, prog: u8) {
+        push_vlq(trk, delta);
+        trk.push(0xc0 | (ch & 0x0f));
+        trk.push(prog & 0x7f);
+    }
+
+    fn push_note(trk: &mut Vec<u8>, delta_on: u32, dur: u32, ch: u8, note: u8, vel: u8) {
+        push_vlq(trk, delta_on);
+        trk.push(0x90 | (ch & 0x0f));
+        trk.push(note & 0x7f);
+        trk.push(vel & 0x7f);
+        push_vlq(trk, dur);
+        trk.push(0x80 | (ch & 0x0f));
+        trk.push(note & 0x7f);
+        trk.push(0);
+    }
+
+    fn push_eot(trk: &mut Vec<u8>, delta: u32) {
+        push_vlq(trk, delta);
+        trk.extend_from_slice(&[0xff, 0x2f, 0x00]);
+    }
+
+    fn build_ctab(src_ch: u8, name: &str, dest_ch: u8) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(26);
+        buf.push(src_ch);
+        let mut name_bytes = [b' '; 8];
+        for (i, b) in name.as_bytes().iter().take(8).enumerate() {
+            name_bytes[i] = *b;
+        }
+        buf.extend_from_slice(&name_bytes);
+        buf.push(dest_ch);
+        buf.push(1); // editable
+        buf.extend_from_slice(&0x0FFF_u16.to_be_bytes());
+        buf.extend_from_slice(&[0x03, 0xff, 0xff, 0xff, 0xff]); // chord_mute
+        buf.push(0); // src_root = C
+        buf.push(0); // src_chord_type = Maj
+        buf.extend_from_slice(&[1, 0, 6, 0, 127, 1]); // RootFixed + Bypass
+        buf
+    }
+
+    fn build_cseg(sdec: &str, ctabs: &[Vec<u8>]) -> Vec<u8> {
+        let mut cseg = Vec::new();
+        push_chunk(&mut cseg, b"Sdec", sdec.as_bytes());
+        for ctab in ctabs {
+            push_chunk(&mut cseg, b"Ctab", ctab);
+        }
+        cseg
+    }
+
+    #[test]
+    fn casm_transpose_note_preserves_drums_on_dest_ch_8_and_9_across_chords() {
+        let chords = [
+            chord_spec(0, 0, 4, 7, 11, false, true),  // C Major
+            chord_spec(9, 8, 3, 7, 10, false, false), // A Minor
+            chord_spec(6, 8, 3, 7, 10, false, false), // F# Minor
+            chord_spec(7, 19, 4, 7, 10, false, true), // G7
+            chord_spec(2, 22, 4, 7, 10, true, true),  // D9
+        ];
+        for dest_ch in [8u8, 9u8] {
+            let drum_rule = CasmRule {
+                src_ch: 6,
+                dest_ch,
+                name: format!("Rhythm{}", if dest_ch == 8 { 1 } else { 2 }),
+                editable: 1,
+                note_mute: 0x0FFF,
+                chord_mute: 0x03_ffff_ffff,
+                src_root: 0,
+                src_chord_type: 0,
+                low_split: Some(24),
+                high_split: Some(95),
+                ranges: [
+                    CasmRangeRule {
+                        ntr: NtrRule::RootTrans,
+                        ntt: NttRule::Chord,
+                        bass_on: false,
+                        high_key: 6,
+                        note_low: 36,
+                        note_high: 84,
+                        rtr: RtrRule::PitchShift,
+                    },
+                    CasmRangeRule {
+                        ntr: NtrRule::RootTrans,
+                        ntt: NttRule::Chord,
+                        bass_on: false,
+                        high_key: 6,
+                        note_low: 36,
+                        note_high: 84,
+                        rtr: RtrRule::PitchShift,
+                    },
+                    CasmRangeRule {
+                        ntr: NtrRule::RootTrans,
+                        ntt: NttRule::Chord,
+                        bass_on: false,
+                        high_key: 6,
+                        note_low: 36,
+                        note_high: 84,
+                        rtr: RtrRule::PitchShift,
+                    },
+                ],
+            };
+            for note in [22u8, 36, 38, 42, 60, 99] {
+                for spec in chords {
+                    assert_eq!(drum_rule.transpose_note(note, spec, false, false), Some(note));
+                    assert_eq!(drum_rule.transpose_note(note, spec, true, false), Some(note));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn detects_audio_style_chunks_aasm_awav_and_emits_warning() {
+        let mut trk = Vec::new();
+        push_meta_marker(&mut trk, 0, "Main A");
+        push_cc(&mut trk, 0, 9, 0, 127);
+        push_pc(&mut trk, 0, 9, 0);
+        push_note(&mut trk, 0, 240, 9, 36, 100);
+        push_eot(&mut trk, 240);
+
+        let mut casm = Vec::new();
+        let cseg = build_cseg("Main A", &[build_ctab(9, "Rhythm2", 9)]);
+        push_chunk(&mut casm, b"CSEG", &cseg);
+
+        let mut aasm = Vec::new();
+        push_chunk(&mut aasm, b"AFil", b"audio_loop.wav");
+        push_chunk(&mut aasm, b"AWav", &[1, 2, 3, 4, 5, 6, 7, 8]);
+
+        let mut sty = Vec::new();
+        // MThd header: format 0, 1 track, 480 TPQN
+        push_chunk(&mut sty, b"MThd", &[0, 0, 0, 1, 0x01, 0xe0]);
+        push_chunk(&mut sty, b"MTrk", &trk);
+        push_chunk(&mut sty, b"AASM", &aasm);
+        push_chunk(&mut sty, b"CASM", &casm);
+
+        let doc = parse_sty_bytes(
+            &sty,
+            "AudioStyle.STY".to_string(),
+            "/tmp/AudioStyle.STY".to_string(),
+        )
+        .expect("parse synthetic audio STY");
+
+        assert!(doc.has_audio_style_chunks);
+        assert!(doc.audio_chunk_tags.contains(&"AASM".to_string()));
+        assert!(doc.audio_chunk_tags.contains(&"AFil".to_string()));
+        assert!(doc.audio_chunk_tags.contains(&"AWav".to_string()));
+        assert!(doc.diagnostics.has_audio_style_chunks);
+        assert!(
+            doc.diagnostics
+                .warnings
+                .iter()
+                .any(|w| w.contains("AASM") && w.contains("AWav")),
+            "Expected audio chunk warning, got {:?}",
+            doc.diagnostics.warnings
+        );
+        // Ensure skipping over top-level AASM did not lose the subsequent CASM chunk.
+        let var1 = doc.sections.iter().find(|s| s.name == "Variation 1").unwrap();
+        assert!(var1.tracks.iter().any(|t| t.casm_rule.is_some()));
+    }
+
+    #[test]
+    fn inherits_global_drum_role_and_real_voice_when_intro_c_omitted_from_sdec() {
+        // Case A: Intro C omitted from Sdec (only Main A in Sdec); src_ch=6 has dummy 0/113/0 in Intro C,
+        // while Main A defines src_ch=6 -> dest_ch=9 and expansion drum voice (62, 0, 6).
+        let mut trk = Vec::new();
+        push_meta_marker(&mut trk, 0, "SInt");
+        push_cc(&mut trk, 0, 6, 0, 0);
+        push_cc(&mut trk, 0, 6, 32, 113);
+        push_pc(&mut trk, 0, 6, 0);
+
+        push_meta_marker(&mut trk, 480, "Intro C");
+        // Emit a note-on at tick 480 whose note-off happens AFTER the Main A marker (tick 1440)
+        // to exercise loop-boundary duration clamping.
+        push_vlq(&mut trk, 0);
+        trk.extend_from_slice(&[0x96, 36, 110]);
+        push_meta_marker(&mut trk, 960, "Main A"); // tick 1440
+        push_vlq(&mut trk, 240);
+        trk.extend_from_slice(&[0x86, 36, 0]); // note-off at tick 1680 (past Intro C end)
+        push_cc(&mut trk, 0, 6, 0, 62);
+        push_cc(&mut trk, 0, 6, 32, 0);
+        push_pc(&mut trk, 0, 6, 6);
+        push_note(&mut trk, 0, 240, 6, 38, 100);
+        push_eot(&mut trk, 240);
+
+        let mut casm_main_only = Vec::new();
+        let cseg_main_a = build_cseg("Main A", &[build_ctab(6, "Rhythm2", 9)]);
+        push_chunk(&mut casm_main_only, b"CSEG", &cseg_main_a);
+
+        let mut sty_alias = Vec::new();
+        push_chunk(&mut sty_alias, b"MThd", &[0, 0, 0, 1, 0x01, 0xe0]);
+        push_chunk(&mut sty_alias, b"MTrk", &trk);
+        push_chunk(&mut sty_alias, b"CASM", &casm_main_only);
+
+        let doc_alias = parse_sty_bytes(
+            &sty_alias,
+            "SynthAlias.sty".to_string(),
+            "/tmp/SynthAlias.sty".to_string(),
+        )
+        .expect("parse alias synthetic STY");
+
+        let intro3 = doc_alias
+            .sections
+            .iter()
+            .find(|s| s.name == "Intro 3")
+            .expect("Intro 3");
+        let drum_tr = intro3
+            .tracks
+            .iter()
+            .find(|t| t.src_ch == 6)
+            .expect("src_ch=6 track in Intro 3");
+        assert_eq!(drum_tr.dest_ch, 9);
+        assert!(drum_tr.is_drum);
+        assert_eq!(drum_tr.voice.msb, 62);
+        let (bank, _prog, is_drum_gm) = resolve_yamaha_voice_to_gm(
+            drum_tr.dest_ch,
+            drum_tr.voice.msb,
+            drum_tr.voice.lsb,
+            drum_tr.voice.program,
+            &drum_tr.voice.name_hint,
+        );
+        assert_eq!(bank, 128);
+        assert!(is_drum_gm);
+        assert!(doc_alias.diagnostics.uses_expansion_kit);
+        for ev in &drum_tr.events {
+            assert!(ev.start_tick < intro3.length_ticks);
+            assert!(ev.start_tick + ev.duration_ticks <= intro3.length_ticks);
+        }
+
+        // Case B: Main C exists in Sdec WITHOUT src_ch=6 (only src_ch=11), forcing Intro C src_ch=6
+        // down the pure unmatched fallback branch -> must inherit dest_ch=9 + is_drum + msb=62!
+        let mut casm_partial_main_c = Vec::new();
+        push_chunk(&mut casm_partial_main_c, b"CSEG", &cseg_main_a);
+        let cseg_main_c = build_cseg("Main C", &[build_ctab(11, "Chord1", 11)]);
+        push_chunk(&mut casm_partial_main_c, b"CSEG", &cseg_main_c);
+
+        let mut sty_fallback = Vec::new();
+        push_chunk(&mut sty_fallback, b"MThd", &[0, 0, 0, 1, 0x01, 0xe0]);
+        push_chunk(&mut sty_fallback, b"MTrk", &trk);
+        push_chunk(&mut sty_fallback, b"CASM", &casm_partial_main_c);
+
+        let doc_fallback = parse_sty_bytes(
+            &sty_fallback,
+            "SynthFallback.sty".to_string(),
+            "/tmp/SynthFallback.sty".to_string(),
+        )
+        .expect("parse fallback synthetic STY");
+
+        let intro3_fb = doc_fallback
+            .sections
+            .iter()
+            .find(|s| s.name == "Intro 3")
+            .expect("Intro 3 fallback");
+        let drum_tr_fb = intro3_fb
+            .tracks
+            .iter()
+            .find(|t| t.src_ch == 6)
+            .expect("src_ch=6 fallback track in Intro 3");
+        assert_eq!(drum_tr_fb.dest_ch, 9);
+        assert!(drum_tr_fb.is_drum);
+        assert_eq!(drum_tr_fb.voice.msb, 62);
+        let (fb_bank, _, fb_drum) = resolve_yamaha_voice_to_gm(
+            drum_tr_fb.dest_ch,
+            drum_tr_fb.voice.msb,
+            drum_tr_fb.voice.lsb,
+            drum_tr_fb.voice.program,
+            &drum_tr_fb.voice.name_hint,
+        );
+        assert_eq!(fb_bank, 128);
+        assert!(fb_drum);
     }
 }

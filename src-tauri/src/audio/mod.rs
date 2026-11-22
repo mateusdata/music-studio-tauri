@@ -1396,6 +1396,10 @@ impl AudioEngineManager {
                 styles: Vec::new(),
                 ots_presets: Vec::new(),
                 source_paths: Vec::new(),
+                sty_warnings: Vec::new(),
+                has_audio_style_chunks: false,
+                uses_expansion_kit: false,
+                sty_diagnostics_summary: None,
             });
         let rebuilt = rebuild_package_with_soundfont(&base_pkg, path)?;
         Ok(self.commit_loaded_package(rebuilt))
@@ -1438,6 +1442,10 @@ impl AudioEngineManager {
                     styles: Vec::new(),
                     ots_presets: Vec::new(),
                     source_paths: Vec::new(),
+                    sty_warnings: Vec::new(),
+                    has_audio_style_chunks: false,
+                    uses_expansion_kit: false,
+                    sty_diagnostics_summary: None,
                 },
             };
             let mut inst = parsed.clone();
@@ -1560,14 +1568,22 @@ impl AudioEngineManager {
 
     pub fn set_arranger_style(&self, style_index: usize) -> MusicPackageSummary {
         {
-            let (pkg_bpm, pkg_ots) = self
+            let style_info = self
                 .shared
                 .active_music_package
                 .read()
                 .as_ref()
                 .and_then(|pkg| pkg.styles.get(style_index))
-                .map(|st| (Some(st.bpm), (!st.ots_presets.is_empty()).then(|| st.ots_presets.clone())))
-                .unwrap_or((None, None));
+                .map(|st| {
+                    (
+                        st.bpm,
+                        (!st.ots_presets.is_empty()).then(|| st.ots_presets.clone()),
+                        st.sty_warnings.clone(),
+                        st.has_audio_style_chunks,
+                        st.uses_expansion_kit,
+                        st.sty_diagnostics_summary.clone(),
+                    )
+                });
             let mut s = self.shared.arranger_summary.write();
             let next_sec = s.styles.get(style_index).and_then(|st| {
                 st.sections
@@ -1578,16 +1594,22 @@ impl AudioEngineManager {
             });
             if style_index < s.styles.len() {
                 s.active_style_index = style_index;
-                if !s.tempo_locked {
-                    if let Some(b) = pkg_bpm {
+                if let Some((b, ots_opt, warnings, audio_chunks, exp_kit, diag_summary)) =
+                    style_info
+                {
+                    if !s.tempo_locked {
                         s.bpm = b;
                     }
+                    if let Some(ots) = ots_opt {
+                        s.ots_presets = ots;
+                    }
+                    s.sty_warnings = warnings;
+                    s.has_audio_style_chunks = audio_chunks;
+                    s.uses_expansion_kit = exp_kit;
+                    s.sty_diagnostics_summary = diag_summary;
                 }
                 if let Some(first_sec) = next_sec {
                     s.active_section = first_sec;
-                }
-                if let Some(ots) = pkg_ots {
-                    s.ots_presets = ots;
                 }
                 s.pending_section = None;
             }
