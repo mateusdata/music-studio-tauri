@@ -10,8 +10,9 @@ use crate::midi::{
     MidiConnectionHandle, MidiEngineEvent,
 };
 use crate::music_studio::{
-    list_music_packages_in_dir, parse_music_file, LoadedMusicPackage, MusicPackageEntry,
+    list_all_music_packages, parse_music_file, LoadedMusicPackage, MusicPackageEntry,
     MusicPackageSummary, MusicStudioArrangerEngine, DEFAULT_MUSIC_STUDIO_DIR,
+    USER_DOCUMENTS_RHYTHMS_DIR,
 };
 use crate::presets::{build_factory_presets, load_user_presets, morph_engine_params, save_user_preset};
 use crate::synthesis::{PianoSynthEngine, MAX_POLYPHONY};
@@ -46,6 +47,10 @@ pub enum AudioCommand {
         instrument_index: Option<usize>,
         split_key: Option<u8>,
         split_enabled: Option<bool>,
+        chord_scan_lower: Option<bool>,
+        chord_scan_upper: Option<bool>,
+        upper_octave: Option<i8>,
+        transpose: Option<i8>,
     },
     SetArrangerChord { root_pc: u8, quality: String },
     SetArrangerTrackVolume { track_slot: usize, volume: f32 },
@@ -355,8 +360,21 @@ fn process_audio_command(
             instrument_index,
             split_key,
             split_enabled,
+            chord_scan_lower,
+            chord_scan_upper,
+            upper_octave,
+            transpose,
         } => {
-            arranger.set_keyboard_voice(&slot, instrument_index, split_key, split_enabled);
+            arranger.set_keyboard_voice(
+                &slot,
+                instrument_index,
+                split_key,
+                split_enabled,
+                chord_scan_lower,
+                chord_scan_upper,
+                upper_octave,
+                transpose,
+            );
             summary_dirty = true;
         }
         AudioCommand::SetArrangerChord { root_pc, quality } => {
@@ -386,12 +404,16 @@ impl AudioEngineManager {
         let initial_params = presets[0].params.clone();
 
         let (initial_pkg, initial_summary) = if !cfg!(test) {
-            let dir = std::path::Path::new(DEFAULT_MUSIC_STUDIO_DIR);
-            let preferred = dir.join("Josiran_Pisadinha_GR.Music");
-            let target_path = if preferred.exists() {
-                Some(preferred)
+            let doc_pref = std::path::Path::new(USER_DOCUMENTS_RHYTHMS_DIR)
+                .join("Josiran_Pisadinha_GR.Music");
+            let wine_pref =
+                std::path::Path::new(DEFAULT_MUSIC_STUDIO_DIR).join("Josiran_Pisadinha_GR.Music");
+            let target_path = if doc_pref.exists() {
+                Some(doc_pref)
+            } else if wine_pref.exists() {
+                Some(wine_pref)
             } else {
-                list_music_packages_in_dir(dir)
+                list_all_music_packages()
                     .into_iter()
                     .next()
                     .map(|e| PathBuf::from(e.file_path))
@@ -664,8 +686,8 @@ impl AudioEngineManager {
                         arranger.process_block(slice_l, slice_r);
                     } else {
                         synth.process_block(slice_l, slice_r, &params, &pedals);
+                        fx.process_block(slice_l, slice_r, &params);
                     }
-                    fx.process_block(slice_l, slice_r, &params);
 
                     let mut peak_l = 0.0_f32;
                     let mut peak_r = 0.0_f32;
@@ -760,8 +782,8 @@ impl AudioEngineManager {
             arranger.process_block(slice_l, slice_r);
         } else {
             synth.process_block(slice_l, slice_r, params, pedals);
+            fx.process_block(slice_l, slice_r, params);
         }
-        fx.process_block(slice_l, slice_r, params);
 
         let mut peak_l = 0.0_f32;
         let mut peak_r = 0.0_f32;
@@ -1084,7 +1106,7 @@ impl AudioEngineManager {
     }
 
     pub fn list_music_packages(&self) -> Vec<MusicPackageEntry> {
-        list_music_packages_in_dir(std::path::Path::new(DEFAULT_MUSIC_STUDIO_DIR))
+        list_all_music_packages()
     }
 
     pub fn arranger_state(&self) -> MusicPackageSummary {
@@ -1173,12 +1195,17 @@ impl AudioEngineManager {
         self.arranger_state()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn set_arranger_voice(
         &self,
         slot: &str,
         instrument_index: Option<usize>,
         split_key: Option<u8>,
         split_enabled: Option<bool>,
+        chord_scan_lower: Option<bool>,
+        chord_scan_upper: Option<bool>,
+        upper_octave: Option<i8>,
+        transpose: Option<i8>,
     ) -> MusicPackageSummary {
         {
             let mut s = self.shared.arranger_summary.write();
@@ -1187,6 +1214,18 @@ impl AudioEngineManager {
             }
             if let Some(se) = split_enabled {
                 s.split_enabled = se;
+            }
+            if let Some(csl) = chord_scan_lower {
+                s.chord_scan_lower = csl;
+            }
+            if let Some(csu) = chord_scan_upper {
+                s.chord_scan_upper = csu;
+            }
+            if let Some(uo) = upper_octave {
+                s.upper_octave = uo.clamp(-2, 2);
+            }
+            if let Some(tr) = transpose {
+                s.transpose = tr.clamp(-12, 12);
             }
             let max_idx = s.instruments.len();
             let valid = instrument_index.filter(|&i| i < max_idx);
@@ -1206,6 +1245,10 @@ impl AudioEngineManager {
             instrument_index,
             split_key,
             split_enabled,
+            chord_scan_lower,
+            chord_scan_upper,
+            upper_octave,
+            transpose,
         });
         self.arranger_state()
     }
@@ -1249,7 +1292,16 @@ impl AudioEngineManager {
             let s = self.shared.arranger_summary.read().clone();
             arranger.set_style(s.active_style_index);
             arranger.set_section(&s.active_section, true);
-            arranger.set_keyboard_voice("upper1", Some(s.upper1_instrument), Some(s.split_key), Some(s.split_enabled));
+            arranger.set_keyboard_voice(
+                "upper1",
+                Some(s.upper1_instrument),
+                Some(s.split_key),
+                Some(s.split_enabled),
+                Some(s.chord_scan_lower),
+                Some(s.chord_scan_upper),
+                Some(s.upper_octave),
+                Some(s.transpose),
+            );
             arranger.set_transport(true, Some(s.sync_start), Some(s.bpm));
         }
         let mut fx = EffectsChain::new(sr as f32);
@@ -1290,8 +1342,8 @@ impl AudioEngineManager {
                 arranger.process_block(&mut buf_l[..frames], &mut buf_r[..frames]);
             } else {
                 synth.process_block(&mut buf_l[..frames], &mut buf_r[..frames], &params, &pedals);
+                fx.process_block(&mut buf_l[..frames], &mut buf_r[..frames], &params);
             }
-            fx.process_block(&mut buf_l[..frames], &mut buf_r[..frames], &params);
             for i in 0..frames {
                 writer.write_sample(buf_l[i]).map_err(|e| e.to_string())?;
                 writer.write_sample(buf_r[i]).map_err(|e| e.to_string())?;

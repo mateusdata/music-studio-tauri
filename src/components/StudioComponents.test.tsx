@@ -458,8 +458,12 @@ describe("Studio UI components", () => {
       upper1_instrument: 7,
       upper2_instrument: null,
       lower_instrument: 1,
-      split_key: 59,
+      split_key: 53,
       split_enabled: true,
+      chord_scan_lower: true,
+      chord_scan_upper: false,
+      upper_octave: 0,
+      transpose: 0,
       bpm: 120,
       rhythm_playing: false,
       sync_start: true,
@@ -518,8 +522,12 @@ describe("Studio UI components", () => {
       upper1_instrument: 1,
       upper2_instrument: null,
       lower_instrument: 1,
-      split_key: 59,
+      split_key: 53,
       split_enabled: true,
+      chord_scan_lower: true,
+      chord_scan_upper: false,
+      upper_octave: 0,
+      transpose: 0,
       bpm: 120,
       rhythm_playing: false,
       sync_start: true,
@@ -547,7 +555,7 @@ describe("Studio UI components", () => {
     fireEvent.click(within(voicePopover).getByRole("option", { name: /Strings \(Stereo\)/i }));
 
     await waitFor(() => {
-      expect(voiceSpy).toHaveBeenCalledWith("upper1", 1, null, null);
+      expect(voiceSpy).toHaveBeenCalledWith("upper1", 1, null, null, null, null, null, null);
     });
   });
 
@@ -712,7 +720,7 @@ describe("Studio UI components", () => {
     await waitFor(() => expect(learnSpy).toHaveBeenLastCalledWith(null));
   });
 
-  it("controls custom .Music import bar, split point, reverb environment, and 8-track mixer sliders in App", async () => {
+  it("controls custom .Music import bar, split divider controls, and 8-track mixer sliders in App", async () => {
     vi.spyOn(engineClient, "isTauri").mockReturnValue(true);
     vi.spyOn(engineClient, "listMusicPackages").mockResolvedValue([]);
     vi.spyOn(engineClient, "getArrangerState").mockResolvedValue({
@@ -732,9 +740,13 @@ describe("Studio UI components", () => {
       upper1_instrument: 1,
       upper2_instrument: null,
       lower_instrument: null,
-      split_key: 59,
+      split_key: 53,
       split_enabled: true,
-      bpm: 120,
+      chord_scan_lower: true,
+      chord_scan_upper: false,
+      upper_octave: 0,
+      transpose: 0,
+      bpm: 85,
       rhythm_playing: false,
       sync_start: true,
       auto_fill: true,
@@ -789,8 +801,12 @@ describe("Studio UI components", () => {
       upper1_instrument: 0,
       upper2_instrument: null,
       lower_instrument: null,
-      split_key: 59,
+      split_key: 53,
       split_enabled: true,
+      chord_scan_lower: true,
+      chord_scan_upper: false,
+      upper_octave: 0,
+      transpose: 0,
       bpm: 120,
       rhythm_playing: false,
       sync_start: true,
@@ -814,8 +830,12 @@ describe("Studio UI components", () => {
       upper1_instrument: 0,
       upper2_instrument: null,
       lower_instrument: null,
-      split_key: 59,
+      split_key: 53,
       split_enabled: true,
+      chord_scan_lower: true,
+      chord_scan_upper: false,
+      upper_octave: 0,
+      transpose: 0,
       bpm: 120,
       rhythm_playing: false,
       sync_start: true,
@@ -826,7 +846,35 @@ describe("Studio UI components", () => {
       track_volumes: [0.6, 1, 1, 1, 1, 1, 1, 1],
       beat_position: 0,
     });
-    const updateParamsSpy = vi.spyOn(engineClient, "updateParams").mockResolvedValue();
+    const voiceSpy = vi.spyOn(engineClient, "setArrangerKeyboardVoice").mockResolvedValue({
+      loaded: true,
+      file_name: "Custom.Music",
+      file_path: "/tmp/Custom.Music",
+      version: "1.4.4",
+      instruments: [],
+      styles: [],
+      active_style_index: 0,
+      active_section: "Variation 1",
+      pending_section: null,
+      upper1_instrument: 0,
+      upper2_instrument: null,
+      lower_instrument: null,
+      split_key: 53,
+      split_enabled: true,
+      chord_scan_lower: false,
+      chord_scan_upper: false,
+      upper_octave: 0,
+      transpose: 0,
+      bpm: 120,
+      rhythm_playing: false,
+      sync_start: true,
+      auto_fill: true,
+      detected_chord_root: 0,
+      detected_chord_quality: "Major",
+      detected_chord: "C",
+      track_volumes: [0.6, 1, 1, 1, 1, 1, 1, 1],
+      beat_position: 0,
+    });
 
     render(<App />);
 
@@ -836,7 +884,7 @@ describe("Studio UI components", () => {
       expect(volSpy).toHaveBeenCalledWith(0, 0.6);
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /Importar \.Music/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Caminho manual .Music" }));
     fireEvent.change(screen.getByLabelText("Custom .Music File Path"), {
       target: { value: "/tmp/Custom.Music" },
     });
@@ -845,13 +893,10 @@ describe("Studio UI components", () => {
       expect(loadSpy).toHaveBeenCalledWith("/tmp/Custom.Music");
     });
 
-    const reverbSelect = screen.getByLabelText("Reverb Environment") as HTMLSelectElement;
-    fireEvent.change(reverbSelect, { target: { value: "Taj Mahal" } });
-    expect(updateParamsSpy).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        reverb: expect.objectContaining({ preset_name: "Taj Mahal" }),
-      }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "CHORD LOWER" }));
+    await waitFor(() => {
+      expect(voiceSpy).toHaveBeenCalledWith("split", null, null, null, false, null, null, null);
+    });
   });
 
   it("opens All Packs & Presets 3-column mega-menu, filters packs, selects instrument/preset, and closes", async () => {

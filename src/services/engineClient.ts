@@ -114,6 +114,10 @@ export const engineClient = {
     return invoke<MusicPackageSummary>("load_music_package", { path });
   },
 
+  async pickMusicPackageDialog(): Promise<MusicPackageSummary | null> {
+    return invoke<MusicPackageSummary | null>("pick_music_package_dialog");
+  },
+
   async getArrangerState(): Promise<MusicPackageSummary> {
     return invoke<MusicPackageSummary>("get_arranger_state");
   },
@@ -145,12 +149,20 @@ export const engineClient = {
     instrumentIndex: number | null,
     splitKey: number | null,
     splitEnabled: boolean | null,
+    chordScanLower: boolean | null = null,
+    chordScanUpper: boolean | null = null,
+    upperOctave: number | null = null,
+    transpose: number | null = null,
   ): Promise<MusicPackageSummary> {
     return invoke<MusicPackageSummary>("set_arranger_keyboard_voice", {
       slot,
       instrumentIndex,
       splitKey,
       splitEnabled,
+      chordScanLower,
+      chordScanUpper,
+      upperOctave,
+      transpose,
     });
   },
 

@@ -52,7 +52,7 @@ function noteLabel(midi: number): string {
 export const VirtualKeyboard: React.FC<VirtualKeyboardProps> = ({
   activeNotes,
   extendedRange,
-  splitKey = 59,
+  splitKey = 53,
   splitEnabled = false,
   onNoteOn,
   onNoteOff,
@@ -64,10 +64,11 @@ export const VirtualKeyboard: React.FC<VirtualKeyboardProps> = ({
     return merged;
   }, [activeNotes, pressedLocal]);
 
-  const minNote = extendedRange ? 12 : 21;
-  const maxNote = extendedRange ? 116 : 108;
+  // 61-key arranger keyboard (C2=36..C7=96, matching Music Studio octaves 3..8), or 105 extended
+  const minNote = extendedRange ? 12 : 36;
+  const maxNote = extendedRange ? 116 : 96;
 
-  const { whiteKeys, blackKeys } = useMemo(() => {
+  const { whiteKeys, blackKeys, splitDividerLeftPct, firstUpperWhite } = useMemo(() => {
     const whites: number[] = [];
     const blacks: { midi: number; leftPct: number }[] = [];
     for (let m = minNote; m <= maxNote; m++) {
@@ -85,8 +86,17 @@ export const VirtualKeyboard: React.FC<VirtualKeyboardProps> = ({
         blacks.push({ midi: m, leftPct });
       }
     }
-    return { whiteKeys: whites, blackKeys: blacks };
-  }, [minNote, maxNote]);
+    const upperWhitesStart = whites.findIndex((m) => m > splitKey);
+    const dividerWhites = upperWhitesStart >= 0 ? upperWhitesStart : whites.length;
+    const splitPct = (dividerWhites / totalWhites) * 100;
+    const upperWhiteMidi = upperWhitesStart >= 0 ? whites[upperWhitesStart] : -1;
+    return {
+      whiteKeys: whites,
+      blackKeys: blacks,
+      splitDividerLeftPct: splitPct,
+      firstUpperWhite: upperWhiteMidi,
+    };
+  }, [minNote, maxNote, splitKey]);
 
   const triggerDown = useCallback(
     (midi: number, velocity: number) => {
@@ -155,9 +165,11 @@ export const VirtualKeyboard: React.FC<VirtualKeyboardProps> = ({
       <div className="piano-keys-track" style={{ minWidth: "960px" }}>
         {whiteKeys.map((midi) => {
           const isC = midi % 12 === 0;
+          const letter = NOTE_NAMES[midi % 12];
+          const displayOctave = Math.floor(midi / 12); // Music Studio numbers C2 as 3..C7 as 8
           const isActive = activeSet.has(midi);
           const isLeftSplit = splitEnabled && midi <= splitKey;
-          const isSplitEdge = splitEnabled && midi === splitKey + 1;
+          const isSplitEdge = splitEnabled && midi === firstUpperWhite;
           return (
             <div
               key={midi}
@@ -175,19 +187,32 @@ export const VirtualKeyboard: React.FC<VirtualKeyboardProps> = ({
                 if (pressedLocal.has(midi)) triggerUp(midi);
               }}
             >
-              {isC ? noteLabel(midi) : ""}
+              {isC && <span className={`key-oct-num key-oct-${displayOctave}`}>{displayOctave}</span>}
+              <span className="key-note-letter">{letter}</span>
             </div>
           );
         })}
 
+        {splitEnabled && (
+          <div
+            data-testid="split-divider-line"
+            className="split-divider-line"
+            style={{ left: `${splitDividerLeftPct}%` }}
+            title={`Split Divider (${noteLabel(splitKey)})`}
+          />
+        )}
+
         {blackKeys.map(({ midi, leftPct }) => {
           const isActive = activeSet.has(midi);
+          const isLeftSplit = splitEnabled && midi <= splitKey;
           return (
             <div
               key={midi}
               role="button"
               aria-label={`Key ${noteLabel(midi)}`}
-              className={`black-key ${isActive ? "active" : ""}`}
+              className={`black-key ${isActive ? "active" : ""} ${
+                isLeftSplit ? "split-chord-zone" : ""
+              }`}
               style={{ left: `${leftPct}%` }}
               onMouseDown={(e) => {
                 e.stopPropagation();

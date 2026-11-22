@@ -171,9 +171,13 @@ function buildMockArrangerState(overrides?: Partial<MusicPackageSummary>): Music
     pending_section: null,
     upper1_instrument: 7,
     upper2_instrument: null,
-    lower_instrument: 1,
-    split_key: 59,
+    lower_instrument: null,
+    split_key: 53,
     split_enabled: true,
+    chord_scan_lower: true,
+    chord_scan_upper: false,
+    upper_octave: 0,
+    transpose: 0,
     bpm: 120,
     rhythm_playing: false,
     sync_start: true,
@@ -211,15 +215,16 @@ describe("Music Studio Tauri Arranger App UI", () => {
     expect(screen.getByTestId("chord-display")).toHaveTextContent("Am");
   });
 
-  it("renders 88 virtual keyboard keys with split chord highlighting", () => {
+  it("renders 61 virtual keyboard keys with split chord highlighting and red split divider", () => {
     render(<App />);
 
     const keyboard = screen.getByTestId("virtual-keyboard");
     const keyButtons = within(keyboard).getAllByRole("button");
-    expect(keyButtons).toHaveLength(88);
+    expect(keyButtons).toHaveLength(61);
 
-    expect(within(keyboard).getByRole("button", { name: "Key C3" })).toHaveClass("split-chord-zone");
-    expect(within(keyboard).getByRole("button", { name: "Key C4" })).toHaveClass("split-point-edge");
+    expect(within(keyboard).getByRole("button", { name: "Key F3" })).toHaveClass("split-chord-zone");
+    expect(within(keyboard).getByRole("button", { name: "Key G3" })).toHaveClass("split-point-edge");
+    expect(within(keyboard).getByTestId("split-divider-line")).toBeInTheDocument();
   });
 
   it("supports searchable filtering on Music Package Selector dropdown", () => {
@@ -325,6 +330,12 @@ describe("Music Studio Tauri Arranger App UI", () => {
     const loadSpy = vi
       .spyOn(engineClient, "loadMusicPackage")
       .mockResolvedValue(buildMockArrangerState({ file_name: "Arrasta_Pe_Forro_GR.Music", file_path: "/music/Arrasta_Pe_Forro_GR.Music" }));
+    const pickSpy = vi
+      .spyOn(engineClient, "pickMusicPackageDialog")
+      .mockResolvedValue(buildMockArrangerState({ file_name: "Picked.Music", file_path: "/home/data/Documents/Ritmos_Forro_Music_Studio/Picked.Music" }));
+    const voiceSpy = vi
+      .spyOn(engineClient, "setArrangerKeyboardVoice")
+      .mockResolvedValue(buildMockArrangerState({ chord_scan_upper: true, split_enabled: false }));
     const setPedalSpy = vi.spyOn(engineClient, "setPedal").mockResolvedValue();
 
     render(<App />);
@@ -346,9 +357,19 @@ describe("Music Studio Tauri Arranger App UI", () => {
       expect(sectionSpy).toHaveBeenCalledWith("Variation 2", false);
     });
 
+    fireEvent.click(screen.getByRole("button", { name: "SCAN UP" }));
+    await waitFor(() => {
+      expect(voiceSpy).toHaveBeenCalledWith("split", null, null, null, null, true, null, null);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Importar \.Music/i }));
+    await waitFor(() => {
+      expect(pickSpy).toHaveBeenCalledTimes(1);
+    });
+
     fireEvent.click(screen.getByLabelText("Music Package Selector Trigger"));
     fireEvent.change(screen.getByLabelText("Music Package Selector Search"), {
-      target: { value: "Forro" },
+      target: { value: "Arrasta" },
     });
     const pkgPopover = screen.getByTestId("music-package-selector-popover");
     fireEvent.click(within(pkgPopover).getByRole("option", { name: /Arrasta_Pe_Forro_GR\.Music/i }));

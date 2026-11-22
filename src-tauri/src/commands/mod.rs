@@ -4,7 +4,9 @@ use crate::contracts::{
     MidiTransportState, PresetData,
 };
 use crate::midi::list_midi_input_ports;
-use crate::music_studio::{MusicPackageEntry, MusicPackageSummary};
+use crate::music_studio::{
+    MusicPackageEntry, MusicPackageSummary, USER_DOCUMENTS_RHYTHMS_DIR,
+};
 use std::path::PathBuf;
 use tauri::State;
 
@@ -164,6 +166,36 @@ pub fn load_music_package(
 }
 
 #[tauri::command]
+pub fn pick_music_package_dialog(
+    engine: State<AudioEngineManager>,
+) -> Result<Option<MusicPackageSummary>, String> {
+    let default_dir = if std::path::Path::new(USER_DOCUMENTS_RHYTHMS_DIR).exists() {
+        format!("{}/", USER_DOCUMENTS_RHYTHMS_DIR)
+    } else {
+        "/home/data/Documents/".to_string()
+    };
+
+    let output = std::process::Command::new("/usr/bin/zenity")
+        .arg("--file-selection")
+        .arg("--title=Selecionar Ritmo / Pacote .Music")
+        .arg(format!("--filename={}", default_dir))
+        .arg("--file-filter=Music Studio (*.Music *.Template) | *.Music *.music *.Template *.template")
+        .arg("--file-filter=Todos os arquivos | *")
+        .output()
+        .map_err(|e| format!("Falha ao abrir explorador de arquivos (zenity): {}", e))?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let chosen = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if chosen.is_empty() {
+        return Ok(None);
+    }
+    let summary = engine.load_music_package(&PathBuf::from(chosen))?;
+    Ok(Some(summary))
+}
+
+#[tauri::command]
 pub fn get_arranger_state(engine: State<AudioEngineManager>) -> MusicPackageSummary {
     engine.arranger_state()
 }
@@ -196,6 +228,7 @@ pub fn set_arranger_style(
     engine.set_arranger_style(style_index)
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub fn set_arranger_keyboard_voice(
     engine: State<AudioEngineManager>,
@@ -203,8 +236,21 @@ pub fn set_arranger_keyboard_voice(
     instrument_index: Option<usize>,
     split_key: Option<u8>,
     split_enabled: Option<bool>,
+    chord_scan_lower: Option<bool>,
+    chord_scan_upper: Option<bool>,
+    upper_octave: Option<i8>,
+    transpose: Option<i8>,
 ) -> MusicPackageSummary {
-    engine.set_arranger_voice(&slot, instrument_index, split_key, split_enabled)
+    engine.set_arranger_voice(
+        &slot,
+        instrument_index,
+        split_key,
+        split_enabled,
+        chord_scan_lower,
+        chord_scan_upper,
+        upper_octave,
+        transpose,
+    )
 }
 
 #[tauri::command]

@@ -36,3 +36,4 @@ npm test
 1. Leia `README.md`, `docs/HANDOFF.md`, `docs/CURRENT_STATE.md` e `docs/NEXT_TASK.md`.
 2. Consulte `docs/features.json` e `docs/FUNCTIONALITY_MATRIX.md`.
 3. Execute `git status` e os testes existentes antes de iniciar novas implementações.
+# music-studio-tauri

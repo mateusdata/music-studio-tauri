@@ -51,6 +51,7 @@ pub fn run() {
             commands::arm_midi_cc_learn,
             commands::list_music_packages,
             commands::load_music_package,
+            commands::pick_music_package_dialog,
             commands::get_arranger_state,
             commands::set_arranger_section,
             commands::set_arranger_transport,

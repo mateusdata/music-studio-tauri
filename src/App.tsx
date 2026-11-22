@@ -9,7 +9,6 @@ import {
   Sliders,
   Square,
   Volume2,
-  Zap,
 } from "lucide-react";
 import { engineClient } from "./services/engineClient";
 import { SearchableSelect } from "./components/SearchableSelect";
@@ -51,28 +50,13 @@ const QUICK_CHORDS: { label: string; root: number; quality: string }[] = [
 const TRACK_LABELS = ["Drum", "Perc", "Bass", "Acc 1", "Acc 2", "Acc 3", "Acc 4", "Acc 5"];
 
 const SPLIT_POINTS: { value: string; label: string }[] = [
-  { value: "48", label: "C3 (MIDI 48)" },
-  { value: "53", label: "F3 (MIDI 53)" },
-  { value: "55", label: "G3 (MIDI 55)" },
-  { value: "59", label: "B3 (MIDI 59)" },
-  { value: "60", label: "C4 (MIDI 60)" },
-  { value: "64", label: "E4 (MIDI 64)" },
-];
-
-const REVERB_ENVIRONMENTS = [
-  "Clean studio",
-  "Jazz studio",
-  "Dry room",
-  "Small Hall",
-  "Medium Hall",
-  "Large Hall",
-  "Concert Hall",
-  "Church",
-  "Cathedral",
-  "Taj Mahal",
-  "Long Plate",
-  "Super Spring",
-  "Legacy reverb",
+  { value: "41", label: "1º Fá (F2 • MIDI 41)" },
+  { value: "48", label: "Dó 3 (C3 • MIDI 48)" },
+  { value: "53", label: "2º Fá (F3 • Padrão)" },
+  { value: "55", label: "Sol 3 (G3 • MIDI 55)" },
+  { value: "59", label: "Si 3 (B3 • MIDI 59)" },
+  { value: "60", label: "Dó 4 (C4 • MIDI 60)" },
+  { value: "65", label: "Fá 4 (F4 • MIDI 65)" },
 ];
 
 function createPreviewArrangerState(): MusicPackageSummary {
@@ -117,10 +101,14 @@ function createPreviewArrangerState(): MusicPackageSummary {
     pending_section: null,
     upper1_instrument: 7,
     upper2_instrument: null,
-    lower_instrument: 1,
-    split_key: 59,
+    lower_instrument: null,
+    split_key: 53,
     split_enabled: true,
-    bpm: 120,
+    chord_scan_lower: true,
+    chord_scan_upper: false,
+    upper_octave: 0,
+    transpose: 0,
+    bpm: 85,
     rhythm_playing: false,
     sync_start: true,
     auto_fill: true,
@@ -174,8 +162,12 @@ export function App() {
           upper1_instrument: 0,
           upper2_instrument: null,
           lower_instrument: null,
-          split_key: 59,
+          split_key: 53,
           split_enabled: true,
+          chord_scan_lower: true,
+          chord_scan_upper: false,
+          upper_octave: 0,
+          transpose: 0,
           bpm: 120,
           rhythm_playing: false,
           sync_start: true,
@@ -286,6 +278,39 @@ export function App() {
     }
   }, []);
 
+  const handlePickFileDialog = async () => {
+    if (!engineClient.isTauri()) {
+      setShowCustomImport((v) => !v);
+      return;
+    }
+    setStatusMsg("Abrindo explorador de arquivos...");
+    try {
+      const nextState = await engineClient.pickMusicPackageDialog();
+      if (!nextState) {
+        setStatusMsg("Importação cancelada.");
+        return;
+      }
+      setArranger(nextState);
+      setPackages((prev) => {
+        if (prev.some((p) => p.file_path === nextState.file_path)) return prev;
+        return [
+          {
+            file_name: nextState.file_name,
+            file_path: nextState.file_path,
+            size_mb: 0,
+            version: nextState.version,
+          },
+          ...prev,
+        ];
+      });
+      setStatusMsg(
+        `Carregado ${nextState.file_name}: ${nextState.instruments.length} timbres e ${nextState.styles.length} estilo(s)`,
+      );
+    } catch (err) {
+      setStatusMsg(`Falha ao abrir arquivo .Music: ${String(err)}`);
+    }
+  };
+
   const handleCustomImportSubmit = async () => {
     const trimmed = customPathInput.trim();
     if (!trimmed) return;
@@ -364,6 +389,10 @@ export function App() {
       instIdx: number | null,
       splitKey: number | null = null,
       splitEnabled: boolean | null = null,
+      chordScanLower: boolean | null = null,
+      chordScanUpper: boolean | null = null,
+      upperOctave: number | null = null,
+      transpose: number | null = null,
     ) => {
       if (!engineClient.isTauri()) {
         setArranger((prev) => ({
@@ -373,6 +402,10 @@ export function App() {
           lower_instrument: slot === "lower" ? instIdx : prev.lower_instrument,
           split_key: splitKey ?? prev.split_key,
           split_enabled: splitEnabled ?? prev.split_enabled,
+          chord_scan_lower: chordScanLower ?? prev.chord_scan_lower,
+          chord_scan_upper: chordScanUpper ?? prev.chord_scan_upper,
+          upper_octave: upperOctave ?? prev.upper_octave,
+          transpose: transpose ?? prev.transpose,
         }));
         return;
       }
@@ -381,6 +414,10 @@ export function App() {
         instIdx,
         splitKey,
         splitEnabled,
+        chordScanLower,
+        chordScanUpper,
+        upperOctave,
+        transpose,
       );
       setArranger(nextState);
     },
@@ -469,7 +506,7 @@ export function App() {
   }, [arranger.instruments]);
 
   const optionalVoiceOptions = useMemo(
-    () => [{ value: "", label: "-- Desligado --" }, ...playableInstrumentOptions],
+    () => [{ value: "", label: "-- Só Acorde / Mudo --" }, ...playableInstrumentOptions],
     [playableInstrumentOptions],
   );
 
@@ -518,11 +555,21 @@ export function App() {
 
           <button
             type="button"
-            className="btn"
-            onClick={() => setShowCustomImport((v) => !v)}
-            title="Importar arquivo .Music por caminho"
+            className="btn btn-primary"
+            onClick={handlePickFileDialog}
+            title="Abrir pasta do Linux para importar .Music"
           >
             <FolderOpen size={13} /> Importar .Music
+          </button>
+
+          <button
+            type="button"
+            className="btn btn-compact"
+            aria-label="Caminho manual .Music"
+            onClick={() => setShowCustomImport((v) => !v)}
+            title="Digitar caminho manualmente"
+          >
+            Caminho
           </button>
 
           <select
@@ -581,8 +628,48 @@ export function App() {
       )}
 
       <main className="arranger-workspace">
-        {/* ROW 1: Central Arranger Display + Keyboard Voice Slots */}
-        <div className="arranger-top-grid">
+        {/* ROW 1: 3-Column Hardware Arranger Console (Mixer | LCD & Chords | Voices & Split/Scan) */}
+        <div className="arranger-console-grid">
+          <section className="panel-card arranger-mixer-card">
+            <div className="panel-title">
+              <span>Mixer de Trilhas & Master</span>
+              <Sliders size={14} />
+            </div>
+
+            {params && (
+              <ParameterSlider
+                label="Master Volume"
+                value={params.volume_db}
+                min={-36}
+                max={6}
+                step={0.5}
+                unit="dB"
+                onChange={(v) => updateParams((d) => { d.volume_db = v; })}
+              />
+            )}
+
+            <div className="track-faders-grid">
+              {TRACK_LABELS.map((label, slot) => (
+                <label key={label} className="track-fader-col">
+                  <span className="track-fader-val">
+                    {Math.round((arranger.track_volumes[slot] ?? 1) * 100)}%
+                  </span>
+                  <input
+                    type="range"
+                    aria-label={`${label} Volume`}
+                    className="studio-range"
+                    min={0}
+                    max={1.25}
+                    step={0.02}
+                    value={arranger.track_volumes[slot] ?? 1}
+                    onChange={(e) => handleTrackVolume(slot, Number(e.target.value))}
+                  />
+                  <span className="track-fader-name">{label}</span>
+                </label>
+              ))}
+            </div>
+          </section>
+
           <section className="panel-card arranger-lcd-card">
             <div className="panel-title">
               <span>Visor do Arranjador (.Music)</span>
@@ -652,7 +739,7 @@ export function App() {
             </div>
 
             <div className="chord-pads-section">
-              <div className="chord-pads-label">Trocar Acorde / Tom Rápido (ou toque na esquerda):</div>
+              <div className="chord-pads-label">Acorde Rápido (ou toque na esquerda / Chord Scan):</div>
               <div className="chord-pads-grid" role="group" aria-label="Quick Chords">
                 {QUICK_CHORDS.map((c) => (
                   <button
@@ -672,7 +759,7 @@ export function App() {
 
           <section className="panel-card arranger-voices-card">
             <div className="panel-title">
-              <span>Timbres do Teclado (.Music)</span>
+              <span>Timbres, Split Divider & Chord Scan</span>
               <Music2 size={14} />
             </div>
 
@@ -702,31 +789,71 @@ export function App() {
               </div>
 
               <div className="voice-slot-box">
-                <span className="voice-tag voice-tag-low">LOWER (Mão Esquerda)</span>
+                <span className="voice-tag voice-tag-low">LOWER (Esq.)</span>
                 <SearchableSelect
                   ariaLabel="Lower Instrument"
                   value={arranger.lower_instrument !== null ? String(arranger.lower_instrument) : ""}
                   onChange={(val) =>
                     handleVoiceChange("lower", val === "" ? null : Number(val))
                   }
-                  searchPlaceholder="Buscar timbre Lower..."
+                  searchPlaceholder="Mudo = Só Acorde"
                   options={optionalVoiceOptions}
                 />
               </div>
             </div>
 
-            <div className="split-controls-row">
-              <label className="check-pill">
-                <input
-                  type="checkbox"
-                  checked={arranger.split_enabled}
-                  onChange={(e) =>
-                    handleVoiceChange("split", null, null, e.target.checked)
-                  }
-                />
-                <span>Split Acordes / Solo</span>
-              </label>
+            <div className="hardware-toggle-row" role="group" aria-label="Split and Chord Scan Controls">
+              <button
+                type="button"
+                aria-pressed={arranger.split_enabled}
+                className={`btn btn-compact btn-split-divider ${
+                  arranger.split_enabled ? "active" : ""
+                }`}
+                onClick={() =>
+                  handleVoiceChange("split", null, null, !arranger.split_enabled)
+                }
+              >
+                <span className={`led-dot ${arranger.split_enabled ? "led-red" : ""}`} />
+                SPLIT DIVIDER
+              </button>
 
+              <button
+                type="button"
+                aria-pressed={arranger.chord_scan_lower}
+                className={`btn btn-compact ${arranger.chord_scan_lower ? "btn-flag-on" : ""}`}
+                onClick={() =>
+                  handleVoiceChange(
+                    "split",
+                    null,
+                    null,
+                    null,
+                    !arranger.chord_scan_lower,
+                  )
+                }
+              >
+                CHORD LOWER
+              </button>
+
+              <button
+                type="button"
+                aria-pressed={arranger.chord_scan_upper}
+                className={`btn btn-compact ${arranger.chord_scan_upper ? "btn-flag-on" : ""}`}
+                onClick={() =>
+                  handleVoiceChange(
+                    "split",
+                    null,
+                    null,
+                    null,
+                    null,
+                    !arranger.chord_scan_upper,
+                  )
+                }
+              >
+                SCAN UP
+              </button>
+            </div>
+
+            <div className="split-pitch-row">
               <select
                 aria-label="Split Point"
                 className="studio-select studio-select-sm"
@@ -738,22 +865,71 @@ export function App() {
               >
                 {SPLIT_POINTS.map((sp) => (
                   <option key={sp.value} value={sp.value}>
-                    Ponto: {sp.label}
+                    Corte: {sp.label}
                   </option>
                 ))}
               </select>
+
+              <div className="pitch-stepper-group">
+                <span className="pitch-tag">Oitava Upper</span>
+                <button
+                  type="button"
+                  className="btn btn-xs"
+                  aria-label="Upper Octave Down"
+                  onClick={() =>
+                    handleVoiceChange("split", null, null, null, null, null, arranger.upper_octave - 1)
+                  }
+                >
+                  -
+                </button>
+                <strong className="pitch-val">
+                  {arranger.upper_octave > 0 ? `+${arranger.upper_octave}` : arranger.upper_octave}
+                </strong>
+                <button
+                  type="button"
+                  className="btn btn-xs"
+                  aria-label="Upper Octave Up"
+                  onClick={() =>
+                    handleVoiceChange("split", null, null, null, null, null, arranger.upper_octave + 1)
+                  }
+                >
+                  +
+                </button>
+              </div>
+
+              <div className="pitch-stepper-group">
+                <span className="pitch-tag">Transpose</span>
+                <button
+                  type="button"
+                  className="btn btn-xs"
+                  aria-label="Transpose Down"
+                  onClick={() =>
+                    handleVoiceChange("split", null, null, null, null, null, null, arranger.transpose - 1)
+                  }
+                >
+                  -
+                </button>
+                <strong className="pitch-val">
+                  {arranger.transpose > 0 ? `+${arranger.transpose}` : arranger.transpose}
+                </strong>
+                <button
+                  type="button"
+                  className="btn btn-xs"
+                  aria-label="Transpose Up"
+                  onClick={() =>
+                    handleVoiceChange("split", null, null, null, null, null, null, arranger.transpose + 1)
+                  }
+                >
+                  +
+                </button>
+              </div>
             </div>
           </section>
         </div>
 
-        {/* ROW 2: Rhythm Sections + 8-Channel Track Mixer */}
-        <div className="arranger-bottom-grid">
-          <section className="panel-card arranger-sections-card">
-            <div className="panel-title">
-              <span>Controle de Ritmo & Variações</span>
-              <Zap size={14} />
-            </div>
-
+        {/* ROW 2: Hardware Intro / Variation / Fill / Ending & Start/Stop Strip */}
+        <section className="panel-card arranger-rhythm-strip">
+          <div className="rhythm-strip-top">
             <div className="arranger-transport-strip">
               <button
                 type="button"
@@ -787,9 +963,9 @@ export function App() {
               </button>
             </div>
 
-            <div className="sections-matrix">
+            <div className="sections-matrix-inline">
               {SECTION_ROWS.map((row) => (
-                <div key={row.label} className="section-row">
+                <div key={row.label} className="section-group-inline">
                   <span className="section-row-tag">{row.label}</span>
                   <div className="section-buttons-row">
                     {row.items.map((secName) => {
@@ -814,75 +990,8 @@ export function App() {
                 </div>
               ))}
             </div>
-          </section>
-
-          <section className="panel-card arranger-mixer-card">
-            <div className="panel-title">
-              <span>Mixer do Ritmo & Master FX</span>
-              <Sliders size={14} />
-            </div>
-
-            <div className="track-faders-grid">
-              {TRACK_LABELS.map((label, slot) => (
-                <label key={label} className="track-fader-col">
-                  <span className="track-fader-val">
-                    {Math.round((arranger.track_volumes[slot] ?? 1) * 100)}%
-                  </span>
-                  <input
-                    type="range"
-                    aria-label={`${label} Volume`}
-                    className="studio-range"
-                    min={0}
-                    max={1.25}
-                    step={0.02}
-                    value={arranger.track_volumes[slot] ?? 1}
-                    onChange={(e) => handleTrackVolume(slot, Number(e.target.value))}
-                  />
-                  <span className="track-fader-name">{label}</span>
-                </label>
-              ))}
-            </div>
-
-            {params && (
-              <div className="master-fx-compact">
-                <ParameterSlider
-                  label="Master Volume"
-                  value={params.volume_db}
-                  min={-36}
-                  max={6}
-                  step={0.5}
-                  unit="dB"
-                  onChange={(v) => updateParams((d) => { d.volume_db = v; })}
-                />
-                <div className="reverb-compact-row">
-                  <ParameterSlider
-                    label="Reverb Mix"
-                    value={params.reverb.mix}
-                    min={0}
-                    max={1}
-                    onChange={(v) => updateParams((d) => { d.reverb.mix = v; })}
-                  />
-                  <select
-                    aria-label="Reverb Environment"
-                    className="studio-select studio-select-sm"
-                    value={params.reverb.preset_name}
-                    onChange={(e) =>
-                      updateParams((d) => {
-                        d.reverb.preset_name = e.target.value;
-                      })
-                    }
-                  >
-                    {REVERB_ENVIRONMENTS.map((r) => (
-                      <option key={r} value={r}>
-                        {r}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            )}
-          </section>
-        </div>
+          </div>
+        </section>
       </main>
 
       <footer className="keyboard-dock">

@@ -327,6 +327,10 @@ export interface MusicPackageSummary {
   lower_instrument: number | null;
   split_key: number;
   split_enabled: boolean;
+  chord_scan_lower: boolean;
+  chord_scan_upper: boolean;
+  upper_octave: number;
+  transpose: number;
   bpm: number;
   rhythm_playing: boolean;
   sync_start: boolean;
