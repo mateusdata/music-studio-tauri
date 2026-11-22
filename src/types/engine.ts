@@ -339,6 +339,7 @@ export interface MusicPackageSummary {
   detected_chord_root: number;
   detected_chord_quality: string;
   detected_chord: string;
+  chord_mode?: "fingered_3_7" | "single_finger" | string;
   track_volumes: number[];
   beat_position: number;
 }

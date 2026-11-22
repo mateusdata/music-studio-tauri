@@ -175,6 +175,7 @@ export const engineClient = {
     chordScanUpper: boolean | null = null,
     upperOctave: number | null = null,
     transpose: number | null = null,
+    chordMode: string | null = null,
   ): Promise<MusicPackageSummary> {
     return invoke<MusicPackageSummary>("set_arranger_keyboard_voice", {
       slot,
@@ -185,6 +186,7 @@ export const engineClient = {
       chordScanUpper,
       upperOctave,
       transpose,
+      chordMode,
     });
   },
 

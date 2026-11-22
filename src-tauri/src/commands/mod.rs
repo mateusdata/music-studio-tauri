@@ -250,6 +250,7 @@ pub fn set_arranger_keyboard_voice(
     chord_scan_upper: Option<bool>,
     upper_octave: Option<i8>,
     transpose: Option<i8>,
+    chord_mode: Option<String>,
 ) -> MusicPackageSummary {
     engine.set_arranger_voice(
         &slot,
@@ -260,6 +261,7 @@ pub fn set_arranger_keyboard_voice(
         chord_scan_upper,
         upper_octave,
         transpose,
+        chord_mode.as_deref(),
     )
 }
 

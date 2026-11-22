@@ -56,6 +56,7 @@ pub enum AudioCommand {
         chord_scan_upper: Option<bool>,
         upper_octave: Option<i8>,
         transpose: Option<i8>,
+        chord_mode: Option<String>,
     },
     SetArrangerChord { root_pc: u8, quality: String },
     SetArrangerTrackVolume { track_slot: usize, volume: f32 },
@@ -322,12 +323,13 @@ fn process_audio_command(
     inst: &mut InstrumentModel,
     shared: &Arc<SharedAudioState>,
 ) {
-    let mut summary_dirty = false;
+    let mut full_summary_dirty = false;
+    let mut dynamic_summary_dirty = false;
     match cmd {
         AudioCommand::NoteOn { note, velocity } => {
             if arranger.has_loaded_package() {
                 arranger.note_on(note, velocity);
-                summary_dirty = true;
+                dynamic_summary_dirty = true;
             } else {
                 synth.note_on(note, velocity, params, inst, pedals);
             }
@@ -362,7 +364,7 @@ fn process_audio_command(
         AudioCommand::LoadMusicPackage(pkg) => {
             arranger.load_package(pkg);
             arranger.set_master_gain_db(params.volume_db);
-            summary_dirty = true;
+            full_summary_dirty = true;
         }
         AudioCommand::ImportInstrument {
             instrument,
@@ -370,14 +372,14 @@ fn process_audio_command(
         } => {
             arranger.add_imported_instrument(*instrument, assign_upper1);
             arranger.set_master_gain_db(params.volume_db);
-            summary_dirty = true;
+            full_summary_dirty = true;
         }
         AudioCommand::SetArrangerSection {
             section_name,
             immediate,
         } => {
             arranger.set_section(&section_name, immediate);
-            summary_dirty = true;
+            dynamic_summary_dirty = true;
         }
         AudioCommand::SetArrangerTransport {
             playing,
@@ -393,11 +395,11 @@ fn process_audio_command(
                 arranger.set_tempo_locked(tl);
             }
             arranger.set_transport(playing, sync_start, bpm);
-            summary_dirty = true;
+            dynamic_summary_dirty = true;
         }
         AudioCommand::SetArrangerStyle(idx) => {
             arranger.set_style(idx);
-            summary_dirty = true;
+            dynamic_summary_dirty = true;
         }
         AudioCommand::SetArrangerVoice {
             slot,
@@ -408,6 +410,7 @@ fn process_audio_command(
             chord_scan_upper,
             upper_octave,
             transpose,
+            chord_mode,
         } => {
             arranger.set_keyboard_voice(
                 &slot,
@@ -418,21 +421,26 @@ fn process_audio_command(
                 chord_scan_upper,
                 upper_octave,
                 transpose,
+                chord_mode.as_deref(),
             );
-            summary_dirty = true;
+            dynamic_summary_dirty = true;
         }
         AudioCommand::SetArrangerChord { root_pc, quality } => {
             arranger.set_chord(root_pc, &quality);
-            summary_dirty = true;
+            dynamic_summary_dirty = true;
         }
         AudioCommand::SetArrangerTrackVolume { track_slot, volume } => {
             arranger.set_track_volume(track_slot, volume);
-            summary_dirty = true;
+            dynamic_summary_dirty = true;
         }
     }
-    if summary_dirty {
+    if full_summary_dirty {
         if let Some(mut s) = shared.arranger_summary.try_write() {
             *s = arranger.summary();
+        }
+    } else if dynamic_summary_dirty {
+        if let Some(mut s) = shared.arranger_summary.try_write() {
+            arranger.sync_dynamic_summary(&mut s);
         }
     }
 }
@@ -789,8 +797,11 @@ impl AudioEngineManager {
         let channels = default_cfg.channels().max(2) as usize;
         let dev_name = device.name().unwrap_or_else(|_| "Linux Audio".to_string());
 
+        let ring_frames = target_buffer_frames.saturating_mul(2).clamp(256, 4096);
+        let telemetry_interval_frames = (sr as usize / 25).max(512);
+
         for buf_mode in [
-            cpal::BufferSize::Fixed(target_buffer_frames.clamp(64, 2048)),
+            cpal::BufferSize::Fixed(ring_frames),
             cpal::BufferSize::Default,
         ] {
             let Some(rt) = runtime_slot.lock().take() else {
@@ -807,7 +818,7 @@ impl AudioEngineManager {
                 return_slot: Arc::clone(&runtime_slot),
             };
             let cb_shared = Arc::clone(&shared);
-            let mut telemetry_tick: u32 = 0;
+            let mut samples_since_telemetry: usize = 0;
 
             let attempt = device.build_output_stream(
                 &config,
@@ -866,8 +877,9 @@ impl AudioEngineManager {
                         }
                     }
 
-                    telemetry_tick = telemetry_tick.wrapping_add(1);
-                    if telemetry_tick % 4 == 0 {
+                    samples_since_telemetry += frames;
+                    if samples_since_telemetry >= telemetry_interval_frames {
+                        samples_since_telemetry = 0;
                         let elapsed_us = start.elapsed().as_secs_f32() * 1_000_000.0;
                         let budget_us = (frames as f32 / sr as f32) * 1_000_000.0;
                         let cpu = ((elapsed_us / budget_us.max(1.0)) * 100.0).clamp(0.0, 100.0);
@@ -876,7 +888,7 @@ impl AudioEngineManager {
                             t.latency_ms = (frames as f32 / sr as f32) * 1000.0;
                             if rt.arranger.has_loaded_package() {
                                 t.active_voices = rt.arranger.active_voice_count();
-                                t.active_notes = rt.arranger.active_notes();
+                                rt.arranger.fill_active_notes(&mut t.active_notes);
                             } else {
                                 t.active_voices = rt.synth.active_voice_count();
                                 t.active_notes = rt.synth.active_notes();
@@ -888,9 +900,9 @@ impl AudioEngineManager {
                             t.rms_r = (sq_r / frames.max(1) as f32).sqrt();
                             t.pedals = rt.pedals.clone();
                         }
-                        if telemetry_tick % 8 == 0 && rt.arranger.rhythm_playing {
+                        if rt.arranger.rhythm_playing {
                             if let Some(mut s) = cb_shared.arranger_summary.try_write() {
-                                *s = rt.arranger.summary();
+                                rt.arranger.sync_dynamic_summary(&mut s);
                             }
                         }
                     }
@@ -1465,6 +1477,7 @@ impl AudioEngineManager {
         chord_scan_upper: Option<bool>,
         upper_octave: Option<i8>,
         transpose: Option<i8>,
+        chord_mode: Option<&str>,
     ) -> MusicPackageSummary {
         {
             let mut s = self.shared.arranger_summary.write();
@@ -1485,6 +1498,11 @@ impl AudioEngineManager {
             }
             if let Some(tr) = transpose {
                 s.transpose = tr.clamp(-12, 12);
+            }
+            if let Some(cm) = chord_mode {
+                let normalized = crate::music_studio::ChordMode::from_str(cm).as_str();
+                s.chord_mode.clear();
+                s.chord_mode.push_str(normalized);
             }
             let max_idx = s.instruments.len();
             let valid = instrument_index.filter(|&i| i < max_idx);
@@ -1508,6 +1526,7 @@ impl AudioEngineManager {
             chord_scan_upper,
             upper_octave,
             transpose,
+            chord_mode: chord_mode.map(str::to_string),
         });
         self.arranger_state()
     }
@@ -1560,6 +1579,7 @@ impl AudioEngineManager {
                 Some(s.chord_scan_upper),
                 Some(s.upper_octave),
                 Some(s.transpose),
+                Some(&s.chord_mode),
             );
             arranger.set_tempo_locked(s.tempo_locked);
             arranger.set_transport(true, Some(s.sync_start), Some(s.bpm));

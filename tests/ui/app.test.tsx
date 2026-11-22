@@ -186,6 +186,7 @@ function buildMockArrangerState(overrides?: Partial<MusicPackageSummary>): Music
     detected_chord_root: 0,
     detected_chord_quality: "Major",
     detected_chord: "C",
+    chord_mode: "fingered_3_7",
     track_volumes: [1, 1, 1, 1, 1, 1, 1, 1],
     beat_position: 0,
     ...overrides,
@@ -405,6 +406,23 @@ describe("Music Studio Tauri Arranger App UI", () => {
     fireEvent.click(screen.getByRole("button", { name: "SCAN UP" }));
     await waitFor(() => {
       expect(voiceSpy).toHaveBeenCalledWith("split", null, null, null, null, true, null, null);
+    });
+
+    const chordModeSelect = screen.getByLabelText("Tipo de Acorde");
+    expect(chordModeSelect).toHaveValue("fingered_3_7");
+    fireEvent.change(chordModeSelect, { target: { value: "single_finger" } });
+    await waitFor(() => {
+      expect(voiceSpy).toHaveBeenCalledWith(
+        "split",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "single_finger",
+      );
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Importar \.Music/i }));

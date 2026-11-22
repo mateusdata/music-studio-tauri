@@ -121,6 +121,7 @@ function createPreviewArrangerState(): MusicPackageSummary {
     detected_chord_root: 0,
     detected_chord_quality: "Major",
     detected_chord: "C",
+    chord_mode: "fingered_3_7",
     track_volumes: [1, 1, 1, 1, 1, 1, 1, 1],
     beat_position: 0,
   };
@@ -182,6 +183,7 @@ export function App() {
           detected_chord_root: 0,
           detected_chord_quality: "Major",
           detected_chord: "C",
+          chord_mode: "fingered_3_7",
           track_volumes: [1, 1, 1, 1, 1, 1, 1, 1],
           beat_position: 0,
         }
@@ -467,6 +469,7 @@ export function App() {
       chordScanUpper: boolean | null = null,
       upperOctave: number | null = null,
       transpose: number | null = null,
+      chordMode?: string | null,
     ) => {
       if (!engineClient.isTauri()) {
         setArranger((prev) => ({
@@ -480,19 +483,33 @@ export function App() {
           chord_scan_upper: chordScanUpper ?? prev.chord_scan_upper,
           upper_octave: upperOctave ?? prev.upper_octave,
           transpose: transpose ?? prev.transpose,
+          chord_mode: chordMode ?? prev.chord_mode,
         }));
         return;
       }
-      const nextState = await engineClient.setArrangerKeyboardVoice(
-        slot,
-        instIdx,
-        splitKey,
-        splitEnabled,
-        chordScanLower,
-        chordScanUpper,
-        upperOctave,
-        transpose,
-      );
+      const nextState =
+        chordMode !== undefined
+          ? await engineClient.setArrangerKeyboardVoice(
+              slot,
+              instIdx,
+              splitKey,
+              splitEnabled,
+              chordScanLower,
+              chordScanUpper,
+              upperOctave,
+              transpose,
+              chordMode,
+            )
+          : await engineClient.setArrangerKeyboardVoice(
+              slot,
+              instIdx,
+              splitKey,
+              splitEnabled,
+              chordScanLower,
+              chordScanUpper,
+              upperOctave,
+              transpose,
+            );
       setArranger(nextState);
     },
     [],
@@ -970,6 +987,19 @@ export function App() {
                     Corte: {sp.label}
                   </option>
                 ))}
+              </select>
+
+              <select
+                aria-label="Tipo de Acorde"
+                className="studio-select studio-select-sm"
+                value={arranger.chord_mode ?? "fingered_3_7"}
+                onChange={(e) =>
+                  handleVoiceChange("split", null, null, null, null, null, null, null, e.target.value)
+                }
+                title="Define se acordes exigem 3 a 7 teclas (7ª, 9ª, 7/9...) ou aceitam 1 tecla"
+              >
+                <option value="fingered_3_7">Tipo de Acorde: 3 a 7 Teclas (Padrão)</option>
+                <option value="single_finger">Tipo de Acorde: 1 Tecla (Automático)</option>
               </select>
 
               <div className="pitch-stepper-group">

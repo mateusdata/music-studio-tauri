@@ -66,6 +66,7 @@ pub struct MusicPackageSummary {
     pub detected_chord_root: u8,
     pub detected_chord_quality: String,
     pub detected_chord: String,
+    pub chord_mode: String,
     pub track_volumes: [f32; 8],
     pub beat_position: f32,
 }
@@ -99,6 +100,7 @@ impl Default for MusicPackageSummary {
             detected_chord_root: 0,
             detected_chord_quality: "Major".to_string(),
             detected_chord: "C".to_string(),
+            chord_mode: ChordMode::Fingered3To7.as_str().to_string(),
             track_volumes: [1.0; 8],
             beat_position: 0.0,
         }
@@ -460,30 +462,38 @@ fn decode_pcm_bytes(raw: &[u8], bits: u8, ch: u8, nfr_hint: usize) -> (Vec<f32>,
         est_frames
     };
     pcm_l.reserve(count);
-    pcm_r.reserve(count);
+    if ch == 2 {
+        pcm_r.reserve(count);
+    }
     if bits == 16 {
         let stride = ch_u * 2;
-        for frame in raw.chunks_exact(stride).take(count) {
-            let l = i16::from_le_bytes([frame[0], frame[1]]) as f32 / 32768.0;
-            let r = if ch == 2 {
-                i16::from_le_bytes([frame[2], frame[3]]) as f32 / 32768.0
-            } else {
-                l
-            };
-            pcm_l.push(l);
-            pcm_r.push(r);
+        if ch == 2 {
+            for frame in raw.chunks_exact(stride).take(count) {
+                let l = i16::from_le_bytes([frame[0], frame[1]]) as f32 / 32768.0;
+                let r = i16::from_le_bytes([frame[2], frame[3]]) as f32 / 32768.0;
+                pcm_l.push(l);
+                pcm_r.push(r);
+            }
+        } else {
+            for frame in raw.chunks_exact(stride).take(count) {
+                let l = i16::from_le_bytes([frame[0], frame[1]]) as f32 / 32768.0;
+                pcm_l.push(l);
+            }
         }
     } else {
         let stride = ch_u;
-        for frame in raw.chunks_exact(stride).take(count) {
-            let l = (frame[0] as f32 - 128.0) / 128.0;
-            let r = if ch == 2 {
-                (frame[1] as f32 - 128.0) / 128.0
-            } else {
-                l
-            };
-            pcm_l.push(l);
-            pcm_r.push(r);
+        if ch == 2 {
+            for frame in raw.chunks_exact(stride).take(count) {
+                let l = (frame[0] as f32 - 128.0) / 128.0;
+                let r = (frame[1] as f32 - 128.0) / 128.0;
+                pcm_l.push(l);
+                pcm_r.push(r);
+            }
+        } else {
+            for frame in raw.chunks_exact(stride).take(count) {
+                let l = (frame[0] as f32 - 128.0) / 128.0;
+                pcm_l.push(l);
+            }
         }
     }
     (pcm_l, pcm_r)
@@ -579,13 +589,21 @@ fn parse_zone_at(
         }
     };
 
+    let pcm_l_arc = Arc::new(pcm_l);
+    let pcm_r_arc = if ch == 1 || pcm_r.is_empty() {
+        Arc::clone(&pcm_l_arc)
+    } else {
+        Arc::new(pcm_r)
+    };
+
     let gain_norm = if (1..=250).contains(&vol_raw) {
         vol_raw as f32 / 100.0
     } else {
         1.0
     };
-    let valid_loop =
-        (loop_mode == 2 || loop_mode == 3) && loop_end > loop_start + 32 && loop_end <= pcm_l.len();
+    let valid_loop = (loop_mode == 2 || loop_mode == 3)
+        && loop_end > loop_start + 32
+        && loop_end <= pcm_l_arc.len();
 
     Some((
         SampleZone {
@@ -603,8 +621,8 @@ fn parse_zone_at(
             pan,
             fine_tune,
             pool_sid,
-            pcm_l: Arc::new(pcm_l),
-            pcm_r: Arc::new(pcm_r),
+            pcm_l: pcm_l_arc,
+            pcm_r: pcm_r_arc,
         },
         next_cur,
     ))
@@ -1686,14 +1704,57 @@ pub fn list_all_music_packages() -> Vec<MusicPackageEntry> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChordMode {
+    Fingered3To7,
+    SingleFinger,
+}
+
+impl ChordMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ChordMode::Fingered3To7 => "fingered_3_7",
+            ChordMode::SingleFinger => "single_finger",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "single_finger" | "single" | "1_tecla" | "1key" | "one_finger" => {
+                ChordMode::SingleFinger
+            }
+            _ => ChordMode::Fingered3To7,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChordQuality {
     Major,
     Minor,
     Dom7,
     Min7,
     Maj7,
+    MinMaj7,
     Dim,
+    Dim7,
+    Min7b5,
+    Aug,
+    Sus2,
     Sus4,
+    Dom7Sus4,
+    Six,
+    Min6,
+    SixNine,
+    Add9,
+    MinAdd9,
+    Dom9,
+    Maj9,
+    Min9,
+    Dom11,
+    Min11,
+    Dom13,
+    Maj13,
+    Min13,
 }
 
 impl ChordQuality {
@@ -1704,8 +1765,27 @@ impl ChordQuality {
             ChordQuality::Dom7 => "Dom7",
             ChordQuality::Min7 => "Min7",
             ChordQuality::Maj7 => "Maj7",
+            ChordQuality::MinMaj7 => "MinMaj7",
             ChordQuality::Dim => "Dim",
+            ChordQuality::Dim7 => "Dim7",
+            ChordQuality::Min7b5 => "Min7b5",
+            ChordQuality::Aug => "Aug",
+            ChordQuality::Sus2 => "Sus2",
             ChordQuality::Sus4 => "Sus4",
+            ChordQuality::Dom7Sus4 => "Dom7Sus4",
+            ChordQuality::Six => "Six",
+            ChordQuality::Min6 => "Min6",
+            ChordQuality::SixNine => "SixNine",
+            ChordQuality::Add9 => "Add9",
+            ChordQuality::MinAdd9 => "MinAdd9",
+            ChordQuality::Dom9 => "Dom9",
+            ChordQuality::Maj9 => "Maj9",
+            ChordQuality::Min9 => "Min9",
+            ChordQuality::Dom11 => "Dom11",
+            ChordQuality::Min11 => "Min11",
+            ChordQuality::Dom13 => "Dom13",
+            ChordQuality::Maj13 => "Maj13",
+            ChordQuality::Min13 => "Min13",
         }
     }
 
@@ -1715,8 +1795,27 @@ impl ChordQuality {
             "dom7" | "7" => ChordQuality::Dom7,
             "min7" | "m7" => ChordQuality::Min7,
             "maj7" => ChordQuality::Maj7,
+            "minmaj7" | "mmaj7" => ChordQuality::MinMaj7,
             "dim" => ChordQuality::Dim,
+            "dim7" => ChordQuality::Dim7,
+            "min7b5" | "m7b5" => ChordQuality::Min7b5,
+            "aug" => ChordQuality::Aug,
+            "sus2" => ChordQuality::Sus2,
             "sus4" | "sus" => ChordQuality::Sus4,
+            "dom7sus4" | "7sus4" => ChordQuality::Dom7Sus4,
+            "six" | "6" => ChordQuality::Six,
+            "min6" | "m6" => ChordQuality::Min6,
+            "sixnine" | "6/9" | "69" => ChordQuality::SixNine,
+            "add9" => ChordQuality::Add9,
+            "minadd9" | "m(add9)" | "madd9" => ChordQuality::MinAdd9,
+            "dom9" | "9" | "7(9)" => ChordQuality::Dom9,
+            "maj9" => ChordQuality::Maj9,
+            "min9" | "m9" => ChordQuality::Min9,
+            "dom11" | "11" => ChordQuality::Dom11,
+            "min11" | "m11" => ChordQuality::Min11,
+            "dom13" | "13" => ChordQuality::Dom13,
+            "maj13" => ChordQuality::Maj13,
+            "min13" | "m13" => ChordQuality::Min13,
             _ => ChordQuality::Major,
         }
     }
@@ -1728,8 +1827,27 @@ impl ChordQuality {
             ChordQuality::Dom7 => "7",
             ChordQuality::Min7 => "m7",
             ChordQuality::Maj7 => "maj7",
+            ChordQuality::MinMaj7 => "mMaj7",
             ChordQuality::Dim => "dim",
+            ChordQuality::Dim7 => "dim7",
+            ChordQuality::Min7b5 => "m7b5",
+            ChordQuality::Aug => "aug",
+            ChordQuality::Sus2 => "sus2",
             ChordQuality::Sus4 => "sus4",
+            ChordQuality::Dom7Sus4 => "7sus4",
+            ChordQuality::Six => "6",
+            ChordQuality::Min6 => "m6",
+            ChordQuality::SixNine => "6/9",
+            ChordQuality::Add9 => "add9",
+            ChordQuality::MinAdd9 => "m(add9)",
+            ChordQuality::Dom9 => "7(9)",
+            ChordQuality::Maj9 => "maj9",
+            ChordQuality::Min9 => "m9",
+            ChordQuality::Dom11 => "11",
+            ChordQuality::Min11 => "m11",
+            ChordQuality::Dom13 => "13",
+            ChordQuality::Maj13 => "maj13",
+            ChordQuality::Min13 => "m13",
         }
     }
 }
@@ -1739,12 +1857,27 @@ pub fn format_chord_label(root: u8, quality: ChordQuality) -> String {
 }
 
 pub fn detect_chord_from_notes(notes: &[u8]) -> Option<(u8, ChordQuality, String)> {
+    detect_chord_with_mode(notes, ChordMode::SingleFinger)
+}
+
+pub fn detect_chord_with_mode(
+    notes: &[u8],
+    mode: ChordMode,
+) -> Option<(u8, ChordQuality, String)> {
     if notes.is_empty() {
         return None;
     }
     let mut sorted = notes.to_vec();
     sorted.sort_unstable();
     sorted.dedup();
+
+    if mode == ChordMode::Fingered3To7 && sorted.len() < 3 {
+        return None;
+    }
+    if sorted.len() > 7 {
+        sorted.truncate(7);
+    }
+
     let lowest_pc = sorted[0] % 12;
 
     if sorted.len() == 1 {
@@ -1759,41 +1892,94 @@ pub fn detect_chord_from_notes(notes: &[u8]) -> Option<(u8, ChordQuality, String
         p
     };
 
+    if pcs.len() == 1 {
+        let q = ChordQuality::Major;
+        return Some((lowest_pc, q, format_chord_label(lowest_pc, q)));
+    }
+
     if pcs.len() == 2 {
-        let interval = (pcs[1] + 12 - pcs[0]) % 12;
+        let other_pc = if pcs[0] == lowest_pc { pcs[1] } else { pcs[0] };
+        let interval = (other_pc + 12 - lowest_pc) % 12;
         let q = match interval {
             3 => ChordQuality::Minor,
             10 => ChordQuality::Dom7,
+            11 => ChordQuality::Maj7,
             5 => ChordQuality::Sus4,
+            2 => ChordQuality::Sus2,
             _ => ChordQuality::Major,
         };
-        let root = pcs[0];
-        return Some((root, q, format_chord_label(root, q)));
+        return Some((lowest_pc, q, format_chord_label(lowest_pc, q)));
     }
 
-    let templates: &[(ChordQuality, &[u8])] = &[
-        (ChordQuality::Minor, &[0, 3, 7]),
-        (ChordQuality::Major, &[0, 4, 7]),
-        (ChordQuality::Dom7, &[0, 4, 7, 10]),
-        (ChordQuality::Min7, &[0, 3, 7, 10]),
-        (ChordQuality::Maj7, &[0, 4, 7, 11]),
-        (ChordQuality::Dim, &[0, 3, 6]),
-        (ChordQuality::Sus4, &[0, 5, 7]),
+    // Ordered harmonic templates for 3-to-7-note voicings: (quality, intervals_from_root, priority)
+    let templates: &[(ChordQuality, &[u8], i32)] = &[
+        // 7-note & 6-note extensions
+        (ChordQuality::Dom13, &[0, 2, 4, 5, 7, 9, 10], 14),
+        (ChordQuality::Maj13, &[0, 2, 4, 5, 7, 9, 11], 13),
+        (ChordQuality::Min13, &[0, 2, 3, 5, 7, 9, 10], 13),
+        (ChordQuality::Dom13, &[0, 2, 4, 7, 9, 10], 12),
+        (ChordQuality::Maj13, &[0, 2, 4, 7, 9, 11], 11),
+        (ChordQuality::Min13, &[0, 2, 3, 7, 9, 10], 11),
+        (ChordQuality::Dom11, &[0, 2, 4, 5, 7, 10], 12),
+        (ChordQuality::Min11, &[0, 2, 3, 5, 7, 10], 12),
+        // 5-note extensions (7/9, maj9, m9, 6/9, 13, 11)
+        (ChordQuality::Dom9, &[0, 2, 4, 7, 10], 13),
+        (ChordQuality::Maj9, &[0, 2, 4, 7, 11], 12),
+        (ChordQuality::Min9, &[0, 2, 3, 7, 10], 13),
+        (ChordQuality::SixNine, &[0, 2, 4, 7, 9], 10),
+        (ChordQuality::Dom13, &[0, 4, 7, 9, 10], 11),
+        (ChordQuality::Maj13, &[0, 4, 7, 9, 11], 10),
+        (ChordQuality::Min13, &[0, 3, 7, 9, 10], 10),
+        (ChordQuality::Dom11, &[0, 4, 5, 7, 10], 10),
+        (ChordQuality::Min11, &[0, 3, 5, 7, 10], 10),
+        // 4-note voicings (including shell 7/9 without 5th and standard 7ths/add9/6)
+        (ChordQuality::Dom9, &[0, 2, 4, 10], 11),
+        (ChordQuality::Maj9, &[0, 2, 4, 11], 10),
+        (ChordQuality::Min9, &[0, 2, 3, 10], 11),
+        (ChordQuality::Dom7, &[0, 4, 7, 10], 12),
+        (ChordQuality::Min7, &[0, 3, 7, 10], 12),
+        (ChordQuality::Maj7, &[0, 4, 7, 11], 11),
+        (ChordQuality::MinMaj7, &[0, 3, 7, 11], 10),
+        (ChordQuality::Dom7Sus4, &[0, 5, 7, 10], 10),
+        (ChordQuality::Dim7, &[0, 3, 6, 9], 9),
+        (ChordQuality::Min7b5, &[0, 3, 6, 10], 9),
+        (ChordQuality::Six, &[0, 4, 7, 9], 9),
+        (ChordQuality::Min6, &[0, 3, 7, 9], 9),
+        (ChordQuality::Add9, &[0, 2, 4, 7], 9),
+        (ChordQuality::MinAdd9, &[0, 2, 3, 7], 9),
+        (ChordQuality::Dom13, &[0, 4, 9, 10], 8),
+        // 3-note triads & shell voicings
+        (ChordQuality::Minor, &[0, 3, 7], 11),
+        (ChordQuality::Major, &[0, 4, 7], 11),
+        (ChordQuality::Dim, &[0, 3, 6], 9),
+        (ChordQuality::Aug, &[0, 4, 8], 8),
+        (ChordQuality::Sus4, &[0, 5, 7], 9),
+        (ChordQuality::Sus2, &[0, 2, 7], 8),
+        (ChordQuality::Dom7, &[0, 4, 10], 6),
+        (ChordQuality::Maj7, &[0, 4, 11], 6),
+        (ChordQuality::Min7, &[0, 3, 10], 6),
     ];
 
     let mut best: Option<(i32, u8, ChordQuality)> = None;
-    for &(q, tpl) in templates {
+    for &(q, tpl, prio) in templates {
+        if pcs.len() < tpl.len() {
+            continue;
+        }
         for &cand_root in &pcs {
-            let mut matched = 0_i32;
+            let mut matched = 0_usize;
             for &iv in tpl {
                 if pcs.contains(&((cand_root + iv) % 12)) {
                     matched += 1;
                 }
             }
-            if matched == tpl.len() as i32 {
-                let mut score = matched * 10;
+            if matched == tpl.len() {
+                let extra = (pcs.len() - tpl.len()) as i32;
+                let mut score = (tpl.len() as i32) * 20 - extra * 28 + prio;
+                if extra == 0 {
+                    score += 45;
+                }
                 if cand_root == lowest_pc {
-                    score += 5; // Prefer root position over inversions
+                    score += 18;
                 }
                 if best.map(|b| score > b.0).unwrap_or(true) {
                     best = Some((score, cand_root, q));
@@ -1806,11 +1992,28 @@ pub fn detect_chord_from_notes(notes: &[u8]) -> Option<(u8, ChordQuality, String
         return Some((root, q, format_chord_label(root, q)));
     }
 
-    // Check root from lowest pitch class + 3rd interval
-    let q = if pcs.contains(&((lowest_pc + 3) % 12)) {
-        ChordQuality::Minor
-    } else if pcs.contains(&((lowest_pc + 10) % 12)) {
+    // Fallback: derive best quality relative to lowest pressed bass pitch class
+    let has = |iv: u8| pcs.contains(&((lowest_pc + iv) % 12));
+    let q = if has(4) && has(10) && has(2) {
+        ChordQuality::Dom9
+    } else if has(3) && has(10) && has(2) {
+        ChordQuality::Min9
+    } else if has(4) && has(11) && has(2) {
+        ChordQuality::Maj9
+    } else if has(4) && has(2) {
+        ChordQuality::Add9
+    } else if has(3) && has(2) {
+        ChordQuality::MinAdd9
+    } else if has(3) && has(10) {
+        ChordQuality::Min7
+    } else if has(4) && has(10) {
         ChordQuality::Dom7
+    } else if has(4) && has(11) {
+        ChordQuality::Maj7
+    } else if has(3) {
+        ChordQuality::Minor
+    } else if has(5) && !has(4) {
+        ChordQuality::Sus4
     } else {
         ChordQuality::Major
     };
@@ -1896,6 +2099,7 @@ fn transpose_note_for_chord(
     note: u8,
     detected_chord_root: u8,
     detected_chord_quality: ChordQuality,
+    is_bass: bool,
 ) -> u8 {
     // Tracks inside `.Music` are authored against a C Major reference (pitch class 0 = C)
     let mut root_shift = detected_chord_root as i16;
@@ -1903,28 +2107,221 @@ fn transpose_note_for_chord(
         root_shift -= 12;
     }
     let pc = (note % 12) as i16;
-    let chord_iv = match detected_chord_quality {
-        ChordQuality::Minor | ChordQuality::Min7 => match pc {
-            4 => 3,   // E -> Eb
-            11 => 10, // B -> Bb
-            _ => pc,
-        },
-        ChordQuality::Dom7 => match pc {
-            11 => 10, // B -> Bb
-            _ => pc,
-        },
-        ChordQuality::Dim => match pc {
-            4 => 3,
-            7 => 6,
-            _ => pc,
-        },
-        ChordQuality::Sus4 => match pc {
-            4 => 5,
-            _ => pc,
-        },
-        ChordQuality::Major | ChordQuality::Maj7 => pc,
+    let mapped_iv = if is_bass {
+        match detected_chord_quality {
+            ChordQuality::Minor
+            | ChordQuality::Min7
+            | ChordQuality::MinAdd9
+            | ChordQuality::Min9
+            | ChordQuality::Min11
+            | ChordQuality::Min13 => match pc {
+                4 => 3,
+                11 => 10,
+                _ => pc,
+            },
+            ChordQuality::MinMaj7 => match pc {
+                4 => 3,
+                _ => pc,
+            },
+            ChordQuality::Min6 => match pc {
+                4 => 3,
+                11 => 9,
+                _ => pc,
+            },
+            ChordQuality::Dim => match pc {
+                4 => 3,
+                7 => 6,
+                _ => pc,
+            },
+            ChordQuality::Dim7 => match pc {
+                4 => 3,
+                7 => 6,
+                11 => 9,
+                _ => pc,
+            },
+            ChordQuality::Min7b5 => match pc {
+                4 => 3,
+                7 => 6,
+                11 => 10,
+                _ => pc,
+            },
+            ChordQuality::Aug => match pc {
+                7 => 8,
+                _ => pc,
+            },
+            ChordQuality::Sus2 => match pc {
+                4 => 2,
+                _ => pc,
+            },
+            ChordQuality::Sus4 => match pc {
+                4 => 5,
+                _ => pc,
+            },
+            ChordQuality::Dom7Sus4 => match pc {
+                4 => 5,
+                11 => 10,
+                _ => pc,
+            },
+            ChordQuality::Dom7
+            | ChordQuality::Dom9
+            | ChordQuality::Dom11
+            | ChordQuality::Dom13 => match pc {
+                11 => 10,
+                _ => pc,
+            },
+            ChordQuality::Six | ChordQuality::SixNine => match pc {
+                11 => 9,
+                _ => pc,
+            },
+            ChordQuality::Major
+            | ChordQuality::Maj7
+            | ChordQuality::Add9
+            | ChordQuality::Maj9
+            | ChordQuality::Maj13 => pc,
+        }
+    } else {
+        match detected_chord_quality {
+            ChordQuality::Major => pc,
+            ChordQuality::Minor => match pc {
+                4 => 3,
+                11 => 10,
+                _ => pc,
+            },
+            ChordQuality::Dom7 => match pc {
+                0 => -2,
+                11 => 10,
+                _ => pc,
+            },
+            ChordQuality::Min7 => match pc {
+                0 => -2,
+                4 => 3,
+                11 => 10,
+                _ => pc,
+            },
+            ChordQuality::Maj7 => match pc {
+                0 => -1,
+                _ => pc,
+            },
+            ChordQuality::MinMaj7 => match pc {
+                0 => -1,
+                4 => 3,
+                _ => pc,
+            },
+            ChordQuality::Dim => match pc {
+                4 => 3,
+                7 => 6,
+                _ => pc,
+            },
+            ChordQuality::Dim7 => match pc {
+                0 => -3,
+                4 => 3,
+                7 => 6,
+                11 => 9,
+                _ => pc,
+            },
+            ChordQuality::Min7b5 => match pc {
+                0 => -2,
+                4 => 3,
+                7 => 6,
+                11 => 10,
+                _ => pc,
+            },
+            ChordQuality::Aug => match pc {
+                7 => 8,
+                _ => pc,
+            },
+            ChordQuality::Sus2 => match pc {
+                4 => 2,
+                _ => pc,
+            },
+            ChordQuality::Sus4 => match pc {
+                4 => 5,
+                _ => pc,
+            },
+            ChordQuality::Dom7Sus4 => match pc {
+                0 => -2,
+                4 => 5,
+                11 => 10,
+                _ => pc,
+            },
+            ChordQuality::Six => match pc {
+                0 => -3,
+                11 => 9,
+                _ => pc,
+            },
+            ChordQuality::Min6 => match pc {
+                0 => -3,
+                4 => 3,
+                11 => 9,
+                _ => pc,
+            },
+            ChordQuality::Add9 => match pc {
+                0 => 2,
+                _ => pc,
+            },
+            ChordQuality::MinAdd9 => match pc {
+                0 => 2,
+                4 => 3,
+                _ => pc,
+            },
+            ChordQuality::SixNine => match pc {
+                0 => 2,
+                7 => 9,
+                11 => 9,
+                _ => pc,
+            },
+            ChordQuality::Dom9 => match pc {
+                0 => 2,
+                7 => 10,
+                11 => 10,
+                _ => pc,
+            },
+            ChordQuality::Maj9 => match pc {
+                0 => 2,
+                7 => 11,
+                _ => pc,
+            },
+            ChordQuality::Min9 => match pc {
+                0 => 2,
+                4 => 3,
+                7 => 10,
+                11 => 10,
+                _ => pc,
+            },
+            ChordQuality::Dom11 => match pc {
+                0 => -2,
+                4 => 5,
+                11 => 10,
+                _ => pc,
+            },
+            ChordQuality::Min11 => match pc {
+                0 => -2,
+                4 => 3,
+                7 => 5,
+                11 => 10,
+                _ => pc,
+            },
+            ChordQuality::Dom13 => match pc {
+                0 => -2,
+                7 => 9,
+                11 => 10,
+                _ => pc,
+            },
+            ChordQuality::Maj13 => match pc {
+                0 => -1,
+                7 => 9,
+                _ => pc,
+            },
+            ChordQuality::Min13 => match pc {
+                0 => -2,
+                4 => 3,
+                7 => 9,
+                11 => 10,
+                _ => pc,
+            },
+        }
     };
-    let adjusted = note as i16 + (chord_iv - pc) + root_shift;
+    let adjusted = note as i16 + (mapped_iv - pc) + root_shift;
     adjusted.clamp(24, 108) as u8
 }
 
@@ -1950,6 +2347,7 @@ fn collect_section_events(
             .map(|i| i.is_drumkit)
             .unwrap_or(false);
         let is_drum = track.is_drum || inst_is_drum;
+        let is_bass = track.track_slot == 2;
         let vol = track.volume * track_volumes[track.track_slot.min(7)];
         if vol <= 0.002 {
             continue;
@@ -1964,7 +2362,12 @@ fn collect_section_events(
                         + track.key_move as i16
                         + (track.octave_shift * 12) as i16)
                         .clamp(12, 115) as u8;
-                    transpose_note_for_chord(shifted, detected_chord_root, detected_chord_quality)
+                    transpose_note_for_chord(
+                        shifted,
+                        detected_chord_root,
+                        detected_chord_quality,
+                        is_bass,
+                    )
                 };
                 let dur_samples = if is_drum {
                     None
@@ -2011,12 +2414,14 @@ pub struct MusicStudioArrangerEngine {
     pub detected_chord_root: u8,
     pub detected_chord_quality: ChordQuality,
     pub detected_chord_label: String,
+    pub chord_mode: ChordMode,
     pub track_volumes: [f32; 8],
     pub master_gain: f32,
     current_tick: f64,
     held_keys: [bool; 128],
     held_lower_notes: Vec<u8>,
     held_upper_notes: Vec<u8>,
+    pending_triggers: Vec<PendingTrigger>,
     voices: Vec<SamplerVoice>,
 }
 
@@ -2046,12 +2451,14 @@ impl MusicStudioArrangerEngine {
             detected_chord_root: 0,
             detected_chord_quality: ChordQuality::Major,
             detected_chord_label: "C".to_string(),
+            chord_mode: ChordMode::Fingered3To7,
             track_volumes: [1.0; 8],
             master_gain: 0.85,
             current_tick: 0.0,
             held_keys: [false; 128],
             held_lower_notes: Vec::new(),
             held_upper_notes: Vec::new(),
+            pending_triggers: Vec::with_capacity(64),
             voices: Vec::with_capacity(MAX_SAMPLER_VOICES),
         }
     }
@@ -2183,9 +2590,67 @@ impl MusicStudioArrangerEngine {
             detected_chord_root: self.detected_chord_root,
             detected_chord_quality: self.detected_chord_quality.as_str().to_string(),
             detected_chord: self.detected_chord_label.clone(),
+            chord_mode: self.chord_mode.as_str().to_string(),
             track_volumes: self.track_volumes,
             beat_position: (self.current_tick / sec_len).clamp(0.0, 1.0) as f32,
         }
+    }
+
+    pub fn sync_dynamic_summary(&self, dst: &mut MusicPackageSummary) {
+        if self.package.is_none() {
+            return;
+        }
+        let sec_len = self
+            .active_section_ref()
+            .map(|s| s.length_ticks.max(1) as f64)
+            .unwrap_or(4000.0);
+        dst.loaded = true;
+        dst.active_style_index = self.active_style_index;
+        if dst.active_section != self.active_section {
+            dst.active_section.clear();
+            dst.active_section.push_str(&self.active_section);
+        }
+        match (&mut dst.pending_section, &self.pending_section) {
+            (Some(d), Some(s)) => {
+                if d != s {
+                    d.clear();
+                    d.push_str(s);
+                }
+            }
+            (None, None) => {}
+            (slot, src) => *slot = src.clone(),
+        }
+        dst.upper1_instrument = self.upper1_instrument;
+        dst.upper2_instrument = self.upper2_instrument;
+        dst.lower_instrument = self.lower_instrument;
+        dst.split_key = self.split_key;
+        dst.split_enabled = self.split_enabled;
+        dst.chord_scan_lower = self.chord_scan_lower;
+        dst.chord_scan_upper = self.chord_scan_upper;
+        dst.upper_octave = self.upper_octave;
+        dst.transpose = self.transpose;
+        dst.bpm = self.bpm;
+        dst.tempo_locked = self.tempo_locked;
+        dst.rhythm_playing = self.rhythm_playing;
+        dst.sync_start = self.sync_start;
+        dst.auto_fill = self.auto_fill;
+        dst.detected_chord_root = self.detected_chord_root;
+        let q_str = self.detected_chord_quality.as_str();
+        if dst.detected_chord_quality != q_str {
+            dst.detected_chord_quality.clear();
+            dst.detected_chord_quality.push_str(q_str);
+        }
+        if dst.detected_chord != self.detected_chord_label {
+            dst.detected_chord.clear();
+            dst.detected_chord.push_str(&self.detected_chord_label);
+        }
+        let cm_str = self.chord_mode.as_str();
+        if dst.chord_mode != cm_str {
+            dst.chord_mode.clear();
+            dst.chord_mode.push_str(cm_str);
+        }
+        dst.track_volumes = self.track_volumes;
+        dst.beat_position = (self.current_tick / sec_len).clamp(0.0, 1.0) as f32;
     }
 
     fn active_section_ref(&self) -> Option<&RhythmSection> {
@@ -2323,6 +2788,7 @@ impl MusicStudioArrangerEngine {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn set_keyboard_voice(
         &mut self,
         slot: &str,
@@ -2333,6 +2799,7 @@ impl MusicStudioArrangerEngine {
         chord_scan_upper: Option<bool>,
         upper_octave: Option<i8>,
         transpose: Option<i8>,
+        chord_mode: Option<&str>,
     ) {
         if let Some(sk) = split_key {
             self.split_key = sk.clamp(24, 96);
@@ -2351,6 +2818,9 @@ impl MusicStudioArrangerEngine {
         }
         if let Some(tr) = transpose {
             self.transpose = tr.clamp(-12, 12);
+        }
+        if let Some(cm) = chord_mode {
+            self.chord_mode = ChordMode::from_str(cm);
         }
         let max_idx = self
             .package
@@ -2517,14 +2987,16 @@ impl MusicStudioArrangerEngine {
                 self.held_lower_notes.push(note);
             }
             if self.chord_scan_lower {
-                if let Some((root, q, label)) = detect_chord_from_notes(&self.held_lower_notes) {
+                if let Some((root, q, label)) =
+                    detect_chord_with_mode(&self.held_lower_notes, self.chord_mode)
+                {
                     self.detected_chord_root = root;
                     self.detected_chord_quality = q;
                     self.detected_chord_label = label;
-                }
-                if self.sync_start && !self.rhythm_playing {
-                    self.rhythm_playing = true;
-                    self.current_tick = 0.0;
+                    if self.sync_start && !self.rhythm_playing {
+                        self.rhythm_playing = true;
+                        self.current_tick = 0.0;
+                    }
                 }
             }
             if let Some(low_inst) = self.lower_instrument {
@@ -2540,14 +3012,16 @@ impl MusicStudioArrangerEngine {
         if self.chord_scan_upper
             && (self.held_upper_notes.len() >= 3 || !self.chord_scan_lower || !self.split_enabled)
         {
-            if let Some((root, q, label)) = detect_chord_from_notes(&self.held_upper_notes) {
+            if let Some((root, q, label)) =
+                detect_chord_with_mode(&self.held_upper_notes, self.chord_mode)
+            {
                 self.detected_chord_root = root;
                 self.detected_chord_quality = q;
                 self.detected_chord_label = label;
-            }
-            if self.sync_start && !self.rhythm_playing {
-                self.rhythm_playing = true;
-                self.current_tick = 0.0;
+                if self.sync_start && !self.rhythm_playing {
+                    self.rhythm_playing = true;
+                    self.current_tick = 0.0;
+                }
             }
         }
 
@@ -2597,13 +3071,18 @@ impl MusicStudioArrangerEngine {
         }
     }
 
-    pub fn active_notes(&self) -> Vec<u8> {
-        let mut notes = Vec::new();
+    pub fn fill_active_notes(&self, out: &mut Vec<u8>) {
+        out.clear();
         for (n, &on) in self.held_keys.iter().enumerate() {
             if on {
-                notes.push(n as u8);
+                out.push(n as u8);
             }
         }
+    }
+
+    pub fn active_notes(&self) -> Vec<u8> {
+        let mut notes = Vec::with_capacity(8);
+        self.fill_active_notes(&mut notes);
         notes
     }
 
@@ -2626,7 +3105,8 @@ impl MusicStudioArrangerEngine {
             let prev_tick = self.current_tick;
             let next_tick = prev_tick + ticks_per_block;
 
-            let mut to_trigger: Vec<PendingTrigger> = Vec::new();
+            let mut to_trigger = std::mem::take(&mut self.pending_triggers);
+            to_trigger.clear();
             let mut transition_next: Option<String> = None;
             let mut stop_at_end = false;
             let mut wrap_tick = 0.0_f64;
@@ -2736,7 +3216,7 @@ impl MusicStudioArrangerEngine {
                 self.current_tick = if wrapped { wrap_tick } else { next_tick };
             }
 
-            for trig in to_trigger {
+            for trig in to_trigger.drain(..) {
                 self.trigger_instrument_note(
                     trig.inst_idx,
                     trig.midi_note,
@@ -2749,6 +3229,7 @@ impl MusicStudioArrangerEngine {
                     trig.dur_samples,
                 );
             }
+            self.pending_triggers = to_trigger;
         }
 
         // Render all active polyphonic sampler voices
@@ -2763,6 +3244,15 @@ impl MusicStudioArrangerEngine {
                 self.voices.swap_remove(i);
                 continue;
             }
+            let is_mono = Arc::ptr_eq(&v.pcm_l, &v.pcm_r) || v.pcm_r.len() < pcm_len;
+            let pcm_l = v.pcm_l.as_slice();
+            let pcm_r = v.pcm_r.as_slice();
+            let gain_l = v.gain * master * v.pan_l;
+            let gain_r = v.gain * master * v.pan_r;
+            let has_loop = v.loop_enabled && v.loop_end > v.loop_start + 8;
+            let loop_start_f = v.loop_start as f64;
+            let loop_end_f = v.loop_end as f64;
+            let loop_span_f = v.loop_end.saturating_sub(v.loop_start) as f64;
             let mut alive = true;
             for f in 0..frames {
                 if let Some(ref mut rem) = v.remaining_samples {
@@ -2793,20 +3283,19 @@ impl MusicStudioArrangerEngine {
                     1.0
                 };
 
-                if v.loop_enabled && v.loop_end > v.loop_start + 8 {
+                if has_loop {
                     if v.loop_mode == 3 {
-                        if v.loop_dir > 0 && v.pos >= v.loop_end as f64 {
-                            v.pos = ((v.loop_end as f64) - (v.pos - v.loop_end as f64))
-                                .clamp(v.loop_start as f64, (pcm_len - 2) as f64);
+                        if v.loop_dir > 0 && v.pos >= loop_end_f {
+                            v.pos = (loop_end_f - (v.pos - loop_end_f))
+                                .clamp(loop_start_f, (pcm_len - 2) as f64);
                             v.loop_dir = -1;
-                        } else if v.loop_dir < 0 && v.pos <= v.loop_start as f64 {
-                            v.pos = ((v.loop_start as f64) + (v.loop_start as f64 - v.pos))
-                                .clamp(0.0, v.loop_end as f64);
+                        } else if v.loop_dir < 0 && v.pos <= loop_start_f {
+                            v.pos = (loop_start_f + (loop_start_f - v.pos))
+                                .clamp(0.0, loop_end_f);
                             v.loop_dir = 1;
                         }
-                    } else if v.pos >= v.loop_end as f64 {
-                        let span = (v.loop_end - v.loop_start) as f64;
-                        v.pos = v.loop_start as f64 + ((v.pos - v.loop_start as f64) % span);
+                    } else if v.pos >= loop_end_f {
+                        v.pos = loop_start_f + ((v.pos - loop_start_f) % loop_span_f);
                     }
                 }
 
@@ -2819,45 +3308,41 @@ impl MusicStudioArrangerEngine {
                 let idx2 = idx1 + 1;
                 let idx3 = (idx1 + 2).min(pcm_len - 1);
                 let frac = (v.pos - idx1 as f64) as f32;
-                let mut l = catmull_rom(
-                    v.pcm_l[idx0],
-                    v.pcm_l[idx1],
-                    v.pcm_l[idx2],
-                    v.pcm_l[idx3],
-                    frac,
-                );
-                let mut r = catmull_rom(
-                    v.pcm_r[idx0],
-                    v.pcm_r[idx1],
-                    v.pcm_r[idx2],
-                    v.pcm_r[idx3],
-                    frac,
-                );
+                let mut l = catmull_rom(pcm_l[idx0], pcm_l[idx1], pcm_l[idx2], pcm_l[idx3], frac);
+                let mut r = if is_mono {
+                    l
+                } else {
+                    catmull_rom(pcm_r[idx0], pcm_r[idx1], pcm_r[idx2], pcm_r[idx3], frac)
+                };
 
                 // Subtle 24-sample micro-crossfade before forward loop wrap when pre-loop audio exists
                 if v.loop_enabled && v.loop_mode == 2 && v.loop_end > v.loop_start + 32 {
                     let xfade_len = 24_usize.min((v.loop_end - v.loop_start) / 4);
                     if xfade_len >= 4
                         && v.loop_start >= xfade_len
-                        && v.pos + (xfade_len as f64) >= v.loop_end as f64
+                        && v.pos + (xfade_len as f64) >= loop_end_f
                     {
-                        let dist = v.pos + (xfade_len as f64) - (v.loop_end as f64);
+                        let dist = v.pos + (xfade_len as f64) - loop_end_f;
                         let alpha = (dist / xfade_len as f64).clamp(0.0, 1.0) as f32;
                         let pre_pos = (v.loop_start - xfade_len) as f64 + dist;
                         let pidx = pre_pos as usize;
                         if pidx + 1 < pcm_len {
                             let pfrac = (pre_pos - pidx as f64) as f32;
-                            let pl = v.pcm_l[pidx] + (v.pcm_l[pidx + 1] - v.pcm_l[pidx]) * pfrac;
-                            let pr = v.pcm_r[pidx] + (v.pcm_r[pidx + 1] - v.pcm_r[pidx]) * pfrac;
+                            let pl = pcm_l[pidx] + (pcm_l[pidx + 1] - pcm_l[pidx]) * pfrac;
                             l = l * (1.0 - alpha) + pl * alpha;
-                            r = r * (1.0 - alpha) + pr * alpha;
+                            r = if is_mono {
+                                l
+                            } else {
+                                let pr = pcm_r[pidx] + (pcm_r[pidx + 1] - pcm_r[pidx]) * pfrac;
+                                r * (1.0 - alpha) + pr * alpha
+                            };
                         }
                     }
                 }
 
-                let g = v.gain * v.env * atk * master;
-                out_l[f] += l * g * v.pan_l;
-                out_r[f] += r * g * v.pan_r;
+                let env_atk = v.env * atk;
+                out_l[f] += l * env_atk * gain_l;
+                out_r[f] += r * env_atk * gain_r;
 
                 v.pos += (v.loop_dir as f64) * v.phase_inc;
             }
@@ -2893,6 +3378,69 @@ mod tests {
         let (_, q3, l3) = detect_chord_from_notes(&[43, 47, 50, 53]).expect("G7");
         assert_eq!(q3, ChordQuality::Dom7);
         assert_eq!(l3, "G7");
+    }
+
+    #[test]
+    fn test_chord_modes_3_to_7_extended_chords_and_transposition() {
+        // Fingered3To7 rejects 1 or 2 held keys
+        assert!(detect_chord_with_mode(&[48], ChordMode::Fingered3To7).is_none());
+        assert!(detect_chord_with_mode(&[48, 52], ChordMode::Fingered3To7).is_none());
+
+        // SingleFinger accepts 1 key as Major immediately
+        let (r1, q1, l1) =
+            detect_chord_with_mode(&[48], ChordMode::SingleFinger).expect("1-key C major");
+        assert_eq!((r1, q1, l1.as_str()), (0, ChordQuality::Major, "C"));
+
+        // 3..7 note extended chords in Fingered3To7
+        let (_, q_add9, l_add9) =
+            detect_chord_with_mode(&[48, 50, 52, 55], ChordMode::Fingered3To7).expect("Cadd9");
+        assert_eq!((q_add9, l_add9.as_str()), (ChordQuality::Add9, "Cadd9"));
+
+        let (_, q_dom9_shell, l_dom9_shell) =
+            detect_chord_with_mode(&[48, 50, 52, 58], ChordMode::Fingered3To7)
+                .expect("C7(9) 4-note");
+        assert_eq!(
+            (q_dom9_shell, l_dom9_shell.as_str()),
+            (ChordQuality::Dom9, "C7(9)")
+        );
+
+        let (_, q_dom9_full, l_dom9_full) =
+            detect_chord_with_mode(&[48, 50, 52, 55, 58], ChordMode::Fingered3To7)
+                .expect("C7(9) 5-note");
+        assert_eq!(
+            (q_dom9_full, l_dom9_full.as_str()),
+            (ChordQuality::Dom9, "C7(9)")
+        );
+
+        let (_, q_m9, l_m9) =
+            detect_chord_with_mode(&[48, 50, 51, 55, 58], ChordMode::Fingered3To7).expect("Cm9");
+        assert_eq!((q_m9, l_m9.as_str()), (ChordQuality::Min9, "Cm9"));
+
+        let (_, q_maj9, l_maj9) =
+            detect_chord_with_mode(&[48, 50, 52, 55, 59], ChordMode::Fingered3To7)
+                .expect("Cmaj9");
+        assert_eq!((q_maj9, l_maj9.as_str()), (ChordQuality::Maj9, "Cmaj9"));
+
+        // Bass note breaks C6 vs Am7 tie
+        let (_, q_c6, l_c6) =
+            detect_chord_with_mode(&[48, 52, 55, 57], ChordMode::Fingered3To7).expect("C6");
+        assert_eq!((q_c6, l_c6.as_str()), (ChordQuality::Six, "C6"));
+
+        let (_, q_am7, l_am7) =
+            detect_chord_with_mode(&[45, 48, 52, 55], ChordMode::Fingered3To7).expect("Am7");
+        assert_eq!((q_am7, l_am7.as_str()), (ChordQuality::Min7, "Am7"));
+
+        // 7-note C13 chord
+        let (_, q_13, l_13) =
+            detect_chord_with_mode(&[48, 50, 52, 53, 55, 57, 58], ChordMode::Fingered3To7)
+                .expect("C13");
+        assert_eq!((q_13, l_13.as_str()), (ChordQuality::Dom13, "C13"));
+
+        // Bass preserves root while accompaniment adds 9th/7th color
+        assert_eq!(transpose_note_for_chord(36, 0, ChordQuality::Dom9, true), 36);
+        assert_eq!(transpose_note_for_chord(60, 0, ChordQuality::Dom9, false), 62); // D4 (9th)
+        assert_eq!(transpose_note_for_chord(67, 0, ChordQuality::Dom9, false), 70); // Bb4 (b7)
+        assert_eq!(transpose_note_for_chord(60, 0, ChordQuality::Add9, false), 62); // D4 (9th)
     }
 
     #[test]
@@ -2971,11 +3519,18 @@ mod tests {
         engine.load_package(pkg);
         assert!(engine.has_loaded_package());
         assert_eq!(engine.split_key, 54);
+        assert_eq!(engine.chord_mode, ChordMode::Fingered3To7);
         assert!(engine.lower_instrument.is_none());
 
-        // Trigger left-hand Am chord below/at split_key=54 -> changes chord + sync-starts rhythm, NO Lower voice triggered
-        engine.note_on(45, 110); // A2
-        engine.note_on(48, 108); // C3
+        // In default Fingered3To7 mode, 1 or 2 keys must NOT change chord or sync-start rhythm
+        engine.note_on(45, 110); // A2 (1 key)
+        assert!(!engine.rhythm_playing);
+        assert_eq!(engine.detected_chord_label, "C");
+        engine.note_on(48, 108); // C3 (2 keys)
+        assert!(!engine.rhythm_playing);
+        assert_eq!(engine.detected_chord_label, "C");
+
+        // 3rd key forms Am chord below/at split_key=54 -> changes chord + sync-starts rhythm, NO Lower voice triggered
         engine.note_on(52, 105); // E3 -> Am triad
         assert!(engine.rhythm_playing);
         assert_eq!(engine.detected_chord_label, "Am");
@@ -2992,8 +3547,48 @@ mod tests {
         engine.note_off(55, false);
         engine.voices.clear();
 
+        // Release held left-hand keys and switch to single_finger mode -> 1 key changes chord immediately
+        engine.note_off(45, false);
+        engine.note_off(48, false);
+        engine.note_off(52, false);
+        engine.set_keyboard_voice(
+            "split",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("single_finger"),
+        );
+        engine.note_on(41, 108); // F2 single key -> F
+        assert_eq!(engine.detected_chord_label, "F");
+        engine.note_off(41, false);
+        engine.set_keyboard_voice(
+            "split",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("fingered_3_7"),
+        );
+
         // Toggle SCAN UP and play upper triad (F4, A4, C5) -> should update chord to F
-        engine.set_keyboard_voice("upper1", None, None, None, None, Some(true), Some(1), None);
+        engine.set_keyboard_voice(
+            "upper1",
+            None,
+            None,
+            None,
+            None,
+            Some(true),
+            Some(1),
+            None,
+            None,
+        );
         engine.note_on(65, 110); // F4
         engine.note_on(69, 112); // A4
         engine.note_on(72, 110); // C5
