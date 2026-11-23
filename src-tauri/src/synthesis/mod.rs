@@ -487,6 +487,7 @@ impl PianoSynthEngine {
         &mut self,
         midi_note: u8,
         velocity_u8: u8,
+        velocity_gain: f32,
         params: &EngineParams,
         exciter: ExciterType,
         inharmonicity_base: f32,
@@ -627,7 +628,12 @@ impl PianoSynthEngine {
         let _ = is_bounce;
         v.sostenuto_held = pedals.sostenuto >= 0.5 && pedals.super_sostenuto;
         v.harmonic_held = pedals.harmonic >= 0.5;
-        v.velocity = vel_eff * soft_atten * mute_atten * note_gain;
+        let vel_boost = if velocity_gain.is_finite() {
+            velocity_gain.clamp(1.0, crate::midi::MAX_VELOCITY_CURVE_GAIN)
+        } else {
+            1.0
+        };
+        v.velocity = vel_eff * vel_boost * soft_atten * mute_atten * note_gain;
         v.freq = freq;
         v.age_samples = 0;
         v.string_count = string_count;
@@ -800,6 +806,18 @@ impl PianoSynthEngine {
         instrument: &InstrumentModel,
         pedals: &PedalState,
     ) {
+        self.note_on_with_gain(midi_note, velocity_u8, 1.0, params, instrument, pedals);
+    }
+
+    pub fn note_on_with_gain(
+        &mut self,
+        midi_note: u8,
+        velocity_u8: u8,
+        velocity_gain: f32,
+        params: &EngineParams,
+        instrument: &InstrumentModel,
+        pedals: &PedalState,
+    ) {
         if velocity_u8 == 0 {
             self.note_off(midi_note, params, pedals);
             return;
@@ -811,6 +829,7 @@ impl PianoSynthEngine {
         self.trigger_voice(
             midi_note,
             velocity_u8,
+            velocity_gain,
             params,
             instrument.exciter,
             instrument.inharmonicity_base,
@@ -998,6 +1017,7 @@ impl PianoSynthEngine {
                     self.trigger_voice(
                         ev.midi_note,
                         ev.velocity_u8,
+                        1.0,
                         params,
                         ev.exciter,
                         ev.inharmonicity_base,

@@ -3918,10 +3918,19 @@ impl MusicStudioArrangerEngine {
     }
 
     pub fn note_on(&mut self, note: u8, velocity: u8) {
+        self.note_on_with_gain(note, velocity, 1.0);
+    }
+
+    pub fn note_on_with_gain(&mut self, note: u8, velocity: u8, velocity_gain: f32) {
         if note >= 128 || velocity == 0 {
             self.note_off(note, false);
             return;
         }
+        let boost = if velocity_gain.is_finite() {
+            velocity_gain.clamp(1.0, crate::midi::MAX_VELOCITY_CURVE_GAIN)
+        } else {
+            1.0
+        };
         self.held_keys[note as usize] = true;
 
         if self.split_enabled && note <= self.split_key {
@@ -3943,7 +3952,7 @@ impl MusicStudioArrangerEngine {
             }
             if let Some(low_inst) = self.lower_instrument {
                 let played = (note as i16 + self.transpose as i16).clamp(0, 127) as u8;
-                self.trigger_instrument_note(low_inst, played, note, velocity, 0.65, 0, 0, false, None);
+                self.trigger_instrument_note(low_inst, played, note, velocity, 0.65 * boost, 0, 0, false, None);
             }
             return;
         }
@@ -3970,10 +3979,10 @@ impl MusicStudioArrangerEngine {
         let played_upper = (note as i16 + (self.upper_octave as i16 * 12) + self.transpose as i16)
             .clamp(0, 127) as u8;
         let u1 = self.upper1_instrument;
-        self.trigger_instrument_note(u1, played_upper, note, velocity, 0.85, 0, 0, false, None);
+        self.trigger_instrument_note(u1, played_upper, note, velocity, 0.85 * boost, 0, 0, false, None);
         if let Some(u2) = self.upper2_instrument {
             if u2 != u1 {
-                self.trigger_instrument_note(u2, played_upper, note, velocity, 0.68, 0, 0, false, None);
+                self.trigger_instrument_note(u2, played_upper, note, velocity, 0.68 * boost, 0, 0, false, None);
             }
         }
     }
@@ -4428,6 +4437,34 @@ mod tests {
             }], ots_presets: vec![], source_paths: vec![], sty_warnings: vec![],
             has_audio_style_chunks: false, uses_expansion_kit: false, sty_diagnostics_summary: None,
         })
+    }
+
+    #[test]
+    fn live_note_on_with_gain_boosts_volume_without_affecting_rhythm() {
+        let render_live = |gain: f32| {
+            let mut engine = MusicStudioArrangerEngine::new(48000.0);
+            engine.load_package(performance_fixture());
+            engine.note_on_with_gain(60, 127, gain);
+            let mut l = vec![0.0_f32; 256];
+            let mut r = vec![0.0_f32; 256];
+            engine.process_block(&mut l, &mut r);
+            l[128]
+        };
+        let base = render_live(1.0);
+        let boosted = render_live(1.30);
+        let clamped = render_live(2.0);
+        assert!(base > 0.05, "base={base}");
+        let ratio = boosted / base;
+        assert!((1.29..=1.31).contains(&ratio), "ratio={ratio}");
+        assert!((clamped - boosted).abs() < 1e-6);
+
+        let mut engine = MusicStudioArrangerEngine::new(48000.0);
+        engine.load_package(performance_fixture());
+        engine.note_on_with_gain(60, 0, 1.30);
+        let mut l = vec![0.0_f32; 256];
+        let mut r = vec![0.0_f32; 256];
+        engine.process_block(&mut l, &mut r);
+        assert_eq!(l[128], 0.0);
     }
 
     #[test]

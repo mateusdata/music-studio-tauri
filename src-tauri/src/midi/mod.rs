@@ -13,14 +13,18 @@ pub enum MidiEngineEvent {
     ProgramChange { program: u8, channel: u8 },
 }
 
-/// Evaluates a piecewise-linear MIDI velocity curve mapping raw velocity [1..127] -> [1..127].
-pub fn apply_velocity_curve(raw_vel: u8, curve: &[[f32; 2]]) -> u8 {
+pub const MAX_VELOCITY_CURVE_GAIN: f32 = 1.30;
+
+/// Evaluates a piecewise-linear MIDI velocity curve, returning `(midi_vel [1..127], gain [1.0..1.30])`.
+/// NoteOff (`raw_vel == 0`) always returns `(0, 1.0)`. Values above 100% cap MIDI velocity at 127
+/// and scale linear volume gain up to `MAX_VELOCITY_CURVE_GAIN`.
+pub fn apply_velocity_curve_with_gain(raw_vel: u8, curve: &[[f32; 2]]) -> (u8, f32) {
     if raw_vel == 0 {
-        return 0;
+        return (0, 1.0);
     }
     let clamped_vel = raw_vel.min(127);
     if curve.is_empty() {
-        return clamped_vel;
+        return (clamped_vel, 1.0);
     }
     // Select the bracketing points in one pass, without allocating/sorting
     // on each note. Equal-x ties match the previous stable sorted evaluation.
@@ -37,13 +41,21 @@ pub fn apply_velocity_curve(raw_vel: u8, curve: &[[f32; 2]]) -> u8 {
             if below.map(|p| point[0] >= p[0]).unwrap_or(true) { below = Some(point); }
         } else if above.map(|p| point[0] < p[0]).unwrap_or(true) { above = Some(point); }
     }
-    let Some(first) = first else { return clamped_vel; };
+    let Some(first) = first else { return (clamped_vel, 1.0); };
     let y = if x <= first[0] { first[1] }
         else if let (Some(lower), Some(upper)) = (below, above) {
             let t = (x - lower[0]) / (upper[0] - lower[0]).max(1e-5);
             lower[1] + (upper[1] - lower[1]) * t
         } else { last.unwrap_or(first)[1] };
-    (y.clamp(0.01, 1.0) * 127.0).round() as u8
+    let y_eff = y.clamp(0.01, MAX_VELOCITY_CURVE_GAIN);
+    let mapped_vel = (y_eff.min(1.0) * 127.0).round() as u8;
+    let gain = y_eff.max(1.0);
+    (mapped_vel, gain)
+}
+
+/// Evaluates a piecewise-linear MIDI velocity curve mapping raw velocity [1..127] -> [1..127].
+pub fn apply_velocity_curve(raw_vel: u8, curve: &[[f32; 2]]) -> u8 {
+    apply_velocity_curve_with_gain(raw_vel, curve).0
 }
 
 /// Applies semitone transposition (-36..=+36) and keyboard range clamping/filtering.
@@ -808,6 +820,28 @@ mod tests {
         assert!(apply_velocity_curve(32, &curve) < apply_velocity_curve(64, &curve));
         assert!(apply_velocity_curve(64, &curve) < apply_velocity_curve(96, &curve));
         assert_eq!(apply_velocity_curve(127, &curve), 127);
+    }
+
+    #[test]
+    fn velocity_curve_boost_above_100_caps_midi_and_scales_gain() {
+        assert_eq!(apply_velocity_curve_with_gain(0, &[[0.0, 1.3], [1.0, 1.3]]), (0, 1.0));
+        let curve = [[0.0, 0.5], [0.5, 1.0], [1.0, 1.3]];
+        let (v1, g1) = apply_velocity_curve_with_gain(1, &curve);
+        assert_eq!(v1, 65, "v1={v1}");
+        assert!((g1 - 1.0).abs() < 1e-5, "g1={g1}");
+        let (v64, g64) = apply_velocity_curve_with_gain(64, &curve);
+        assert_eq!(v64, 127);
+        assert!(g64 <= 1.01, "g64={g64}");
+        let (v96, g96) = apply_velocity_curve_with_gain(96, &curve);
+        assert_eq!(v96, 127);
+        assert!((1.14..=1.16).contains(&g96), "g96={g96}");
+        let (v127, g127) = apply_velocity_curve_with_gain(127, &curve);
+        assert_eq!(v127, 127);
+        assert!((g127 - 1.30).abs() < 1e-5, "g127={g127}");
+        let (vcapped, gcapped) = apply_velocity_curve_with_gain(64, &[[0.0, 2.0], [1.0, 2.0]]);
+        assert_eq!(vcapped, 127);
+        assert!((gcapped - 1.30).abs() < 1e-5);
+        assert_eq!(apply_velocity_curve_with_gain(64, &[[f32::NAN, f32::NAN]]), (64, 1.0));
     }
 
     #[test]

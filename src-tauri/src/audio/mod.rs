@@ -7,9 +7,9 @@ use crate::contracts::{
 use crate::effects::EffectsChain;
 use crate::instruments::build_factory_instruments;
 use crate::midi::{
-    apply_transpose_and_range, apply_velocity_curve, compute_microtonal_channel_offset,
-    connect_midi_port, evaluate_cc_mapping, generate_demo_midi_sequence, list_midi_input_ports,
-    MidiConnectionHandle, MidiEngineEvent,
+    apply_transpose_and_range, apply_velocity_curve_with_gain,
+    compute_microtonal_channel_offset, connect_midi_port, evaluate_cc_mapping,
+    generate_demo_midi_sequence, list_midi_input_ports, MidiConnectionHandle, MidiEngineEvent,
 };
 use crate::music_studio::{
     build_sty_package, list_all_music_packages, parse_instrument_file, parse_music_file,
@@ -46,9 +46,12 @@ fn virtual_note_command(note: u8, raw_velocity: u8, curve: &[[f32; 2]]) -> Audio
     const SENSITIVE_DEFAULT: [[f32; 2]; 5] = [
         [0.0, 0.0], [0.25, 0.45], [0.5, 0.75], [0.75, 0.92], [1.0, 1.0],
     ];
-    let velocity = if curve == HISTORICAL_DEFAULT || curve == SENSITIVE_DEFAULT { raw_velocity.min(127) }
-        else { apply_velocity_curve(raw_velocity, curve) };
-    AudioCommand::NoteOn { note, velocity }
+    let (velocity, velocity_gain) = if curve == HISTORICAL_DEFAULT || curve == SENSITIVE_DEFAULT {
+        (raw_velocity.min(127), 1.0)
+    } else {
+        apply_velocity_curve_with_gain(raw_velocity, curve)
+    };
+    AudioCommand::NoteOn { note, velocity, velocity_gain }
 }
 
 fn is_sty_path(path: &Path) -> bool {
@@ -65,7 +68,7 @@ fn is_sty_path(path: &Path) -> bool {
 
 #[derive(Debug, Clone)]
 pub enum AudioCommand {
-    NoteOn { note: u8, velocity: u8 },
+    NoteOn { note: u8, velocity: u8, velocity_gain: f32 },
     NoteOff { note: u8 },
     AllNotesOff,
     SetPedal { pedal: String, value: f32 },
@@ -257,7 +260,7 @@ fn dispatch_midi_event_to_audio(
                     entry.detune_cents = (channel_delta as f32) * (100.0 / 16.0);
                     let _ = cmd_tx.send(AudioCommand::UpdateParams(Box::new(params.clone())));
                 }
-                let mapped_vel = apply_velocity_curve(*velocity, &cfg.velocity_curve);
+                let (mapped_vel, velocity_gain) = apply_velocity_curve_with_gain(*velocity, &cfg.velocity_curve);
                 {
                     let mut t = shared.telemetry.write();
                     t.last_midi_note = Some(mapped_note);
@@ -266,6 +269,7 @@ fn dispatch_midi_event_to_audio(
                 let _ = cmd_tx.send(AudioCommand::NoteOn {
                     note: mapped_note,
                     velocity: mapped_vel,
+                    velocity_gain,
                 });
             }
         }
@@ -386,12 +390,12 @@ fn process_audio_command(
     let mut full_summary_dirty = false;
     let mut dynamic_summary_dirty = false;
     match cmd {
-        AudioCommand::NoteOn { note, velocity } => {
+        AudioCommand::NoteOn { note, velocity, velocity_gain } => {
             if arranger.has_loaded_package() {
-                arranger.note_on(note, velocity);
+                arranger.note_on_with_gain(note, velocity, velocity_gain);
                 dynamic_summary_dirty = true;
             } else {
-                synth.note_on(note, velocity, params, inst, pedals);
+                synth.note_on_with_gain(note, velocity, velocity_gain, params, inst, pedals);
             }
         }
         AudioCommand::NoteOff { note } => {
@@ -2316,6 +2320,7 @@ mod tests {
             tx.send(AudioCommand::NoteOn {
                 note,
                 velocity: 127,
+                velocity_gain: 1.0,
             })
             .unwrap();
         }
@@ -2506,7 +2511,8 @@ mod tests {
         let historical = vec![[0.0, 0.0], [0.25, 0.22], [0.5, 0.5], [0.75, 0.78], [1.0, 1.0]];
         let custom = vec![[0.0, 0.2], [0.5, 0.6], [1.0, 0.9]];
         let fixed = vec![[0.0, 0.7], [1.0, 0.7]];
-        for curve in [historical.clone(), custom, fixed] {
+        let boosted = vec![[0.0, 0.5], [0.5, 1.15], [1.0, 1.3]];
+        for curve in [historical.clone(), custom, fixed, boosted] {
             let mut saved = configuration::read(&manager.configuration_path).unwrap().unwrap();
             saved.midi_config.velocity_curve = curve.clone();
             let revision = manager.asset_revision.load(Ordering::SeqCst);
@@ -2550,12 +2556,20 @@ mod tests {
     fn test_virtual_custom_velocity_once_default_unchanged_and_zero_noteoff() {
         let config = MidiConfig::default();
         for velocity in [1_u8, 88, 96, 127] {
-            assert!(matches!(virtual_note_command(60, velocity, &config.velocity_curve), AudioCommand::NoteOn { velocity: value, .. } if value == velocity));
+            assert!(matches!(
+                virtual_note_command(60, velocity, &config.velocity_curve),
+                AudioCommand::NoteOn { velocity: value, velocity_gain, .. } if value == velocity && (velocity_gain - 1.0).abs() < 1e-6
+            ));
         }
         let custom = [[0.0, 0.1], [1.0, 0.5]];
-        let expected = apply_velocity_curve(96, &custom);
-        assert!(matches!(virtual_note_command(60, 96, &custom), AudioCommand::NoteOn { velocity, .. } if velocity == expected));
-        assert_ne!(expected, apply_velocity_curve(expected, &custom));
+        let expected = crate::midi::apply_velocity_curve(96, &custom);
+        assert!(matches!(virtual_note_command(60, 96, &custom), AudioCommand::NoteOn { velocity, velocity_gain, .. } if velocity == expected && (velocity_gain - 1.0).abs() < 1e-6));
+        assert_ne!(expected, crate::midi::apply_velocity_curve(expected, &custom));
+        let boosted = [[0.0, 1.3], [1.0, 1.3]];
+        assert!(matches!(
+            virtual_note_command(60, 88, &boosted),
+            AudioCommand::NoteOn { velocity: 127, velocity_gain, .. } if (velocity_gain - 1.30).abs() < 1e-5
+        ));
         assert!(matches!(virtual_note_command(60, 0, &custom), AudioCommand::NoteOff { note: 60 }));
     }
 
@@ -2578,7 +2592,7 @@ mod tests {
             while position < 2048 {
                 while event < events.len() && events[event].0 == position {
                     let (_, on, note, velocity) = events[event];
-                    let command = if on { AudioCommand::NoteOn { note, velocity } } else { AudioCommand::NoteOff { note } };
+                    let command = if on { AudioCommand::NoteOn { note, velocity, velocity_gain: 1.0 } } else { AudioCommand::NoteOff { note } };
                     process_audio_command(command, &mut synth, &mut arranger, &mut params, &mut pedals, &mut instrument, &shared);
                     event += 1;
                 }

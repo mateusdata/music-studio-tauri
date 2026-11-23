@@ -43,4 +43,26 @@ describe("Velocity settings", () => {
     expect(screen.getByRole("slider", { name: "Hi — toque forte" })).toHaveValue("90");
     expect(onChange).not.toHaveBeenCalled();
   });
+
+  it("supports up to 130% volume boost in sliders, curve output, and reopening saved boosted curves", () => {
+    const onChange = vi.fn();
+    const { unmount } = render(<VelocitySettings config={config} onChange={onChange} onClose={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Modo da curva de velocidade"), { target: { value: "custom" } });
+    fireEvent.change(screen.getByRole("slider", { name: "Mid — toque médio" }), { target: { value: "130" } });
+    expect(onChange).toHaveBeenLastCalledWith([[0, 0.5], [0.5, 1.3], [1, 0.5]]);
+    fireEvent.change(screen.getByLabelText("Modo da curva de velocidade"), { target: { value: "fixed" } });
+    fireEvent.change(screen.getByRole("slider", { name: "Velocidade fixa" }), { target: { value: "130" } });
+    expect(onChange).toHaveBeenLastCalledWith([[0, 1.3], [1, 1.3]]);
+    expect(velocityCurveFor("custom", [50, 115, 200], 50)).toEqual([[0, 0.5], [0.5, 1.15], [1, 1.3]]);
+    expect(velocityCurveFor("fixed", [50, 50, 50], 180)).toEqual([[0, 1.3], [1, 1.3]]);
+    unmount();
+
+    const reopenChange = vi.fn();
+    render(<VelocitySettings config={{ ...config, velocity_curve: [[0, 0.5], [0.5, 1.15], [1, 1.3]] }} onChange={reopenChange} onClose={vi.fn()} />);
+    expect(screen.getByLabelText("Modo da curva de velocidade")).toHaveValue("custom");
+    expect(screen.getByRole("slider", { name: "Lo — toque suave" })).toHaveValue("50");
+    expect(screen.getByRole("slider", { name: "Mid — toque médio" })).toHaveValue("115");
+    expect(screen.getByRole("slider", { name: "Hi — toque forte" })).toHaveValue("130");
+    expect(reopenChange).not.toHaveBeenCalled();
+  });
 });
