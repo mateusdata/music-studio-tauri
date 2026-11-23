@@ -31,6 +31,13 @@ O projeto inclui um sysroot de desenvolvimento não-root em `.sysroot/` para Lin
 npm test
 ```
 
+## Compatibilidade Linux / NVIDIA (WebKitGTK)
+
+No Linux, o `src-tauri/src/main.rs` define automaticamente `WEBKIT_DISABLE_DMABUF_RENDERER=1` (caso a variável ainda não esteja definida no ambiente) para evitar crashes (`SIGSEGV` em `SkiaGPUWorker` / `libnvidia-eglcore.so`) causados por incompatibilidade do renderizador DMA-BUF do WebKitGTK com drivers proprietários da NVIDIA, preservando a aceleração por GPU da WebView.
+
+- Para sobrescrever e reativar o DMA-BUF manualmente: `WEBKIT_DISABLE_DMABUF_RENDERER=0 piano-tect-tauri`
+- Caso ainda ocorra erro gráfico em algum driver específico: `WEBKIT_DISABLE_COMPOSITING_MODE=1 piano-tect-tauri`
+
 ## Protocolo de Retomada para Novos Agentes
 
 1. Leia `README.md`, `docs/HANDOFF.md`, `docs/CURRENT_STATE.md` e `docs/NEXT_TASK.md`.
