@@ -18,9 +18,13 @@ import type {
 } from "../types/engine";
 
 export type LibraryFormatFilter = "all" | "music" | "sty";
+export type StudioAppMode = "music_studio" | "kontakt";
 
 export interface ArrangerTopbarProps {
+  appMode: StudioAppMode;
+  onSwitchMode: (mode: StudioAppMode) => void;
   packages: MusicPackageEntry[];
+  kontaktPackages: MusicPackageEntry[];
   activePackagePath: string;
   styles: MusicStyleSummary[];
   activeStyleIndex: number;
@@ -30,10 +34,12 @@ export interface ArrangerTopbarProps {
   bufferSize: number;
   telemetry: EngineTelemetry | null;
   onLoadPackage: (filePath: string) => void;
+  onLoadKontaktPackage: (filePath: string) => void;
   onSelectStyle: (styleIndex: number) => void;
   onPickMusicDialog: () => void;
   onPickStyDialog: () => void;
   onPickStyFolderDialog: () => void;
+  onPickKontaktDialog: () => void;
   onMidiConnect: (portName: string) => void;
   onExportWav: () => void;
   onOpenLogs: () => void;
@@ -83,7 +89,10 @@ function formatPackageSublabel(pkg: MusicPackageEntry): string {
  * selectors, .Music / .STY import triggers, MIDI/WAV controls, and audio telemetry.
  */
 export function ArrangerTopbar({
+  appMode,
+  onSwitchMode,
   packages,
+  kontaktPackages,
   activePackagePath,
   styles,
   activeStyleIndex,
@@ -93,10 +102,12 @@ export function ArrangerTopbar({
   bufferSize,
   telemetry,
   onLoadPackage,
+  onLoadKontaktPackage,
   onSelectStyle,
   onPickMusicDialog,
   onPickStyDialog,
   onPickStyFolderDialog,
+  onPickKontaktDialog,
   onMidiConnect,
   onExportWav,
   onOpenLogs,
@@ -112,8 +123,16 @@ export function ArrangerTopbar({
   onBufferSizeChange,
 }: ArrangerTopbarProps) {
   const [formatFilter, setFormatFilter] = useState<LibraryFormatFilter>("all");
+  const isKontaktMode = appMode === "kontakt";
 
   const packageOptions = useMemo(() => {
+    if (isKontaktMode) {
+      return kontaktPackages.map((pkg) => ({
+        value: pkg.file_path,
+        label: pkg.file_name,
+        sublabel: pkg.version ? `[${pkg.version}]` : "[Kontakt]",
+      }));
+    }
     return packages
       .filter((pkg) => formatFilter === "all" || getPackageFormat(pkg) === formatFilter)
       .map((pkg) => ({
@@ -121,7 +140,7 @@ export function ArrangerTopbar({
         label: pkg.file_name,
         sublabel: formatPackageSublabel(pkg),
       }));
-  }, [packages, formatFilter]);
+  }, [isKontaktMode, kontaktPackages, packages, formatFilter]);
 
   const styleOptions = useMemo(
     () =>
@@ -152,28 +171,57 @@ export function ArrangerTopbar({
 
       <div className="selector-row">
         <div
-          className="format-filter-pills"
+          className="mode-switch-pills"
           role="group"
-          aria-label="Filtro de formato da biblioteca"
+          aria-label="Modo de reprodução"
         >
-          {FORMAT_FILTER_OPTIONS.map((opt) => (
-            <button
-              key={opt.id}
-              type="button"
-              aria-pressed={formatFilter === opt.id}
-              className={`format-filter-pill ${formatFilter === opt.id ? "active" : ""}`}
-              onClick={() => setFormatFilter(opt.id)}
-            >
-              {opt.label}
-            </button>
-          ))}
+          <button
+            type="button"
+            aria-pressed={!isKontaktMode}
+            className={`mode-switch-pill ${!isKontaktMode ? "active" : ""}`}
+            onClick={() => onSwitchMode("music_studio")}
+            title="Modo padrão Music Studio (.Music / .STY)"
+          >
+            Music Studio
+          </button>
+          <button
+            type="button"
+            aria-pressed={isKontaktMode}
+            className={`mode-switch-pill mode-switch-kontakt ${isKontaktMode ? "active" : ""}`}
+            onClick={() => onSwitchMode("kontakt")}
+            title="Modo Kontakt 8 (.nkm / .nki + .STY)"
+          >
+            Modo Kontakt
+          </button>
         </div>
 
+        {!isKontaktMode && (
+          <div
+            className="format-filter-pills"
+            role="group"
+            aria-label="Filtro de formato da biblioteca"
+          >
+            {FORMAT_FILTER_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                aria-pressed={formatFilter === opt.id}
+                className={`format-filter-pill ${formatFilter === opt.id ? "active" : ""}`}
+                onClick={() => setFormatFilter(opt.id)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         <SearchableSelect
-          ariaLabel="Music Package Selector"
+          ariaLabel={isKontaktMode ? "Kontakt Package Selector" : "Music Package Selector"}
           value={activePackagePath}
-          onChange={onLoadPackage}
-          searchPlaceholder="Pesquisar pacote .Music..."
+          onChange={isKontaktMode ? onLoadKontaktPackage : onLoadPackage}
+          searchPlaceholder={
+            isKontaktMode ? "Pesquisar pacote Kontakt..." : "Pesquisar pacote .Music..."
+          }
           options={packageOptions}
         />
 
@@ -190,34 +238,48 @@ export function ArrangerTopbar({
           options={styleOptions}
         />
 
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={onPickMusicDialog}
-          title="Abrir pasta do Linux para importar .Music"
-        >
-          <FolderOpen size={13} /> Importar .Music
-        </button>
+        {isKontaktMode ? (
+          <button
+            type="button"
+            className="btn btn-kontakt"
+            aria-label="Importar Kontakt"
+            onClick={onPickKontaktDialog}
+            title="Importar pacote Kontakt (.nkm / .nki)"
+          >
+            <FolderOpen size={13} /> Importar Kontakt
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={onPickMusicDialog}
+              title="Abrir pasta do Linux para importar .Music"
+            >
+              <FolderOpen size={13} /> Importar .Music
+            </button>
 
-        <button
-          type="button"
-          className="btn btn-sty"
-          aria-label="Importar .STY"
-          onClick={onPickStyDialog}
-          title="Importar um ou mais arquivos .STY (Yamaha)"
-        >
-          <FileMusic size={13} /> Importar .STY
-        </button>
+            <button
+              type="button"
+              className="btn btn-sty"
+              aria-label="Importar .STY"
+              onClick={onPickStyDialog}
+              title="Importar um ou mais arquivos .STY (Yamaha)"
+            >
+              <FileMusic size={13} /> Importar .STY
+            </button>
 
-        <button
-          type="button"
-          className="btn btn-sty"
-          aria-label="Pasta .STY"
-          onClick={onPickStyFolderDialog}
-          title="Carregar pasta inteira de ritmos .STY"
-        >
-          <FolderOpen size={13} /> Pasta .STY
-        </button>
+            <button
+              type="button"
+              className="btn btn-sty"
+              aria-label="Pasta .STY"
+              onClick={onPickStyFolderDialog}
+              title="Carregar pasta inteira de ritmos .STY"
+            >
+              <FolderOpen size={13} /> Pasta .STY
+            </button>
+          </>
+        )}
 
         <select
           aria-label="MIDI Input"

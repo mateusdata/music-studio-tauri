@@ -120,6 +120,18 @@ export const engineClient = {
     return invoke<MusicPackageSummary | null>("pick_music_package_dialog");
   },
 
+  async listKontaktPackages(): Promise<MusicPackageEntry[]> {
+    return invoke<MusicPackageEntry[]>("list_kontakt_packages");
+  },
+
+  async loadKontaktPackage(path: string): Promise<MusicPackageSummary> {
+    return invoke<MusicPackageSummary>("load_kontakt_package", { path });
+  },
+
+  async pickKontaktDialog(): Promise<MusicPackageSummary | null> {
+    return invoke<MusicPackageSummary | null>("pick_kontakt_dialog");
+  },
+
   async resetArrangerInstruments(): Promise<MusicPackageSummary> {
     return invoke<MusicPackageSummary>("reset_arranger_instruments");
   },

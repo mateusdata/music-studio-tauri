@@ -3,6 +3,7 @@ pub mod commands;
 pub mod contracts;
 pub mod effects;
 pub mod instruments;
+pub mod kontakt;
 pub mod midi;
 pub mod music_studio;
 pub mod presets;
@@ -91,6 +92,9 @@ pub fn run() {
             commands::cleanup_style_duplicates,
             commands::restore_style_duplicates,
             commands::show_main_window,
+            commands::list_kontakt_packages,
+            commands::load_kontakt_package,
+            commands::pick_kontakt_dialog,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Piano Tect Tauri application");

@@ -622,3 +622,58 @@ pub fn show_main_window(window: tauri::WebviewWindow) {
     let _ = window.show();
     let _ = window.set_focus();
 }
+
+#[tauri::command]
+pub async fn list_kontakt_packages() -> Vec<MusicPackageEntry> {
+    tauri::async_runtime::spawn_blocking(crate::kontakt::list_kontakt_packages)
+        .await
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+pub async fn load_kontakt_package(
+    engine: State<'_, Arc<AudioEngineManager>>,
+    path: String,
+) -> Result<MusicPackageSummary, String> {
+    let engine = Arc::clone(engine.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        engine.load_kontakt_package(&PathBuf::from(path))
+    })
+    .await
+    .map_err(|e| format!("Falha ao carregar pacote Kontakt: {e}"))?
+}
+
+#[tauri::command]
+pub async fn pick_kontakt_dialog(
+    engine: State<'_, Arc<AudioEngineManager>>,
+) -> Result<Option<MusicPackageSummary>, String> {
+    let engine = Arc::clone(engine.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        let default_dir = if Path::new(crate::kontakt::USER_DOWNLOADS_KONTAKT_DIR).exists() {
+            format!("{}/", crate::kontakt::USER_DOWNLOADS_KONTAKT_DIR)
+        } else if Path::new(crate::kontakt::USER_DOCUMENTS_KONTAKT_DIR).exists() {
+            format!("{}/", crate::kontakt::USER_DOCUMENTS_KONTAKT_DIR)
+        } else {
+            "/home/data/Downloads/".to_string()
+        };
+        let output = std::process::Command::new("/usr/bin/zenity")
+            .arg("--file-selection")
+            .arg("--title=Importar Pacote Kontakt (.NKM / .NKI)")
+            .arg(format!("--filename={default_dir}"))
+            .arg("--file-filter=Kontakt Multi/Instrument (*.nkm *.NKM *.nki *.NKI) | *.nkm *.NKM *.nki *.NKI")
+            .arg("--file-filter=Todos os arquivos | *")
+            .output()
+            .map_err(|e| format!("Falha ao abrir explorador de arquivos (zenity): {e}"))?;
+
+        if !output.status.success() {
+            return Ok(None);
+        }
+        let selected = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if selected.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(engine.load_kontakt_package(&PathBuf::from(selected))?))
+    })
+    .await
+    .map_err(|e| format!("Falha na tarefa: {e}"))?
+}

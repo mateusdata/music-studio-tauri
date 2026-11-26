@@ -1191,3 +1191,36 @@ describe("Late saved configuration bootstrap", () => {
     }
   });
 });
+
+describe("Modo Kontakt", () => {
+  it("switches to Modo Kontakt, lists and loads Kontakt pack, and shows Importar Kontakt", async () => {
+    const musicState = buildMockArrangerState();
+    setupTauriStateMocks([], musicState);
+    const kontaktPack: MusicPackageEntry = {
+      file_name: "FORRO BOYS.nkm",
+      file_path: "/home/data/Downloads/ritmos kontakt 2026/FORRO BOYS.nkm",
+      size_mb: 0.2,
+      version: "Kontakt + STY",
+      format: "kontakt",
+    };
+    const kontaktState: MusicPackageSummary = {
+      ...musicState,
+      file_name: "FORRO BOYS.nkm",
+      file_path: kontaktPack.file_path,
+      source_format: "kontakt",
+      styles: [{ id: 1, name: "FORROBOYS .S948", category: "Kontakt", sections: ["Variation 1"] }],
+    };
+    const listKontakt = vi.spyOn(engineClient, "listKontaktPackages").mockResolvedValue([kontaktPack]);
+    const loadKontakt = vi.spyOn(engineClient, "loadKontaktPackage").mockResolvedValue(kontaktState);
+
+    render(<App />);
+    const kontaktBtn = await screen.findByRole("button", { name: "Modo Kontakt" });
+    expect(kontaktBtn).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(kontaktBtn);
+
+    await waitFor(() => expect(listKontakt).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(loadKontakt).toHaveBeenCalledWith(kontaktPack.file_path));
+    expect(kontaktBtn).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Importar Kontakt" })).toBeInTheDocument();
+  });
+});

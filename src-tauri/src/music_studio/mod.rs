@@ -3186,8 +3186,9 @@ impl MusicStudioArrangerEngine {
     }
 
     pub fn load_package(&mut self, mut pkg: Arc<LoadedMusicPackage>) {
+        let was_playing = self.rhythm_playing && self.package.is_some();
         self.all_notes_off();
-        self.rhythm_playing = false;
+        self.rhythm_playing = was_playing && !pkg.styles.is_empty();
         self.current_tick = 0.0;
         self.pending_section = None;
         self.tempo_locked = false;
@@ -3267,7 +3268,10 @@ impl MusicStudioArrangerEngine {
                 })
                 .map(|i| i.index)
         });
-        let sty_ots_upper1 = if pkg.source_format == "sty" || pkg.source_format == "sty_pack" {
+        let sty_ots_upper1 = if pkg.source_format == "sty"
+            || pkg.source_format == "sty_pack"
+            || pkg.source_format == "kontakt"
+        {
             pkg.ots_presets.first().and_then(|ots| {
                 pkg.instruments
                     .get(ots.upper1_instrument)
@@ -3718,6 +3722,7 @@ impl MusicStudioArrangerEngine {
             }
             self.pending_section = None;
             self.current_tick = 0.0;
+            self.voices.retain(|v| !v.from_rhythm);
         }
     }
 
@@ -3841,6 +3846,17 @@ impl MusicStudioArrangerEngine {
                         !z.pcm_l.is_empty() && midi_note >= z.key_low && midi_note <= z.key_high
                     })
                 })
+        } else if from_rhythm && pkg.source_format == "kontakt" {
+            // Kontakt rhythm tracks obey strict [key_low..=key_high] and [vel_low..=vel_high]
+            // zone gates so SFX / velocity-sliced guitars (GTR CALANGO, EFX) never misfire on
+            // out-of-range keys or velocities.
+            inst.zones.iter().find(|z| {
+                !z.pcm_l.is_empty()
+                    && midi_note >= z.key_low
+                    && midi_note <= z.key_high
+                    && velocity >= z.vel_low
+                    && velocity <= z.vel_high
+            })
         } else {
             // For melodic instruments, always honor explicit [key_low, key_high] ranges first.
             // Some SoundFonts (e.g. Accordion_Master.sf2) have zones whose root_key lies outside

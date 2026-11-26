@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { engineClient } from "./services/engineClient";
-import { ArrangerTopbar } from "./components/ArrangerTopbar";
+import { ArrangerTopbar, type StudioAppMode } from "./components/ArrangerTopbar";
 import { MixerPanel } from "./components/MixerPanel";
 import { LogsDialog, type StudioLogEntry } from "./components/LogsDialog";
 import { LcdPanel, resolveStyWarnings } from "./components/LcdPanel";
@@ -160,7 +160,7 @@ function createPreviewPackages(): MusicPackageEntry[] {
 function mergePackageEntry(
   prev: MusicPackageEntry[],
   summary: MusicPackageSummary,
-  format: "music" | "sty",
+  format: "music" | "sty" | "kontakt",
 ): MusicPackageEntry[] {
   if (!summary.file_path || prev.some((p) => p.file_path === summary.file_path)) {
     return prev;
@@ -170,7 +170,7 @@ function mergePackageEntry(
       file_name: summary.file_name,
       file_path: summary.file_path,
       size_mb: 0,
-      version: summary.version || (format === "sty" ? "STY" : ""),
+      version: summary.version || (format === "sty" ? "STY" : format === "kontakt" ? "Kontakt" : ""),
       format,
     },
     ...prev,
@@ -178,9 +178,24 @@ function mergePackageEntry(
 }
 
 export function App() {
+  const [appMode, setAppMode] = useState<StudioAppMode>("music_studio");
   const [packages, setPackages] = useState<MusicPackageEntry[]>(() =>
     engineClient.isTauri() ? [] : createPreviewPackages(),
   );
+  const [kontaktPackages, setKontaktPackages] = useState<MusicPackageEntry[]>(() =>
+    engineClient.isTauri()
+      ? []
+      : [
+          {
+            file_name: "FORRO BOYS.nkm",
+            file_path: "preview://FORRO BOYS.nkm",
+            size_mb: 0.1,
+            version: "Kontakt + STY",
+            format: "kontakt",
+          },
+        ],
+  );
+  const lastMusicPackagePath = useRef<string>("");
   const [arranger, setArranger] = useState<MusicPackageSummary>(() =>
     engineClient.isTauri()
       ? createInitialTauriArrangerState()
@@ -347,6 +362,7 @@ export function App() {
     try {
       const nextState = await engineClient.loadMusicPackage(filePath);
       arrangerRevision.current++;
+      lastMusicPackagePath.current = nextState.file_path;
       setArranger(nextState);
       setStatusMsg(
         `Carregado ${nextState.file_name}: ${nextState.instruments.length} timbres e ${nextState.styles.length} estilo(s)`,
@@ -355,6 +371,110 @@ export function App() {
       setStatusMsg(`Falha ao carregar pacote: ${String(err)}`);
     }
   }, []);
+
+  const handleLoadKontaktPackage = useCallback(async (filePath: string) => {
+    if (!filePath) return;
+    arrangerRevision.current++;
+    if (!engineClient.isTauri()) {
+      const name = filePath.split("/").pop() ?? filePath;
+      setArranger((prev) => ({
+        ...prev,
+        file_name: name,
+        file_path: filePath,
+        source_format: "kontakt",
+      }));
+      setStatusMsg(`Modo Kontakt (preview): ${name}`);
+      return;
+    }
+    setStatusMsg("Carregando pacote Kontakt (.nkm / .ncw + .STY)...");
+    try {
+      const nextState = await engineClient.loadKontaktPackage(filePath);
+      arrangerRevision.current++;
+      setArranger(nextState);
+      setKontaktPackages((prev) => mergePackageEntry(prev, nextState, "kontakt"));
+      setStatusMsg(
+        `Modo Kontakt: ${nextState.file_name} (${nextState.instruments.length} timbres, ${nextState.styles.length} ritmo(s))`,
+      );
+    } catch (err) {
+      setStatusMsg(`Falha ao carregar pacote Kontakt: ${String(err)}`);
+    }
+  }, []);
+
+  const handlePickKontaktDialog = useCallback(async () => {
+    if (!engineClient.isTauri()) {
+      setStatusMsg("Importador Kontakt (.nkm/.nki) disponível no aplicativo desktop Tauri");
+      return;
+    }
+    arrangerRevision.current++;
+    setStatusMsg("Selecionando pacote Kontakt (.nkm / .nki)...");
+    try {
+      const nextState = await engineClient.pickKontaktDialog();
+      if (!nextState) {
+        setStatusMsg("Importação Kontakt cancelada.");
+        return;
+      }
+      arrangerRevision.current++;
+      setAppMode("kontakt");
+      setArranger(nextState);
+      setKontaktPackages((prev) => mergePackageEntry(prev, nextState, "kontakt"));
+      setStatusMsg(
+        `Modo Kontakt: ${nextState.file_name} (${nextState.instruments.length} timbres, ${nextState.styles.length} ritmo(s))`,
+      );
+    } catch (err) {
+      setStatusMsg(`Falha ao importar pacote Kontakt: ${String(err)}`);
+    }
+  }, []);
+
+  const handleSwitchMode = useCallback(
+    async (nextMode: StudioAppMode) => {
+      if (nextMode === appMode) return;
+      if (nextMode === "kontakt") {
+        if (arranger.file_path && arranger.source_format !== "kontakt") {
+          lastMusicPackagePath.current = arranger.file_path;
+        }
+        setAppMode("kontakt");
+        if (!engineClient.isTauri()) {
+          const first = kontaktPackages[0];
+          if (first) {
+            setArranger((prev) => ({
+              ...prev,
+              file_name: first.file_name,
+              file_path: first.file_path,
+              source_format: "kontakt",
+            }));
+          }
+          return;
+        }
+        setStatusMsg("Ativando Modo Kontakt...");
+        try {
+          const list = await engineClient.listKontaktPackages();
+          setKontaktPackages(list);
+          if (list.length > 0) {
+            await handleLoadKontaktPackage(list[0].file_path);
+          } else {
+            setStatusMsg("Nenhum pacote Kontakt encontrado. Clique em 'Importar Kontakt'.");
+          }
+        } catch (err) {
+          setStatusMsg(`Falha ao listar pacotes Kontakt: ${String(err)}`);
+        }
+      } else {
+        setAppMode("music_studio");
+        const restorePath = lastMusicPackagePath.current || packages[0]?.file_path;
+        if (restorePath) {
+          await handleLoadPackage(restorePath);
+        }
+      }
+    },
+    [
+      appMode,
+      arranger.file_path,
+      arranger.source_format,
+      kontaktPackages,
+      packages,
+      handleLoadKontaktPackage,
+      handleLoadPackage,
+    ],
+  );
 
   const handlePickFileDialog = useCallback(async () => {
     if (!engineClient.isTauri()) {
@@ -872,7 +992,10 @@ export function App() {
   return (
     <div className="studio-shell">
       <ArrangerTopbar
+        appMode={appMode}
+        onSwitchMode={handleSwitchMode}
         packages={packages}
+        kontaktPackages={kontaktPackages}
         activePackagePath={arranger.file_path}
         styles={arranger.styles}
         activeStyleIndex={arranger.active_style_index}
@@ -882,10 +1005,12 @@ export function App() {
         bufferSize={bufferSize}
         telemetry={telemetry}
         onLoadPackage={handleLoadPackage}
+        onLoadKontaktPackage={handleLoadKontaktPackage}
         onSelectStyle={handleSelectStyle}
         onPickMusicDialog={handlePickFileDialog}
         onPickStyDialog={handlePickStyDialog}
         onPickStyFolderDialog={handlePickStyFolderDialog}
+        onPickKontaktDialog={handlePickKontaktDialog}
         onMidiConnect={handleMidiConnect}
         onOpenLogs={() => setLogsOpen(true)}
         onVelocitySettings={() => setVelocityOpen(true)}

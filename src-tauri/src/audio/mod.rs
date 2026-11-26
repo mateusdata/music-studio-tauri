@@ -1656,6 +1656,15 @@ impl AudioEngineManager {
         Ok(self.commit_loaded_package_locked(parsed))
     }
 
+    pub fn load_kontakt_package(&self, path: &PathBuf) -> Result<MusicPackageSummary, String> {
+        self.asset_revision.fetch_add(1, Ordering::SeqCst);
+        let _assets = self.asset_lock.lock();
+        let parsed = crate::kontakt::build_kontakt_package(path, &[])?;
+        let _operation = self.operation_lock.lock();
+        self.package_uses_soundfont.store(false, Ordering::Relaxed);
+        Ok(self.commit_loaded_package_locked(parsed))
+    }
+
     pub fn load_soundfont_file(&self, path: &PathBuf) -> Result<MusicPackageSummary, String> {
         self.asset_revision.fetch_add(1, Ordering::SeqCst);
         let _assets = self.asset_lock.lock();
