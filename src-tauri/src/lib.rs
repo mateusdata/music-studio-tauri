@@ -25,11 +25,19 @@ pub fn run() {
             app.state::<Arc<AudioEngineManager>>()
                 .inner()
                 .initialize_background();
-            if let (Some(win), Some(icon)) = (
-                app.get_webview_window("main"),
-                app.default_window_icon().cloned(),
-            ) {
-                let _ = win.set_icon(icon);
+            if let Some(win) = app.get_webview_window("main") {
+                if let Some(icon) = app.default_window_icon().cloned() {
+                    let _ = win.set_icon(icon);
+                }
+                // Safety fallback: if WebKitGTK fails to invoke show_main_window, reveal after 1.5s.
+                let fallback_win = win.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(1500));
+                    if !fallback_win.is_visible().unwrap_or(true) {
+                        let _ = fallback_win.show();
+                        let _ = fallback_win.set_focus();
+                    }
+                });
             }
             Ok(())
         })
@@ -82,6 +90,7 @@ pub fn run() {
             commands::scan_style_duplicates,
             commands::cleanup_style_duplicates,
             commands::restore_style_duplicates,
+            commands::show_main_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Piano Tect Tauri application");

@@ -284,11 +284,15 @@ export function App() {
     refreshTelemetry();
     refreshArranger();
     refreshMidi();
+    const revealTimer = window.setTimeout(() => {
+      engineClient.showMainWindow().catch(() => {});
+    }, 30);
     const interval = setInterval(() => { refreshTelemetry(); refreshArranger(); }, 100);
     // Background configuration/bootstrap can finish after the initial queries.
     const bootstrapPoll = setInterval(() => { refreshMidi(); refreshSnapshot(); }, 2500);
     return () => {
       alive = false;
+      window.clearTimeout(revealTimer);
       clearInterval(interval);
       clearInterval(bootstrapPoll);
     };
@@ -927,6 +931,8 @@ export function App() {
             arranger={arranger}
             onVoiceChange={handleVoiceChange}
             onPickInstrumentDialog={handlePickInstrumentDialog}
+            sustainOn={sustainOn}
+            onToggleSustain={handleToggleSustain}
           />
         </div>
 
@@ -1008,23 +1014,6 @@ export function App() {
         </section>
       )}
       <footer className="keyboard-dock">
-        <div className="pedals-bar">
-          <div className="pedals-cluster">
-            <button
-              type="button"
-              aria-pressed={sustainOn}
-              className={`pedal-btn ${sustainOn ? "active" : ""}`}
-              onClick={handleToggleSustain}
-            >
-              Sustain (Damper)
-            </button>
-
-          </div>
-
-          <span className="keyboard-hint">Teclado PC: Z–M (Acordes) / Q–P (Solo)</span>
-
-        </div>
-
         <VirtualKeyboard
           activeNotes={telemetry?.active_notes ?? []}
           extendedRange={false}

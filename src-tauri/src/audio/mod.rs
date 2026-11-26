@@ -1083,6 +1083,8 @@ impl AudioEngineManager {
             let error_shared = Arc::clone(&shared);
             let mut samples_since_telemetry: usize = 0;
             let mut last_observed_frames: usize = 0;
+            let fade_in_total: usize = ((sr as usize) / 64).max(1);
+            let mut fade_in_pos: usize = 0;
 
             let attempt = device.build_output_stream(
                 &config,
@@ -1135,8 +1137,15 @@ impl AudioEngineManager {
                             rt.fx.process_block(slice_l, slice_r, &rt.params);
                         }
                         for frame in 0..count {
-                            let l = slice_l[frame];
-                            let r = slice_r[frame];
+                            let fade = if fade_in_pos < fade_in_total {
+                                let g = fade_in_pos as f32 / fade_in_total as f32;
+                                fade_in_pos += 1;
+                                g
+                            } else {
+                                1.0
+                            };
+                            let l = slice_l[frame] * fade;
+                            let r = slice_r[frame] * fade;
                             peak_l = peak_l.max(l.abs());
                             peak_r = peak_r.max(r.abs());
                             sq_l += l * l;
@@ -2511,7 +2520,7 @@ mod tests {
         let historical = vec![[0.0, 0.0], [0.25, 0.22], [0.5, 0.5], [0.75, 0.78], [1.0, 1.0]];
         let custom = vec![[0.0, 0.2], [0.5, 0.6], [1.0, 0.9]];
         let fixed = vec![[0.0, 0.7], [1.0, 0.7]];
-        let boosted = vec![[0.0, 0.5], [0.5, 1.15], [1.0, 1.3]];
+        let boosted = vec![[0.0, 1.0], [0.5, 1.5], [1.0, 2.0]];
         for curve in [historical.clone(), custom, fixed, boosted] {
             let mut saved = configuration::read(&manager.configuration_path).unwrap().unwrap();
             saved.midi_config.velocity_curve = curve.clone();
@@ -2565,10 +2574,10 @@ mod tests {
         let expected = crate::midi::apply_velocity_curve(96, &custom);
         assert!(matches!(virtual_note_command(60, 96, &custom), AudioCommand::NoteOn { velocity, velocity_gain, .. } if velocity == expected && (velocity_gain - 1.0).abs() < 1e-6));
         assert_ne!(expected, crate::midi::apply_velocity_curve(expected, &custom));
-        let boosted = [[0.0, 1.3], [1.0, 1.3]];
+        let boosted = [[0.0, 2.0], [1.0, 2.0]];
         assert!(matches!(
             virtual_note_command(60, 88, &boosted),
-            AudioCommand::NoteOn { velocity: 127, velocity_gain, .. } if (velocity_gain - 1.30).abs() < 1e-5
+            AudioCommand::NoteOn { velocity: 127, velocity_gain, .. } if (velocity_gain - 2.0).abs() < 1e-5
         ));
         assert!(matches!(virtual_note_command(60, 0, &custom), AudioCommand::NoteOff { note: 60 }));
     }

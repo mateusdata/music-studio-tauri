@@ -616,3 +616,9 @@ pub async fn restore_style_duplicates(manifest_path: String) -> Result<CleanupRe
     .await
     .map_err(|e| format!("Falha na recuperação: {e}"))?
 }
+
+#[tauri::command]
+pub fn show_main_window(window: tauri::WebviewWindow) {
+    let _ = window.show();
+    let _ = window.set_focus();
+}

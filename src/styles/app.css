@@ -2404,11 +2404,11 @@ input[type="range"].studio-range::-webkit-slider-thumb {
 .lcd-playback-row .btn-start-stop { min-width: 130px; }
 .lcd-playback-row .lcd-tempo-row { flex: 1; margin-top: 0; }
 .lcd-tempo-value, .lcd-chord-value { font-variant-numeric: tabular-nums; }
-.piano-keys-scroll { height: 184px; flex-shrink: 0; scrollbar-width: thin; }
-.piano-keys-track { height: 170px; }
+.piano-keys-scroll { height: 222px; flex-shrink: 0; scrollbar-width: thin; }
+.piano-keys-track { height: 208px; }
 .white-key { flex-basis: 34px; touch-action: none; }
 .black-key { touch-action: none; }
-.keyboard-hint { font-size: 11px; color: var(--text-muted); }
+.hardware-toggle-row .pedal-btn { padding: 4px 8px; font-size: 11px; }
 .status-banner { color: var(--text-secondary); padding: 5px 12px; flex-shrink: 0; overflow-wrap: anywhere; }
 .status-error { color: #fca5a5; background: #351b22; }
 .library-action-panel {
@@ -2432,7 +2432,7 @@ input[type="range"].studio-range::-webkit-slider-thumb {
   .volume-pill .vu-bar-wrap, .voices-pill { display: none; }
   .keyboard-hint { max-width: 200px; text-align: right; }
 }
-.keyboard-dock { flex-shrink: 0; }
+.keyboard-dock { padding: 6px 10px 8px; gap: 0; flex-shrink: 0; }
 .lcd-tempo-row.lcd-playback-row { gap: 8px; margin-top: 0; }
 @media (max-width: 900px) {
   .arranger-console-grid { grid-template-columns: minmax(0, 1fr); }

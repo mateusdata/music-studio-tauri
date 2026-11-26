@@ -28,6 +28,8 @@ export interface VoicesSplitPanelProps {
     chordMode?: string | null,
   ) => void;
   onPickInstrumentDialog: () => void;
+  sustainOn?: boolean;
+  onToggleSustain?: () => void;
 }
 
 /**
@@ -38,6 +40,8 @@ export function VoicesSplitPanel({
   arranger,
   onVoiceChange,
   onPickInstrumentDialog,
+  sustainOn = false,
+  onToggleSustain,
 }: VoicesSplitPanelProps) {
   const playableInstrumentOptions = useMemo(
     () =>
@@ -142,6 +146,16 @@ export function VoicesSplitPanel({
           }
         >
           SCAN UP
+        </button>
+
+        <button
+          type="button"
+          aria-pressed={sustainOn}
+          className={`btn btn-compact pedal-btn ${sustainOn ? "active" : ""}`}
+          onClick={onToggleSustain}
+          title="Pedal Sustain (Damper): mantém as notas soando após soltar as teclas"
+        >
+          Sustain (Damper)
         </button>
       </div>
 

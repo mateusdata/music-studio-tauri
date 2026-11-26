@@ -156,7 +156,7 @@ export const VirtualKeyboard: React.FC<VirtualKeyboardProps> = ({
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.repeat) return;
+      if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA"
         || (e.target as HTMLElement | null)?.closest?.('[role="dialog"]')) return;

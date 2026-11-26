@@ -294,6 +294,20 @@ fn track_name_to_slot(name: &str) -> Option<usize> {
     }
 }
 
+fn track_channel_to_slot(channel: u8) -> Option<usize> {
+    match channel {
+        9 => Some(0),  // Drum
+        10 => Some(1), // Percussion
+        8 => Some(2),  // Bass
+        11 => Some(3), // Acc. 1
+        12 => Some(4), // Acc. 2
+        13 => Some(5), // Acc. 3
+        14 => Some(6), // Acc. 4
+        15 => Some(7), // Acc. 5
+        _ => None,
+    }
+}
+
 fn is_mixer_or_track_label(name: &str) -> bool {
     matches!(
         name,
@@ -475,7 +489,8 @@ fn looks_like_zone_97(data: &[u8], off: usize) -> bool {
     let ch = hdr[36];
     let sr_u32 = u32::from_le_bytes([hdr[37], hdr[38], hdr[39], hdr[40]]);
     let eff_sr = if sr_u32 != 0 { sr_u32 } else { sr_u16 };
-    let sr_consistent = sr_u32 == 0 || sr_u32 == sr_u16 || sr_u16 == 0;
+    // Music Studio stores the low 16 bits of sample_rate in hdr[33..35] (e.g. 192000 & 0xFFFF = 60928).
+    let sr_consistent = sr_u32 == 0 || sr_u16 == 0 || (sr_u32 & 0xFFFF) == sr_u16;
     let nfr = u32::from_le_bytes([hdr[45], hdr[46], hdr[47], hdr[48]]);
     root <= 127
         && nlen <= 32
@@ -1250,7 +1265,14 @@ fn parse_rhythm_tracks(
             break;
         }
         let clean = full_name.split(" - Copy").next().unwrap_or(full_name);
-        let Some(slot) = track_name_to_slot(clean) else {
+        let track_ch = data.get(hdr_end + 6).copied().unwrap_or(0);
+        let Some(slot) = track_name_to_slot(clean).or_else(|| {
+            if clean == "Music" {
+                None
+            } else {
+                track_channel_to_slot(track_ch)
+            }
+        }) else {
             continue;
         };
         let next_blk = headers
@@ -1307,7 +1329,7 @@ fn parse_rhythm_tracks(
             continue;
         }
 
-        let ss_base = if detected_hsz == Some(544) {
+        let ss_base = if detected_hsz == Some(544) || detected_hsz == Some(648) {
             172_usize
         } else {
             159_usize
@@ -1398,8 +1420,9 @@ fn parse_music_file_internal(
         })
         .unwrap_or(headers.len());
 
+    let has_explicit_inst_table = headers.first().map(|h| h.2.is_empty()).unwrap_or(false);
     let mut instruments = Vec::new();
-    let (inst_start_idx, inst_end_idx) = if headers.first().map(|h| h.2.is_empty()).unwrap_or(false) {
+    let (inst_start_idx, inst_end_idx) = if has_explicit_inst_table {
         let count = read_u32_le(&data, headers[0].1 + 4).unwrap_or(0) as usize;
         let end = (1 + count).min(mixer_idx);
         (1_usize, end)
@@ -1410,6 +1433,22 @@ fn parse_music_file_internal(
     for i in inst_start_idx..inst_end_idx {
         let (_blk_start, hdr_end, ref name) = headers[i];
         if name.is_empty() || is_mixer_or_track_label(name) {
+            // Preserve exact 0-based instrument indices in files with empty slots
+            // (e.g. Luanzinho_Vaneirao.Music), otherwise track inst_idx references shift.
+            // Ignore only the trailing empty container header immediately before `Normal`.
+            let is_trailing_before_mixer = !has_explicit_inst_table && i + 1 == inst_end_idx;
+            if name.is_empty() && !is_trailing_before_mixer {
+                let idx = instruments.len();
+                instruments.push(LoadedInstrument {
+                    index: idx,
+                    name: format!("Empty Slot {}", idx),
+                    volume: 1.0,
+                    pan: 0,
+                    inst_type: 0,
+                    is_drumkit: false,
+                    zones: Vec::new(),
+                });
+            }
             continue;
         }
         let block_end = headers
@@ -3803,19 +3842,27 @@ impl MusicStudioArrangerEngine {
                     })
                 })
         } else {
+            // For melodic instruments, always honor explicit [key_low, key_high] ranges first.
+            // Some SoundFonts (e.g. Accordion_Master.sf2) have zones whose root_key lies outside
+            // [key_low, key_high]; matching root_key before key_range selects the wrong zone.
             inst.zones
                 .iter()
                 .find(|z| {
                     !z.pcm_l.is_empty()
-                        && z.root_key == midi_note
+                        && midi_note >= z.key_low
+                        && midi_note <= z.key_high
                         && velocity >= z.vel_low
                         && velocity <= z.vel_high
                 })
                 .or_else(|| {
                     inst.zones.iter().find(|z| {
+                        !z.pcm_l.is_empty() && midi_note >= z.key_low && midi_note <= z.key_high
+                    })
+                })
+                .or_else(|| {
+                    inst.zones.iter().find(|z| {
                         !z.pcm_l.is_empty()
-                            && midi_note >= z.key_low
-                            && midi_note <= z.key_high
+                            && z.root_key == midi_note
                             && velocity >= z.vel_low
                             && velocity <= z.vel_high
                     })
@@ -3824,11 +3871,6 @@ impl MusicStudioArrangerEngine {
                     inst.zones
                         .iter()
                         .find(|z| !z.pcm_l.is_empty() && z.root_key == midi_note)
-                })
-                .or_else(|| {
-                    inst.zones.iter().find(|z| {
-                        !z.pcm_l.is_empty() && midi_note >= z.key_low && midi_note <= z.key_high
-                    })
                 })
                 .or_else(|| {
                     inst.zones
@@ -3848,7 +3890,11 @@ impl MusicStudioArrangerEngine {
             (midi_note as f64 - z.root_key as f64) + tune_semitones
         };
         let phase_inc = (z.sample_rate as f64 / self.sr as f64) * 2.0_f64.powf(semitones / 12.0);
-        let vel_gain = (velocity as f32 / 127.0).powf(1.55);
+        let vel_gain = if from_rhythm {
+            velocity as f32 / 127.0
+        } else {
+            (velocity as f32 / 127.0).powf(1.55)
+        };
         let total_gain = vel_gain * inst.volume * z.gain * gain_scale;
         if total_gain <= 0.0005 {
             return;
@@ -3933,7 +3979,7 @@ impl MusicStudioArrangerEngine {
         };
         self.held_keys[note as usize] = true;
 
-        if self.split_enabled && note <= self.split_key {
+        if self.split_enabled && note <= self.split_key && (self.chord_scan_lower || self.lower_instrument.is_some()) {
             if !self.held_lower_notes.contains(&note) {
                 self.held_lower_notes.push(note);
             }
@@ -4451,20 +4497,208 @@ mod tests {
             l[128]
         };
         let base = render_live(1.0);
-        let boosted = render_live(1.30);
-        let clamped = render_live(2.0);
+        let boosted = render_live(2.0);
+        let clamped = render_live(3.0);
         assert!(base > 0.05, "base={base}");
         let ratio = boosted / base;
-        assert!((1.29..=1.31).contains(&ratio), "ratio={ratio}");
+        assert!((1.99..=2.01).contains(&ratio), "ratio={ratio}");
         assert!((clamped - boosted).abs() < 1e-6);
 
         let mut engine = MusicStudioArrangerEngine::new(48000.0);
         engine.load_package(performance_fixture());
-        engine.note_on_with_gain(60, 0, 1.30);
+        engine.note_on_with_gain(60, 0, 2.0);
         let mut l = vec![0.0_f32; 256];
         let mut r = vec![0.0_f32; 256];
         engine.process_block(&mut l, &mut r);
         assert_eq!(l[128], 0.0);
+    }
+
+    #[test]
+    fn chord_lower_disabled_plays_left_keys_normally() {
+        let mut muted_lower = MusicStudioArrangerEngine::new(48000.0);
+        muted_lower.load_package(performance_fixture());
+        muted_lower.split_enabled = true;
+        muted_lower.split_key = 54;
+        muted_lower.chord_scan_lower = true;
+        muted_lower.lower_instrument = None;
+        muted_lower.note_on(48, 110);
+        let mut l = vec![0.0_f32; 256];
+        let mut r = vec![0.0_f32; 256];
+        muted_lower.process_block(&mut l, &mut r);
+        assert_eq!(l[128], 0.0);
+
+        let mut normal_left = MusicStudioArrangerEngine::new(48000.0);
+        normal_left.load_package(performance_fixture());
+        normal_left.split_enabled = true;
+        normal_left.split_key = 54;
+        normal_left.chord_scan_lower = false;
+        normal_left.lower_instrument = None;
+        assert_eq!(normal_left.detected_chord_label, "C");
+        for note in [45_u8, 48, 52] {
+            normal_left.note_on(note, 110);
+        }
+        assert_eq!(normal_left.detected_chord_label, "C");
+        l.fill(0.0);
+        r.fill(0.0);
+        normal_left.process_block(&mut l, &mut r);
+        assert!(l[128] > 0.05, "left key should sound normally when chord_scan_lower=false");
+
+        let mut split_low_inst = MusicStudioArrangerEngine::new(48000.0);
+        split_low_inst.load_package(performance_fixture());
+        split_low_inst.split_enabled = true;
+        split_low_inst.split_key = 54;
+        split_low_inst.chord_scan_lower = false;
+        split_low_inst.lower_instrument = Some(1);
+        assert_eq!(split_low_inst.detected_chord_label, "C");
+        split_low_inst.note_on(48, 110);
+        assert_eq!(split_low_inst.detected_chord_label, "C");
+        l.fill(0.0);
+        r.fill(0.0);
+        split_low_inst.process_block(&mut l, &mut r);
+        assert!(l[128] > 0.05, "lower_instrument should still play when chord_scan_lower=false");
+    }
+
+    #[test]
+    fn melodic_zone_lookup_honors_key_range_before_out_of_range_root_key() {
+        // Reproduces SoundFonts like Accordion_Master.sf2 where zone 0 covers [0..52] with
+        // root_key=54 and zone 1 covers [53..56] with root_key=58. Pressing MIDI 54 must
+        // trigger zone 1 (amp 0.8), not zone 0 (amp 0.2).
+        let pcm_low = Arc::new(vec![0.2_f32; 4096]);
+        let pcm_mid = Arc::new(vec![0.8_f32; 4096]);
+        let inst = LoadedInstrument {
+            index: 0,
+            name: "Accordion OutOfRange Root".into(),
+            volume: 1.0,
+            pan: 0,
+            inst_type: 0,
+            is_drumkit: false,
+            zones: vec![
+                SampleZone {
+                    root_key: 54,
+                    key_low: 0,
+                    key_high: 52,
+                    vel_low: 0,
+                    vel_high: 127,
+                    name: "low".into(),
+                    sample_rate: 48000,
+                    channels: 1,
+                    loop_start: 0,
+                    loop_end: 0,
+                    loop_enabled: false,
+                    loop_mode: 0,
+                    gain: 1.0,
+                    pan: 0,
+                    fine_tune: 0,
+                    pool_sid: 0,
+                    pcm_l: Arc::clone(&pcm_low),
+                    pcm_r: pcm_low,
+                },
+                SampleZone {
+                    root_key: 58,
+                    key_low: 53,
+                    key_high: 56,
+                    vel_low: 0,
+                    vel_high: 127,
+                    name: "mid".into(),
+                    sample_rate: 48000,
+                    channels: 1,
+                    loop_start: 0,
+                    loop_end: 0,
+                    loop_enabled: false,
+                    loop_mode: 0,
+                    gain: 1.0,
+                    pan: 0,
+                    fine_tune: 0,
+                    pool_sid: 0,
+                    pcm_l: Arc::clone(&pcm_mid),
+                    pcm_r: pcm_mid,
+                },
+            ],
+        };
+        let mut pkg = LoadedMusicPackage {
+            file_path: "test://range".into(),
+            file_name: "range.sf2".into(),
+            version: "SF2".into(),
+            source_format: "music".into(),
+            soundfont_name: None,
+            instruments: vec![inst],
+            styles: Vec::new(),
+            ots_presets: Vec::new(),
+            source_paths: Vec::new(),
+            sty_warnings: Vec::new(),
+            has_audio_style_chunks: false,
+            uses_expansion_kit: false,
+            sty_diagnostics_summary: None,
+        };
+        pkg.ots_presets.push(OtsPresetSummary {
+            index: 0,
+            name: "default".into(),
+            upper1_instrument: 0,
+            upper2_instrument: None,
+            lower_instrument: None,
+        });
+        let mut engine = MusicStudioArrangerEngine::new(48000.0);
+        engine.load_package(Arc::new(pkg));
+        engine.split_enabled = false;
+        engine.note_on(54, 127);
+        let mut l = vec![0.0_f32; 256];
+        let mut r = vec![0.0_f32; 256];
+        engine.process_block(&mut l, &mut r);
+        assert!(
+            l[128] > 0.45,
+            "MIDI 54 should play zone 1 (amp 0.8), not zone 0 (amp 0.2), got {}",
+            l[128]
+        );
+    }
+
+    #[test]
+    fn high_sample_rate_zones_and_renamed_channel_tracks_parse_cleanly() {
+        // 192000 Hz has low 16 bits = 60928 (0xEE00) in hdr[33..35]
+        let mut hdr = [0_u8; 97];
+        hdr[0] = 60;
+        hdr[1] = 4;
+        hdr[2..6].copy_from_slice(b"test");
+        let sr: u32 = 192_000;
+        hdr[33..35].copy_from_slice(&((sr & 0xFFFF) as u16).to_le_bytes());
+        hdr[35] = 16;
+        hdr[36] = 2;
+        hdr[37..41].copy_from_slice(&sr.to_le_bytes());
+        hdr[45..49].copy_from_slice(&4096_u32.to_le_bytes());
+        assert!(looks_like_zone_97(&hdr, 0));
+
+        assert_eq!(track_channel_to_slot(9), Some(0));
+        assert_eq!(track_channel_to_slot(10), Some(1));
+        assert_eq!(track_channel_to_slot(8), Some(2));
+        assert_eq!(track_channel_to_slot(11), Some(3));
+        assert_eq!(track_channel_to_slot(15), Some(7));
+
+        let dir = Path::new(USER_DOCUMENTS_RHYTHMS_DIR);
+        let luan = dir.join("Luanzinho_Vaneirao.Music");
+        if luan.exists() {
+            let pkg = parse_music_file(&luan).expect("parse Luanzinho");
+            for style in &pkg.styles {
+                for sec in &style.sections {
+                    for tr in &sec.tracks {
+                        assert!(
+                            tr.instrument_index < pkg.instruments.len(),
+                            "track {} has OOB inst_idx {} >= {}",
+                            tr.track_type,
+                            tr.instrument_index,
+                            pkg.instruments.len()
+                        );
+                    }
+                }
+            }
+        }
+        let fb = dir.join("Forro_Boys_2019_PA4X.Music");
+        if fb.exists() {
+            let pkg = parse_music_file(&fb).expect("parse Forro Boys 2019");
+            let gtr_nova = pkg.instruments.iter().find(|i| i.name == "GTR NOVA 2019");
+            assert!(
+                gtr_nova.map(|i| !i.zones.is_empty()).unwrap_or(false),
+                "192kHz GTR NOVA 2019 should have parsed zones"
+            );
+        }
     }
 
     #[test]

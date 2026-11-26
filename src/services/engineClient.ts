@@ -257,4 +257,8 @@ export const engineClient = {
   async applyArrangerOts(otsIndex: number): Promise<MusicPackageSummary> {
     return invoke<MusicPackageSummary>("apply_arranger_ots", { otsIndex });
   },
+
+  async showMainWindow(): Promise<void> {
+    return invoke<void>("show_main_window");
+  },
 };

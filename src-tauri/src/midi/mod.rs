@@ -13,9 +13,9 @@ pub enum MidiEngineEvent {
     ProgramChange { program: u8, channel: u8 },
 }
 
-pub const MAX_VELOCITY_CURVE_GAIN: f32 = 1.30;
+pub const MAX_VELOCITY_CURVE_GAIN: f32 = 2.0;
 
-/// Evaluates a piecewise-linear MIDI velocity curve, returning `(midi_vel [1..127], gain [1.0..1.30])`.
+/// Evaluates a piecewise-linear MIDI velocity curve, returning `(midi_vel [1..127], gain [1.0..2.0])`.
 /// NoteOff (`raw_vel == 0`) always returns `(0, 1.0)`. Values above 100% cap MIDI velocity at 127
 /// and scale linear volume gain up to `MAX_VELOCITY_CURVE_GAIN`.
 pub fn apply_velocity_curve_with_gain(raw_vel: u8, curve: &[[f32; 2]]) -> (u8, f32) {
@@ -299,6 +299,14 @@ pub struct MidiConnectionHandle {
     pub port_name: String,
 }
 
+/// Grace period after opening a MIDI input port during which stale/buffered
+/// `NoteOn` messages (e.g. from ALSA sequencer or USB controller init) are ignored.
+pub const MIDI_CONNECT_GRACE_MS: u64 = 250;
+
+pub fn should_drop_initial_midi_event(ev: &MidiEngineEvent, elapsed_ms: u64) -> bool {
+    elapsed_ms < MIDI_CONNECT_GRACE_MS && matches!(ev, MidiEngineEvent::NoteOn { .. })
+}
+
 pub fn connect_midi_port(
     port_name_or_query: &str,
     tx: Sender<MidiEngineEvent>,
@@ -324,13 +332,16 @@ pub fn connect_midi_port(
         .or(partial)
         .ok_or_else(|| format!("MIDI input port '{}' not found", port_name_or_query))?;
 
+    let connected_at = std::time::Instant::now();
     let conn = midi_in
         .connect(
             &port,
             "piano-tect-live",
             move |_stamp, message, _| {
                 if let Some(ev) = parse_midi_message(message) {
-                    let _ = tx.send(ev);
+                    if !should_drop_initial_midi_event(&ev, connected_at.elapsed().as_millis() as u64) {
+                        let _ = tx.send(ev);
+                    }
                 }
             },
             (),
@@ -824,23 +835,23 @@ mod tests {
 
     #[test]
     fn velocity_curve_boost_above_100_caps_midi_and_scales_gain() {
-        assert_eq!(apply_velocity_curve_with_gain(0, &[[0.0, 1.3], [1.0, 1.3]]), (0, 1.0));
-        let curve = [[0.0, 0.5], [0.5, 1.0], [1.0, 1.3]];
+        assert_eq!(apply_velocity_curve_with_gain(0, &[[0.0, 2.0], [1.0, 2.0]]), (0, 1.0));
+        let curve = [[0.0, 0.5], [0.5, 1.0], [1.0, 2.0]];
         let (v1, g1) = apply_velocity_curve_with_gain(1, &curve);
         assert_eq!(v1, 65, "v1={v1}");
         assert!((g1 - 1.0).abs() < 1e-5, "g1={g1}");
         let (v64, g64) = apply_velocity_curve_with_gain(64, &curve);
         assert_eq!(v64, 127);
-        assert!(g64 <= 1.01, "g64={g64}");
+        assert!(g64 <= 1.02, "g64={g64}");
         let (v96, g96) = apply_velocity_curve_with_gain(96, &curve);
         assert_eq!(v96, 127);
-        assert!((1.14..=1.16).contains(&g96), "g96={g96}");
+        assert!((1.50..=1.53).contains(&g96), "g96={g96}");
         let (v127, g127) = apply_velocity_curve_with_gain(127, &curve);
         assert_eq!(v127, 127);
-        assert!((g127 - 1.30).abs() < 1e-5, "g127={g127}");
-        let (vcapped, gcapped) = apply_velocity_curve_with_gain(64, &[[0.0, 2.0], [1.0, 2.0]]);
+        assert!((g127 - 2.0).abs() < 1e-5, "g127={g127}");
+        let (vcapped, gcapped) = apply_velocity_curve_with_gain(64, &[[0.0, 3.0], [1.0, 3.0]]);
         assert_eq!(vcapped, 127);
-        assert!((gcapped - 1.30).abs() < 1e-5);
+        assert!((gcapped - 2.0).abs() < 1e-5);
         assert_eq!(apply_velocity_curve_with_gain(64, &[[f32::NAN, f32::NAN]]), (64, 1.0));
     }
 
@@ -1381,5 +1392,28 @@ mod tests {
         assert_eq!(cc_updates[1].0, "volume_db");
         assert!((cc_updates[1].1 - 6.0).abs() < 1e-4);
         assert!(saw_pitch_bend && saw_aftertouch && saw_program_change);
+    }
+
+    #[test]
+    fn midi_connect_grace_window_drops_initial_note_on_only() {
+        let note_on = MidiEngineEvent::NoteOn {
+            note: 60,
+            velocity: 100,
+            channel: 0,
+        };
+        let note_off = MidiEngineEvent::NoteOff {
+            note: 60,
+            channel: 0,
+        };
+        let cc = MidiEngineEvent::ControlChange {
+            cc: 64,
+            value: 0,
+            channel: 0,
+        };
+        assert!(should_drop_initial_midi_event(&note_on, 0));
+        assert!(should_drop_initial_midi_event(&note_on, MIDI_CONNECT_GRACE_MS - 1));
+        assert!(!should_drop_initial_midi_event(&note_on, MIDI_CONNECT_GRACE_MS));
+        assert!(!should_drop_initial_midi_event(&note_off, 0));
+        assert!(!should_drop_initial_midi_event(&cc, 0));
     }
 }

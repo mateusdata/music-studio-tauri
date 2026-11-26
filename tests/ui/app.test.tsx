@@ -304,7 +304,7 @@ describe("Music Studio Tauri Arranger App UI", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Fechar curva de velocidade" }));
     fireEvent.click(screen.getByRole("button", { name: "Salvar configuração atual" }));
     await waitFor(() => expect(save).toHaveBeenCalledOnce());
-    expect(update).toHaveBeenLastCalledWith({ ...snapshot.midi_config, velocity_curve: [[0,.7],[1,.7]] });
+    expect(update).toHaveBeenLastCalledWith({ ...snapshot.midi_config, velocity_curve: [[0, 1.4], [1, 1.4]] });
     expect(update.mock.invocationCallOrder[update.mock.invocationCallOrder.length - 1]).toBeLessThan(save.mock.invocationCallOrder[0]);
   });
 
@@ -987,6 +987,10 @@ describe("Startup, audio negotiation, and maintenance", () => {
     const footer = screen.getByRole("contentinfo");
     expect(within(footer).queryByText(/MIDI desconectado/)).not.toBeInTheDocument();
     expect(within(footer).queryByText(/Carregado/)).not.toBeInTheDocument();
+    expect(within(footer).queryByRole("button", { name: "Sustain (Damper)" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Teclado PC: Z–M/)).not.toBeInTheDocument();
+    const splitControls = screen.getByRole("group", { name: "Split and Chord Scan Controls" });
+    expect(within(splitControls).getByRole("button", { name: "Sustain (Damper)" })).toBeInTheDocument();
     const start = screen.getByRole("button", { name: "START RITMO" });
     expect(start.closest(".lcd-tempo-row")).toContainElement(screen.getByLabelText("Tempo BPM"));
     expect(screen.getByTestId("virtual-keyboard").firstElementChild).toHaveStyle({ minWidth: "1224px" });
