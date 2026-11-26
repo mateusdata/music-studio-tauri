@@ -16,7 +16,19 @@ const NCW_MAGIC: [u8; 4] = [0x01, 0xa8, 0x9e, 0xd6];
 const NCW_BLOCK_MAGIC: u32 = 0x3e9a_0c16;
 
 #[derive(Debug, Clone)]
+pub struct KontaktGroupMeta {
+    pub name: String,
+    pub volume: f32,
+    pub pan: f32,
+    pub tune: f32,
+    pub key_tracking: bool,
+    pub release_trigger: bool,
+    pub voice_group: i32,
+}
+
+#[derive(Debug, Clone)]
 pub struct KontaktZoneMeta {
+    pub group_index: usize,
     pub sample_start: u32,
     pub sample_end: u32,
     pub vel_low: u8,
@@ -43,6 +55,7 @@ pub struct KontaktProgramMeta {
     pub volume: f32,
     pub pan: f32,
     pub tune: f32,
+    pub groups: Vec<KontaktGroupMeta>,
     pub zones: Vec<KontaktZoneMeta>,
 }
 
@@ -193,19 +206,34 @@ pub fn decode_ncw_bytes(data: &[u8]) -> Result<(Vec<f32>, Vec<f32>, u32), String
         Vec::new()
     };
 
-    let read_channel_block = |pos: usize, dst: &mut Vec<f32>| -> Result<usize, String> {
+    let read_channel_block = |pos: usize, dst: &mut Vec<f32>| -> Result<(usize, u16), String> {
         let bmag = read_u32_le(data, pos).ok_or("NCW block truncated")?;
         if bmag != NCW_BLOCK_MAGIC {
             return Err(format!("Invalid NCW block magic 0x{bmag:08x}"));
         }
-        let bbase = read_i32_le(data, pos + 4).ok_or("NCW block base truncated")? as i64;
+        let bbase_u32 = read_u32_le(data, pos + 4).ok_or("NCW block base truncated")?;
+        let bbase = bbase_u32 as i32 as i64;
         let bbits = read_i16_le(data, pos + 8).ok_or("NCW block bits truncated")? as i32;
+        let bflags = read_u16_le(data, pos + 10).ok_or("NCW block flags truncated")?;
+        let is_float = (bflags & 2) != 0;
         let payload_start = pos + 16;
 
+        let sanitize_f32 = |v: f32| -> f32 {
+            if v.is_finite() {
+                v.clamp(-4.0, 4.0)
+            } else {
+                0.0
+            }
+        };
+
         if bbits == 0 {
-            let v = (bbase as f64 * scale).clamp(-1.0, 1.0) as f32;
+            let v = if is_float {
+                sanitize_f32(f32::from_bits(bbase_u32))
+            } else {
+                (bbase as f64 * scale).clamp(-1.0, 1.0) as f32
+            };
             dst.resize(dst.len() + 512, v);
-            return Ok(payload_start);
+            return Ok((payload_start, bflags));
         }
 
         let abits = bbits.unsigned_abs() as u32;
@@ -225,10 +253,15 @@ pub fn decode_ncw_bytes(data: &[u8]) -> Result<(Vec<f32>, Vec<f32>, u32), String
         let mut avail: u32 = 0;
         let mut bp = payload_start;
         let mut val = bbase;
+        let mut val_u32 = bbase_u32;
 
         for _ in 0..512 {
             if bbits > 0 {
-                dst.push((val as f64 * scale).clamp(-1.0, 1.0) as f32);
+                if is_float {
+                    dst.push(sanitize_f32(f32::from_bits(val_u32)));
+                } else {
+                    dst.push((val as f64 * scale).clamp(-1.0, 1.0) as f32);
+                }
                 while avail < abits {
                     acc |= (data[bp] as u64) << avail;
                     bp += 1;
@@ -242,7 +275,11 @@ pub fn decode_ncw_bytes(data: &[u8]) -> Result<(Vec<f32>, Vec<f32>, u32), String
                 } else {
                     raw as i64
                 };
-                val = val.wrapping_add(delta);
+                if is_float {
+                    val_u32 = val_u32.wrapping_add(delta as i32 as u32);
+                } else {
+                    val = val.wrapping_add(delta);
+                }
             } else {
                 while avail < abits {
                     acc |= (data[bp] as u64) << avail;
@@ -252,15 +289,19 @@ pub fn decode_ncw_bytes(data: &[u8]) -> Result<(Vec<f32>, Vec<f32>, u32), String
                 let raw = acc & mask;
                 acc >>= abits;
                 avail -= abits;
-                let sample = if (raw & sign_bit) != 0 {
-                    raw as i64 - sign_ext
+                if is_float && abits == 32 {
+                    dst.push(sanitize_f32(f32::from_bits(raw as u32)));
                 } else {
-                    raw as i64
-                };
-                dst.push((sample as f64 * scale).clamp(-1.0, 1.0) as f32);
+                    let sample = if (raw & sign_bit) != 0 {
+                        raw as i64 - sign_ext
+                    } else {
+                        raw as i64
+                    };
+                    dst.push((sample as f64 * scale).clamp(-1.0, 1.0) as f32);
+                }
             }
         }
-        Ok(payload_start + nbytes)
+        Ok((payload_start + nbytes, bflags))
     };
 
     for bi in 0..num_blocks {
@@ -269,8 +310,19 @@ pub fn decode_ncw_bytes(data: &[u8]) -> Result<(Vec<f32>, Vec<f32>, u32), String
         if ch == 1 {
             let _ = read_channel_block(pos, &mut out_l)?;
         } else {
-            let pos2 = read_channel_block(pos, &mut out_l)?;
+            let blk_start = out_l.len();
+            let (pos2, l_flags) = read_channel_block(pos, &mut out_l)?;
             let _ = read_channel_block(pos2, &mut out_r)?;
+            // Kontakt NCW bit 0 (0x01) indicates Mid/Side stereo coding: L = M + S, R = M - S.
+            if (l_flags & 1) != 0 {
+                let blk_end = out_l.len().min(out_r.len());
+                for i in blk_start..blk_end {
+                    let m = out_l[i];
+                    let s = out_r[i];
+                    out_l[i] = m + s;
+                    out_r[i] = m - s;
+                }
+            }
         }
     }
 
@@ -491,6 +543,73 @@ fn parse_zone_loop_0039(zch: &[u8]) -> (bool, usize, usize) {
     (false, 0, 0)
 }
 
+fn parse_groups_0033(gdata: &[u8]) -> Vec<KontaktGroupMeta> {
+    let mut groups = Vec::new();
+    if gdata.len() < 12 {
+        return groups;
+    }
+    let count = read_u32_le(gdata, 0).unwrap_or(0) as usize;
+    let mut cur = 4_usize;
+    for gi in 0..count.min(512) {
+        if cur + 11 > gdata.len() {
+            break;
+        }
+        // +0: u8 is_struct, +1: u16 ver, +3: u32 pub_sz
+        let pub_sz = read_u32_le(gdata, cur + 3).unwrap_or(0) as usize;
+        let priv_off = cur + 7 + pub_sz;
+        if priv_off + 4 > gdata.len() {
+            break;
+        }
+        let priv_sz = read_u32_le(gdata, priv_off).unwrap_or(0) as usize;
+        let priv_start = priv_off + 4;
+        let priv_end = priv_start + priv_sz;
+        if priv_end + 4 > gdata.len() {
+            break;
+        }
+        let child_sz = read_u32_le(gdata, priv_end).unwrap_or(0) as usize;
+        let child_end = (priv_end + 4 + child_sz).min(gdata.len());
+
+        let gpriv = &gdata[priv_start..priv_end];
+        let slen = read_u32_le(gpriv, 0).unwrap_or(0) as usize;
+        let (name, post) = if slen <= 256 && 4 + slen * 2 <= gpriv.len() {
+            let raw = decode_utf16le(&gpriv[4..4 + slen * 2]);
+            let clean = if raw.trim().is_empty() {
+                format!("Group {}", gi + 1)
+            } else {
+                raw.trim().to_string()
+            };
+            (clean, &gpriv[4 + slen * 2..])
+        } else {
+            (format!("Group {}", gi + 1), &[][..])
+        };
+
+        let volume = read_f32_le(post, 0)
+            .filter(|v| v.is_finite() && *v >= 0.0 && *v <= 8.0)
+            .unwrap_or(1.0);
+        let pan = read_f32_le(post, 4)
+            .filter(|v| v.is_finite() && *v >= -1.0 && *v <= 1.0)
+            .unwrap_or(0.0);
+        let tune = read_f32_le(post, 8)
+            .filter(|v| v.is_finite() && *v > 0.1 && *v < 16.0)
+            .unwrap_or(1.0);
+        let key_tracking = post.get(12).copied().unwrap_or(1) != 0;
+        let release_trigger = post.get(14).copied().unwrap_or(0) != 0;
+        let voice_group = read_i32_le(post, 22).unwrap_or(-1);
+
+        groups.push(KontaktGroupMeta {
+            name,
+            volume,
+            pan,
+            tune,
+            key_tracking,
+            release_trigger,
+            voice_group,
+        });
+        cur = child_end;
+    }
+    groups
+}
+
 fn parse_zones_0034(zdata: &[u8]) -> Vec<KontaktZoneMeta> {
     let mut zones = Vec::new();
     if zdata.len() < 12 {
@@ -502,7 +621,8 @@ fn parse_zones_0034(zdata: &[u8]) -> Vec<KontaktZoneMeta> {
         if cur + 15 > zdata.len() {
             break;
         }
-        // +0: u32 zone_idx, +4: u8 is_struct(1), +5: u16 ver, +7: u32 pub_sz
+        // +0: u32 group_index, +4: u8 is_struct(1), +5: u16 ver, +7: u32 pub_sz
+        let group_index = read_u32_le(zdata, cur).unwrap_or(0) as usize;
         let pub_sz = read_u32_le(zdata, cur + 7).unwrap_or(0) as usize;
         let priv_off = cur + 11 + pub_sz;
         if priv_off + 4 > zdata.len() {
@@ -550,6 +670,7 @@ fn parse_zones_0034(zdata: &[u8]) -> Vec<KontaktZoneMeta> {
                 parse_zone_loop_0039(&zdata[child_start..child_end]);
 
             zones.push(KontaktZoneMeta {
+                group_index,
                 sample_start,
                 sample_end,
                 vel_low: vel_low.min(vel_high),
@@ -618,6 +739,7 @@ fn parse_program_0036(
     let child_sz = read_u32_le(buf, children_off).unwrap_or(0) as usize;
     let mut cur = children_off + 4;
     let end = (cur + child_sz).min(buf.len());
+    let mut groups = Vec::new();
     let mut zones = Vec::new();
     while cur + 6 <= end {
         let cid = read_u16_le(buf, cur).unwrap_or(0);
@@ -625,7 +747,9 @@ fn parse_program_0036(
         if cur + 6 + csz > end {
             break;
         }
-        if cid == 0x0034 {
+        if cid == 0x0033 {
+            groups = parse_groups_0033(&buf[cur + 6..cur + 6 + csz]);
+        } else if cid == 0x0034 {
             zones = parse_zones_0034(&buf[cur + 6..cur + 6 + csz]);
         }
         cur += 6 + csz;
@@ -638,6 +762,7 @@ fn parse_program_0036(
         volume,
         pan,
         tune,
+        groups,
         zones,
     })
 }
@@ -874,6 +999,11 @@ fn decode_program_zones(
     let mut seen_melodic_slots: HashSet<(u8, u8, u8, u8)> = HashSet::new();
 
     for z in &prog.zones {
+        let grp = prog.groups.get(z.group_index);
+        if grp.map(|g| g.release_trigger).unwrap_or(false) {
+            // Release-trigger groups (e.g. guitar fret/string release noises) must not fire on Note-On.
+            continue;
+        }
         // Deduplicate multi-group identical (key_low, key_high, vel_low, vel_high) melodic overlaps
         // so alternating groups/octaves don't collide on adjacent keys.
         if !is_drum && !seen_melodic_slots.insert((z.key_low, z.key_high, z.vel_low, z.vel_high)) {
@@ -943,11 +1073,20 @@ fn decode_program_zones(
         } else {
             1.0
         };
-        let total_tune_semitones = 12.0 * (z_tune * prog_tune_ratio).log2();
+        let g_vol = grp.map(|g| g.volume).unwrap_or(1.0);
+        let g_pan = grp.map(|g| g.pan).unwrap_or(0.0);
+        let g_tune = grp
+            .map(|g| g.tune as f64)
+            .filter(|t| *t > 0.1 && *t < 16.0)
+            .unwrap_or(1.0);
+        let g_key_tracking = grp.map(|g| g.key_tracking).unwrap_or(true);
+        let g_exclusive_group = grp.map(|g| g.voice_group).unwrap_or(-1);
+
+        let total_tune_semitones = 12.0 * (z_tune * g_tune * prog_tune_ratio).log2();
         let fine_tune = (total_tune_semitones * 1000.0)
             .round()
             .clamp(-12000.0, 12000.0) as i32;
-        let pan = (prog_pan_i + (z.pan * 100.0).round() as i32).clamp(-100, 100);
+        let pan = (prog_pan_i + ((z.pan + g_pan) * 100.0).round() as i32).clamp(-100, 100);
 
         // Fix known 1-octave-low high-key mapping in Brazilian Acd Master packs (e.g. Sao Joao / Biu)
         // where "Acd Master 2 mi" (E4) is mapped at E5/E6 (root_key 76/88) above "Acd Master 3 re sus".
@@ -958,12 +1097,12 @@ fn decode_program_zones(
             z.root_key
         };
 
-        // Drum pieces keep their exact relative Kontakt program volume; melodic solo zones stay
-        // normalized for clear live keyboard playing while RhythmTrack scales by prog.volume.
+        // Honor authored Kontakt BProgram * BGroup * BZone volumes faithfully (without artificial
+        // lower clamps that previously amplified quiet Triangle/Percussion groups 10x-33x).
         let gain = if is_drum {
-            (prog.volume.clamp(0.0, 1.35) * z.volume).clamp(0.0, 1.6)
+            (prog.volume.clamp(0.0, 2.0) * g_vol * z.volume).clamp(0.0, 2.0)
         } else {
-            z.volume.clamp(0.05, 1.5)
+            (g_vol * z.volume).clamp(0.0, 2.0)
         };
 
         let (loop_enabled, loop_start, loop_end, loop_mode) = if !is_drum && z.loop_enabled {
@@ -994,6 +1133,8 @@ fn decode_program_zones(
             gain,
             pan,
             fine_tune,
+            key_tracking: g_key_tracking,
+            exclusive_group: g_exclusive_group,
             pool_sid: 0,
             pcm_l,
             pcm_r,
@@ -1043,8 +1184,11 @@ pub fn build_kontakt_package(
     // Decode every program in the .nkm / .nki
     let mut decoded_progs: Vec<(KontaktProgramMeta, Vec<SampleZone>, bool)> = Vec::new();
     for prog in &multi.programs {
-        let is_drum = is_drum_program_name(&prog.name)
-            || ((prog.midi_channel == 9 || prog.midi_channel == 10) && prog.zones.len() <= 32);
+        // Every program assigned to Yamaha Rhythm 1/2 (MIDI Ch 9 / Ch 10) is a drum/percussion
+        // instrument regardless of zone count (e.g. TONS with 80-192 zones or ATAQUE with 40 zones).
+        let is_drum = prog.midi_channel == 9
+            || prog.midi_channel == 10
+            || is_drum_program_name(&prog.name);
         let zones = decode_program_zones(
             prog,
             is_drum,
@@ -1063,18 +1207,9 @@ pub fn build_kontakt_package(
         ));
     }
 
-    // Compute gentle kit-level mix normalization so packs mastered low in Kontakt (e.g. 0.12..0.24)
-    // sound full while preserving relative piece-to-piece balance and keeping muted tracks silent.
-    let max_active_prog_vol = decoded_progs
-        .iter()
-        .map(|(p, _, _)| p.volume)
-        .filter(|&v| v >= 0.015 && v.is_finite())
-        .fold(0.0_f32, f32::max);
-    let kit_norm = if max_active_prog_vol > 0.015 && max_active_prog_vol < 0.65 {
-        (0.75 / max_active_prog_vol).clamp(1.0, 2.4)
-    } else {
-        1.0
-    };
+    // Preserve authored Kontakt program & group relative gains (no artificial boost that
+    // could distort quiet percussion/triangle balance).
+    let kit_norm = 1.0_f32;
 
     let mut instruments: Vec<LoadedInstrument> = Vec::new();
     let mut inst_mix_vol: Vec<f32> = Vec::new();
@@ -1194,10 +1329,10 @@ pub fn build_kontakt_package(
             is_drumkit: false,
             zones,
         });
-        let scaled_vol = if prog.volume < 0.012 {
+        let scaled_vol = if prog.volume < 0.005 {
             0.0
         } else {
-            (prog.volume * kit_norm).clamp(0.05, 1.35)
+            (prog.volume * kit_norm).clamp(0.0, 1.5)
         };
         inst_mix_vol.push(scaled_vol);
         let replace = match melodic_ch_to_inst.get(&prog.midi_channel) {
@@ -1320,12 +1455,12 @@ pub fn build_kontakt_package(
                         let mix_vol = inst_mix_vol.get(inst_idx).copied().unwrap_or(1.0);
                         let sty_vol = (tr.voice.volume as f32 / 100.0).clamp(0.0, 1.6);
                         let track_vol = if is_drum {
-                            (sty_vol * 0.78).clamp(0.0, 1.35)
-                        } else if mix_vol < 0.015 {
-                            // Keep Kontakt-muted background tracks (e.g. PAD vol=0.005) silent
+                            (sty_vol * 0.85).clamp(0.0, 1.5)
+                        } else if mix_vol < 0.005 {
+                            // Keep Kontakt-muted background tracks (e.g. PAD vol=0.0) silent
                             0.0
                         } else {
-                            (mix_vol.clamp(0.12, 1.2) * sty_vol * 0.85).clamp(0.0, 1.35)
+                            (mix_vol * sty_vol * 0.85).clamp(0.0, 1.5)
                         };
                         let events: Vec<RhythmNoteEvent> = tr
                             .events
@@ -1650,6 +1785,113 @@ mod tests {
         assert!(engine.rhythm_playing, "switching rhythm pack while playing should auto-play");
         assert_eq!(engine.detected_chord_root, 7);
         assert_eq!(engine.detected_chord_label, "Gm");
+    }
+
+    #[test]
+    fn decodes_atitude_67_float_ncw_without_hiss_or_static() {
+        let dir = Path::new(USER_DOWNLOADS_KONTAKT_DIR)
+            .join("SM_ATITUDE_67_CERVEJA_DE_GARRAFA/Atitude 67/Atitude 67 Samples");
+        if !dir.exists() {
+            return;
+        }
+        for name in ["1.ncw", "2 CAIXA FORT.ncw", "3 CAIXA FORTe.ncw", "ARO.ncw"] {
+            let p = dir.join(name);
+            let (l, r, sr) = decode_sample_file(&p)
+                .unwrap_or_else(|e| panic!("failed to decode {}: {e}", p.display()));
+            assert!(sr >= 44100 && !l.is_empty() && l.len() == r.len());
+            assert!(l.iter().all(|v| v.is_finite()) && r.iter().all(|v| v.is_finite()));
+            let peak = l.iter().fold(0.0_f32, |m, v| m.max(v.abs()));
+            assert!(peak > 0.05 && peak <= 1.2, "{name}: unexpected peak={peak}");
+            let tail = &l[l.len().saturating_sub(4096)..];
+            let tail_rms = (tail.iter().map(|v| v * v).sum::<f32>() / tail.len() as f32).sqrt();
+            assert!(
+                tail_rms < 0.01,
+                "{name}: tail_rms={tail_rms} indicates float-bit static hiss"
+            );
+        }
+    }
+
+    #[test]
+    fn parses_bgroup_volumes_and_seventh_chords_in_kontakt_mode() {
+        let forro_nkm = Path::new(USER_DOWNLOADS_KONTAKT_DIR)
+            .join("FORRO_BOYS_HB_SAMPLER/FORRO BOYS HB SAMPLER/FORRO BOYS.nkm");
+        if forro_nkm.exists() {
+            let multi = parse_kontakt_file(&forro_nkm).expect("parse FORRO BOYS");
+            assert!(
+                multi.programs.iter().any(|p| !p.groups.is_empty()),
+                "expected BGroup metadata to be parsed"
+            );
+            let pkg = Arc::new(build_kontakt_package(&forro_nkm, &[]).expect("build FORRO BOYS"));
+            let mut engine = crate::music_studio::MusicStudioArrangerEngine::new(48000.0);
+            engine.load_package(pkg);
+            // Play 4-key C7 below split_key=54 (C2=36, E2=40, G2=43, Bb2=46)
+            for &k in &[36_u8, 40, 43, 46] {
+                engine.note_on(k, 100);
+            }
+            assert_eq!(engine.detected_chord_label, "C7");
+        }
+
+        // Verify CMaj7-declared triad-only Kontakt track voices distinct 7th on C7 vs C
+        let rule = crate::yamaha_sty::CasmRule {
+            src_ch: 11,
+            dest_ch: 11,
+            name: "Chord1".to_string(),
+            editable: 1,
+            note_mute: 0x0FFF,
+            chord_mute: 0,
+            src_root: 0,
+            src_chord_type: 2, // CMaj7
+            low_split: None,
+            high_split: None,
+            ranges: [
+                crate::yamaha_sty::CasmRangeRule {
+                    ntr: crate::yamaha_sty::NtrRule::RootTrans,
+                    ntt: crate::yamaha_sty::NttRule::Chord,
+                    bass_on: false,
+                    high_key: 11,
+                    note_low: 0,
+                    note_high: 127,
+                    rtr: crate::yamaha_sty::RtrRule::Retrigger,
+                },
+                crate::yamaha_sty::CasmRangeRule {
+                    ntr: crate::yamaha_sty::NtrRule::RootTrans,
+                    ntt: crate::yamaha_sty::NttRule::Chord,
+                    bass_on: false,
+                    high_key: 11,
+                    note_low: 0,
+                    note_high: 127,
+                    rtr: crate::yamaha_sty::RtrRule::Retrigger,
+                },
+                crate::yamaha_sty::CasmRangeRule {
+                    ntr: crate::yamaha_sty::NtrRule::RootTrans,
+                    ntt: crate::yamaha_sty::NttRule::Chord,
+                    bass_on: false,
+                    high_key: 11,
+                    note_low: 0,
+                    note_high: 127,
+                    rtr: crate::yamaha_sty::RtrRule::Retrigger,
+                },
+            ],
+        };
+        let spec_c = crate::music_studio::chord_quality_to_target_spec(
+            0,
+            crate::music_studio::ChordQuality::Major,
+        );
+        let spec_c7 = crate::music_studio::chord_quality_to_target_spec(
+            0,
+            crate::music_studio::ChordQuality::Dom7,
+        );
+        let spec_cmaj7 = crate::music_studio::chord_quality_to_target_spec(
+            0,
+            crate::music_studio::ChordQuality::Maj7,
+        );
+        // Triad-only CMaj7 track: root C4(60) stays C4(60) on C, shifts to Bb3(58) on C7, B3(59) on Cmaj7
+        assert_eq!(rule.transpose_note_kontakt(60, spec_c, false, false, true), Some(60));
+        assert_eq!(rule.transpose_note_kontakt(60, spec_c7, false, false, true), Some(58));
+        assert_eq!(rule.transpose_note_kontakt(60, spec_cmaj7, false, false, true), Some(59));
+        // Real 4-note CMaj7 track: B4(71) folds to C4/C5 (pc=0) on plain C major instead of leaking B
+        let n_b_on_c = rule.transpose_note_kontakt(71, spec_c, false, false, false).unwrap();
+        assert_eq!(n_b_on_c % 12, 0, "plain C major must not leak B from CMaj7 source");
     }
 
     #[test]

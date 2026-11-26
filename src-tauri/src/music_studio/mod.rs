@@ -151,6 +151,8 @@ pub struct SampleZone {
     pub gain: f32,
     pub pan: i32,
     pub fine_tune: i32,
+    pub key_tracking: bool,
+    pub exclusive_group: i32,
     pub pool_sid: u32,
     pub pcm_l: Arc<Vec<f32>>,
     pub pcm_r: Arc<Vec<f32>>,
@@ -680,6 +682,8 @@ fn parse_zone_at(
             gain: gain_norm,
             pan,
             fine_tune,
+            key_tracking: true,
+            exclusive_group: -1,
             pool_sid,
             pcm_l: pcm_l_arc,
             pcm_r: pcm_r_arc,
@@ -1895,6 +1899,8 @@ pub fn sf2_to_loaded_instrument(
             gain: z.gain,
             pan: z.pan,
             fine_tune: z.fine_tune_cents * 10,
+            key_tracking: true,
+            exclusive_group: -1,
             pool_sid: 0,
             pcm_l: Arc::clone(&z.pcm_l),
             pcm_r: Arc::clone(&z.pcm_r),
@@ -2684,6 +2690,7 @@ struct SamplerVoice {
     choke_releasing: bool,
     is_drum: bool,
     choke_group: u8,
+    exclusive_group: i32,
     inst_index: usize,
     remaining_samples: Option<usize>,
     trigger_key: u8,
@@ -2694,6 +2701,8 @@ const MAX_SAMPLER_VOICES: usize = 192;
 
 #[derive(Debug, Clone)]
 struct PendingTrigger {
+    // Section tick, shifted into the current section timeline after a wrap.
+    start_tick: f64,
     inst_idx: usize,
     midi_note: u8,
     velocity: u8,
@@ -3001,6 +3010,7 @@ fn collect_section_events(
     sr: f32,
     win_start: f64,
     win_end: f64,
+    is_kontakt: bool,
     out: &mut Vec<PendingTrigger>,
 ) {
     if win_end <= win_start {
@@ -3022,9 +3032,23 @@ fn collect_section_events(
         if vol <= 0.002 {
             continue;
         }
+        let mut triad_only_chord_track = false;
         if let Some(ref rule) = track.casm_rule {
             if !rule.is_active(target_spec) {
                 continue;
+            }
+            if is_kontakt && !effective_is_drum && !is_bass && matches!(rule.src_chord_type, 2 | 3 | 5) {
+                // Detect whether this track only contains triad pitch classes (no authored 7th)
+                // while still being a multi-tone chord track (not a single-key root loop trigger).
+                let src_root = (rule.src_root % 12) as i16;
+                let mut pc_mask = 0_u16;
+                for ev in &track.events {
+                    let iv = (ev.midi_note as i16 - src_root).rem_euclid(12) as u16;
+                    pc_mask |= 1_u16 << iv;
+                }
+                let has_seventh = (pc_mask & ((1 << 10) | (1 << 11))) != 0;
+                let distinct_tones = pc_mask.count_ones();
+                triad_only_chord_track = !has_seventh && distinct_tones >= 2;
             }
         }
         // Both package importers sort by tick once, outside the audio callback.
@@ -3041,8 +3065,18 @@ fn collect_section_events(
                         + track.key_move as i16
                         + (track.octave_shift * 12) as i16)
                         .clamp(0, 127) as u8;
-                    match rule.transpose_note(shifted, target_spec, effective_is_drum, is_bass)
-                    {
+                    let transposed = if is_kontakt {
+                        rule.transpose_note_kontakt(
+                            shifted,
+                            target_spec,
+                            effective_is_drum,
+                            is_bass,
+                            triad_only_chord_track,
+                        )
+                    } else {
+                        rule.transpose_note(shifted, target_spec, effective_is_drum, is_bass)
+                    };
+                    match transposed {
                         Some(n) => n,
                         None => continue,
                     }
@@ -3069,6 +3103,7 @@ fn collect_section_events(
                 Some(((dur_sec * sr as f64) as usize).max(256))
             };
             out.push(PendingTrigger {
+                start_tick: ev.start_tick as f64,
                 inst_idx: effective_inst_idx,
                 midi_note: target_note,
                 velocity: ev.velocity,
@@ -3818,7 +3853,25 @@ impl MusicStudioArrangerEngine {
             return;
         };
 
-        let zone = if inst.is_drumkit {
+        let is_kontakt = pkg.source_format == "kontakt";
+        let zone = if inst.is_drumkit && is_kontakt {
+            // Kontakt drumkits obey [key_low..=key_high] + [vel_low..=vel_high] strictly first,
+            // avoiding misfires from zones whose root_key lies outside their key range.
+            inst.zones
+                .iter()
+                .find(|z| {
+                    !z.pcm_l.is_empty()
+                        && midi_note >= z.key_low
+                        && midi_note <= z.key_high
+                        && velocity >= z.vel_low
+                        && velocity <= z.vel_high
+                })
+                .or_else(|| {
+                    inst.zones.iter().find(|z| {
+                        !z.pcm_l.is_empty() && midi_note >= z.key_low && midi_note <= z.key_high
+                    })
+                })
+        } else if inst.is_drumkit {
             inst.zones
                 .iter()
                 .find(|z| {
@@ -3846,7 +3899,7 @@ impl MusicStudioArrangerEngine {
                         !z.pcm_l.is_empty() && midi_note >= z.key_low && midi_note <= z.key_high
                     })
                 })
-        } else if from_rhythm && pkg.source_format == "kontakt" {
+        } else if from_rhythm && is_kontakt {
             // Kontakt rhythm tracks obey strict [key_low..=key_high] and [vel_low..=vel_high]
             // zone gates so SFX / velocity-sliced guitars (GTR CALANGO, EFX) never misfire on
             // out-of-range keys or velocities.
@@ -3900,7 +3953,7 @@ impl MusicStudioArrangerEngine {
         };
 
         let tune_semitones = (z.fine_tune + tune_offset) as f64 / 1000.0;
-        let semitones = if inst.is_drumkit {
+        let semitones = if (inst.is_drumkit && !is_kontakt) || !z.key_tracking {
             tune_semitones
         } else {
             (midi_note as f64 - z.root_key as f64) + tune_semitones
@@ -3922,12 +3975,17 @@ impl MusicStudioArrangerEngine {
         } else {
             0
         };
-        if is_drum {
+        let exclusive_group = z.exclusive_group;
+        if is_drum || exclusive_group >= 0 {
             for v in &mut self.voices {
-                if v.is_drum
-                    && !v.choke_releasing
-                    && ((choke_group != 0 && v.choke_group == choke_group)
-                        || (v.inst_index == inst_index && v.trigger_key == trigger_key))
+                if !v.choke_releasing
+                    && ((exclusive_group >= 0
+                        && v.inst_index == inst_index
+                        && v.exclusive_group == exclusive_group)
+                        || (is_drum
+                            && v.is_drum
+                            && ((choke_group != 0 && v.choke_group == choke_group)
+                                || (v.inst_index == inst_index && v.trigger_key == trigger_key))))
                 {
                     v.choke_releasing = true;
                 }
@@ -3972,6 +4030,7 @@ impl MusicStudioArrangerEngine {
             choke_releasing: false,
             is_drum,
             choke_group,
+            exclusive_group,
             inst_index,
             remaining_samples: if is_drum { None } else { duration_samples },
             trigger_key,
@@ -4166,6 +4225,7 @@ impl MusicStudioArrangerEngine {
                         wrapped = next_tick >= boundary;
                         wrap_tick = if wrapped { next_tick - boundary } else { 0.0 };
 
+                        let is_kontakt = pkg.source_format == "kontakt";
                         if wrapped {
                             collect_section_events(
                                 sec,
@@ -4178,6 +4238,7 @@ impl MusicStudioArrangerEngine {
                                 self.sr,
                                 prev_tick,
                                 boundary,
+                                is_kontakt,
                                 &mut to_trigger,
                             );
                             if let Some(ref pend) = self.pending_section {
@@ -4216,6 +4277,7 @@ impl MusicStudioArrangerEngine {
                                 } else {
                                     sec
                                 };
+                                let wrapped_events_start = to_trigger.len();
                                 collect_section_events(
                                     next_sec_ref,
                                     &pkg.instruments,
@@ -4227,8 +4289,14 @@ impl MusicStudioArrangerEngine {
                                     self.sr,
                                     0.0,
                                     wrap_tick,
+                                    is_kontakt,
                                     &mut to_trigger,
                                 );
+                                // These events belong after the boundary, not at the start
+                                // of the buffer containing the section transition.
+                                for trigger in &mut to_trigger[wrapped_events_start..] {
+                                    trigger.start_tick += boundary;
+                                }
                             }
                         } else {
                             collect_section_events(
@@ -4242,6 +4310,7 @@ impl MusicStudioArrangerEngine {
                                 self.sr,
                                 prev_tick,
                                 next_tick,
+                                is_kontakt,
                                 &mut to_trigger,
                             );
                         }
@@ -4261,7 +4330,28 @@ impl MusicStudioArrangerEngine {
                 self.current_tick = if wrapped { wrap_tick } else { next_tick };
             }
 
+            let kontakt_timing = self.package.as_ref()
+                .is_some_and(|pkg| pkg.source_format == "kontakt");
+            let mut rendered_frames = 0;
+            if kontakt_timing {
+                // Track iteration order is not time order. Rendering up to each
+                // onset also makes choke/retrigger effects happen at that onset.
+                to_trigger.sort_by(|a, b| a.start_tick.total_cmp(&b.start_tick));
+            }
             for trig in to_trigger.drain(..) {
+                if kontakt_timing {
+                    let samples_per_tick = self.sr as f64 * 60.0 / (self.bpm as f64 * 500.0);
+                    // Never play before the authored tick. The tiny tolerance
+                    // removes accumulated floating-point error at exact frames.
+                    let offset = (((trig.start_tick - prev_tick) * samples_per_tick - 1e-6)
+                        .ceil().max(0.0) as usize).min(frames);
+                    let offset = offset.max(rendered_frames);
+                    self.render_sampler_voices(
+                        &mut out_l[rendered_frames..offset],
+                        &mut out_r[rendered_frames..offset],
+                    );
+                    rendered_frames = offset;
+                }
                 self.trigger_instrument_note(
                     trig.inst_idx,
                     trig.midi_note,
@@ -4275,8 +4365,22 @@ impl MusicStudioArrangerEngine {
                 );
             }
             self.pending_triggers = to_trigger;
+            if kontakt_timing {
+                self.render_sampler_voices(
+                    &mut out_l[rendered_frames..frames],
+                    &mut out_r[rendered_frames..frames],
+                );
+                return;
+            }
         }
 
+        // The legacy Music/standalone STY path still triggers the whole window
+        // before rendering one complete buffer, preserving its existing output.
+        self.render_sampler_voices(&mut out_l[..frames], &mut out_r[..frames]);
+    }
+
+    fn render_sampler_voices(&mut self, out_l: &mut [f32], out_r: &mut [f32]) {
+        let frames = out_l.len().min(out_r.len());
         // Render all active polyphonic sampler voices
         let release_step = 1.0 / (0.08 * self.sr).max(64.0);
         let choke_step = 1.0 / (0.010 * self.sr).max(32.0);
@@ -4472,7 +4576,7 @@ mod tests {
                 root_key: 60, key_low: 0, key_high: 127, vel_low: 0, vel_high: 127,
                 name: "test".into(), sample_rate: 48000, channels: 1,
                 loop_start: 0, loop_end: 0, loop_enabled: false, loop_mode: 0,
-                gain: 1.0, pan: 0, fine_tune: 0, pool_sid: 0,
+                gain: 1.0, pan: 0, fine_tune: 0, key_tracking: true, exclusive_group: -1, pool_sid: 0,
                 pcm_l: pcm.clone(), pcm_r: pcm,
             }],
         };
@@ -4605,6 +4709,8 @@ mod tests {
                     gain: 1.0,
                     pan: 0,
                     fine_tune: 0,
+                    key_tracking: true,
+                    exclusive_group: -1,
                     pool_sid: 0,
                     pcm_l: Arc::clone(&pcm_low),
                     pcm_r: pcm_low,
@@ -4625,6 +4731,8 @@ mod tests {
                     gain: 1.0,
                     pan: 0,
                     fine_tune: 0,
+                    key_tracking: true,
+                    exclusive_group: -1,
                     pool_sid: 0,
                     pcm_l: Arc::clone(&pcm_mid),
                     pcm_r: pcm_mid,
@@ -4757,7 +4865,7 @@ mod tests {
             for _ in 0..512 {
                 let mut indexed = Vec::new();
                 collect_section_events(&section, &package.instruments, &[1.0;8], &[None;8],
-                    0,ChordQuality::Major,120.0,48000.0,tick,tick+step,&mut indexed);
+                    0,ChordQuality::Major,120.0,48000.0,tick,tick+step,false,&mut indexed);
                 let expected:Vec<_> = section.tracks[0].events.iter()
                     .filter(|event| (event.start_tick as f64)>=tick && (event.start_tick as f64)<tick+step)
                     .map(|event|(event.midi_note,event.velocity)).collect();
@@ -5121,6 +5229,8 @@ mod tests {
                     gain: 1.0,
                     pan: 0,
                     fine_tune: 0,
+                    key_tracking: true,
+                    exclusive_group: -1,
                     pool_sid: 0,
                     pcm_l: Arc::clone(&pcm),
                     pcm_r: Arc::clone(&pcm),
@@ -5498,6 +5608,8 @@ mod tests {
                     gain: 1.0,
                     pan: 0,
                     fine_tune: 0,
+                    key_tracking: true,
+                    exclusive_group: -1,
                     pool_sid: 0,
                     pcm_l: Arc::clone(&short_pcm),
                     pcm_r: Arc::clone(&short_pcm),
@@ -5518,6 +5630,8 @@ mod tests {
                     gain: 1.0,
                     pan: 0,
                     fine_tune: 0,
+                    key_tracking: true,
+                    exclusive_group: -1,
                     pool_sid: 0,
                     pcm_l: Arc::clone(&long_pcm),
                     pcm_r: Arc::clone(&long_pcm),
@@ -5538,6 +5652,8 @@ mod tests {
                     gain: 1.0,
                     pan: 0,
                     fine_tune: 0,
+                    key_tracking: true,
+                    exclusive_group: -1,
                     pool_sid: 0,
                     pcm_l: Arc::clone(&short_pcm),
                     pcm_r: Arc::clone(&short_pcm),
@@ -5558,6 +5674,8 @@ mod tests {
                     gain: 1.0,
                     pan: 0,
                     fine_tune: 0,
+                    key_tracking: true,
+                    exclusive_group: -1,
                     pool_sid: 0,
                     pcm_l: Arc::clone(&long_pcm),
                     pcm_r: Arc::clone(&long_pcm),
@@ -5692,6 +5810,8 @@ mod tests {
                     gain: 1.0,
                     pan: 0,
                     fine_tune: 0,
+                    key_tracking: true,
+                    exclusive_group: -1,
                     pool_sid: 0,
                     pcm_l: Arc::clone(&soft_pcm),
                     pcm_r: Arc::clone(&soft_pcm),
@@ -5712,6 +5832,8 @@ mod tests {
                     gain: 1.0,
                     pan: 0,
                     fine_tune: 0,
+                    key_tracking: true,
+                    exclusive_group: -1,
                     pool_sid: 0,
                     pcm_l: Arc::clone(&loud_pcm),
                     pcm_r: Arc::clone(&loud_pcm),
@@ -5820,6 +5942,7 @@ mod tests {
                     48000.0,
                     0.0,
                     var1.length_ticks as f64,
+                    false,
                     &mut maj_triggers,
                 );
                 assert!(!maj_triggers.is_empty());
@@ -5837,6 +5960,7 @@ mod tests {
                     48000.0,
                     0.0,
                     var1.length_ticks as f64,
+                    false,
                     &mut min_triggers,
                 );
                 assert!(!min_triggers.is_empty());
@@ -6049,6 +6173,8 @@ mod tests {
                 gain: 1.0,
                 pan: 0,
                 fine_tune: 0,
+                key_tracking: true,
+                exclusive_group: -1,
                 pool_sid: 0,
                 pcm_l: Arc::clone(&dummy_pcm),
                 pcm_r: Arc::clone(&dummy_pcm),
@@ -6133,6 +6259,7 @@ mod tests {
             48000.0,
             0.0,
             1000.0,
+            false,
             &mut trig_c,
         );
         collect_section_events(
@@ -6146,6 +6273,7 @@ mod tests {
             48000.0,
             0.0,
             1000.0,
+            false,
             &mut trig_fs,
         );
         assert_eq!(trig_c.len(), 2);

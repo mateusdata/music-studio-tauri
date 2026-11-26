@@ -137,7 +137,46 @@ impl CasmRule {
         is_drum: bool,
         is_bass: bool,
     ) -> Option<u8> {
+        self.transpose_note_with_range_mode(raw_note, spec, is_drum, is_bass, false, false)
+    }
+
+    /// Kontakt sample maps may intentionally use keys outside the piano range.
+    /// Keep the legacy transposer unchanged for Music Studio and SoundFont styles.
+    pub fn transpose_note_kontakt(
+        &self,
+        raw_note: u8,
+        spec: TargetChordSpec,
+        is_drum: bool,
+        is_bass: bool,
+        triad_only_chord_track: bool,
+    ) -> Option<u8> {
+        self.transpose_note_with_range_mode(
+            raw_note,
+            spec,
+            is_drum,
+            is_bass,
+            true,
+            triad_only_chord_track,
+        )
+    }
+
+    fn transpose_note_with_range_mode(
+        &self,
+        raw_note: u8,
+        spec: TargetChordSpec,
+        is_drum: bool,
+        is_bass: bool,
+        kontakt_range: bool,
+        triad_only_chord_track: bool,
+    ) -> Option<u8> {
         let r = self.select_range(raw_note);
+        let fold = |pitch| {
+            if kontakt_range {
+                fold_note_into_kontakt_range(pitch, r)
+            } else {
+                fold_note_into_range(pitch, r)
+            }
+        };
 
         // Filter out MegaVoice articulation keyswitches when Ctb2 splits them into a fixed FX zone.
         if !is_drum && self.dest_ch != 8 && self.dest_ch != 9 {
@@ -171,16 +210,41 @@ impl CasmRule {
             if tgt_root > r.high_key as i16 && (raw_note as i16 + delta - 12) >= 24 {
                 delta -= 12;
             }
-            return Some(fold_note_into_range(raw_note as i16 + delta, r));
+            return Some(fold(raw_note as i16 + delta));
         }
+
+        let mut eff_spec = spec;
+        if kontakt_range {
+            // In Modo Kontakt, target chords without a 7th/6th extension should not leak a stray
+            // 7th from CMaj7 source patterns.
+            let target_has_seventh_or_sixth = matches!(
+                spec.yamaha_bit,
+                1 | 2 | 5 | 6 | 9 | 11 | 12 | 13 | 14 | 15 | 18 | 19 | 20 | 22 | 23 | 24
+            );
+            if !target_has_seventh_or_sixth {
+                eff_spec.seventh_iv = 0;
+            }
+        }
+
+        let eff_src_chord_type = if kontakt_range
+            && triad_only_chord_track
+            && matches!(self.src_chord_type, 2 | 3 | 5)
+        {
+            // Many Kontakt .STY packs declare CMaj7 (src_chord_type=2) in Ctab even when
+            // the authored MIDI track only has [C, E, G] triad notes. Treat such multi-note
+            // triad tracks as plain Major so 7th/9th chords voice their 7th cleanly.
+            0
+        } else {
+            self.src_chord_type
+        };
 
         let iv = (raw_note as i16 - src_root).rem_euclid(12);
         let target_iv = map_chord_interval(
             iv,
-            self.src_chord_type,
+            eff_src_chord_type,
             r.ntt,
             r.bass_on || is_bass,
-            spec,
+            eff_spec,
         );
 
         let raw_transposed = match r.ntr {
@@ -226,7 +290,7 @@ impl CasmRule {
             }
         };
 
-        Some(fold_note_into_range(raw_transposed, r))
+        Some(fold(raw_transposed))
     }
 }
 
@@ -442,6 +506,21 @@ fn fold_note_into_range(raw_transposed: i16, r: &CasmRangeRule) -> u8 {
         let hi = raw_hi.min(108).max(lo);
         (lo, hi)
     };
+    let mut pitch = raw_transposed;
+    while pitch < lo && pitch + 12 <= hi {
+        pitch += 12;
+    }
+    while pitch > hi && pitch - 12 >= lo {
+        pitch -= 12;
+    }
+    pitch.clamp(lo, hi) as u8
+}
+
+/// Folds a transposed MIDI note into the full 0..=127 CASM range for Kontakt packs
+/// whose sample maps legitimately live below A0 (e.g. 0..11 or 12..23 loop/chord triggers).
+fn fold_note_into_kontakt_range(raw_transposed: i16, r: &CasmRangeRule) -> u8 {
+    let lo = r.note_low.min(r.note_high).min(127) as i16;
+    let hi = r.note_high.max(r.note_low).min(127) as i16;
     let mut pitch = raw_transposed;
     while pitch < lo && pitch + 12 <= hi {
         pitch += 12;
