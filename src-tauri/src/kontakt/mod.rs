@@ -593,7 +593,13 @@ fn parse_program_0036(
 
     let slen = read_u32_le(priv_slice, 0)? as usize;
     let name = if slen > 0 && slen <= 128 && 4 + slen * 2 <= priv_slice.len() {
-        decode_utf16le(&priv_slice[4..4 + slen * 2]).trim().to_string()
+        let raw = decode_utf16le(&priv_slice[4..4 + slen * 2]);
+        let first_line = raw.lines().next().unwrap_or(&raw).trim();
+        if first_line.is_empty() {
+            format!("Kontakt Slot {}", slot_index + 1)
+        } else {
+            first_line.to_string()
+        }
     } else {
         format!("Kontakt Slot {}", slot_index + 1)
     };
@@ -705,7 +711,8 @@ pub fn parse_kontakt_file(path: &Path) -> Result<ParsedKontaktMulti, String> {
         if cid == 0x0048 {
             let c48 = &dec[cur + 6..cur + 6 + csz];
             for rec in c48.chunks_exact(24) {
-                let ch = i32::from_le_bytes([rec[0], rec[1], rec[2], rec[3]]);
+                let raw = u32::from_le_bytes([rec[0], rec[1], rec[2], rec[3]]);
+                let ch = raw & 0xFFFF;
                 slot_channels.push(if (1..=64).contains(&ch) { ch as u8 } else { 0 });
             }
         } else if cid == 0x0037 {
@@ -714,17 +721,28 @@ pub fn parse_kontakt_file(path: &Path) -> Result<ParsedKontaktMulti, String> {
         cur += 6 + csz;
     }
 
-    // Pass 2: parse 0x0029 program containers inside 0x0037
+    // Pass 2: parse 0x0029 program containers inside 0x0037.
+    // The first 8 bytes of 0x0037 are a little-endian u64 64-slot occupancy bitmask:
+    // each set bit `b` (0..64) maps the corresponding 0x0029 program to `slot_channels[b]` in 0x0048.
     let mut programs = Vec::new();
     if let Some(pl) = prog_list_slice {
-        let mut ic = 8_usize; // skip 0xff + u32 count + 3 pad bytes
-        let mut slot_idx = 0_usize;
+        let occupied_slots: Vec<usize> = if pl.len() >= 8 {
+            let mask = u64::from_le_bytes([
+                pl[0], pl[1], pl[2], pl[3], pl[4], pl[5], pl[6], pl[7],
+            ]);
+            (0..64).filter(|&b| ((mask >> b) & 1) != 0).collect()
+        } else {
+            Vec::new()
+        };
+        let mut ic = 8_usize;
+        let mut prog_ord = 0_usize;
         while ic + 6 <= pl.len() {
             let icid = read_u16_le(pl, ic).unwrap_or(0);
             let icsz = read_u32_le(pl, ic + 2).unwrap_or(0) as usize;
             if icid != 0x0029 || ic + 6 + icsz > pl.len() {
                 break;
             }
+            let rack_slot = occupied_slots.get(prog_ord).copied().unwrap_or(prog_ord);
             let sub = &pl[ic + 6..ic + 6 + icsz];
             if let Some(p0_pub_sz) = read_u32_le(sub, 3).map(|v| v as usize) {
                 let p0_priv_off = 7 + p0_pub_sz;
@@ -740,9 +758,9 @@ pub fn parse_kontakt_file(path: &Path) -> Result<ParsedKontaktMulti, String> {
                             break;
                         }
                         if ccid == 0x0036 {
-                            let ch = slot_channels.get(slot_idx).copied().unwrap_or(0);
+                            let ch = slot_channels.get(rack_slot).copied().unwrap_or(0);
                             if let Some(prog) =
-                                parse_program_0036(&sub[cc + 6..cc + 6 + ccsz], slot_idx, ch)
+                                parse_program_0036(&sub[cc + 6..cc + 6 + ccsz], rack_slot, ch)
                             {
                                 programs.push(prog);
                             }
@@ -751,7 +769,7 @@ pub fn parse_kontakt_file(path: &Path) -> Result<ParsedKontaktMulti, String> {
                     }
                 }
             }
-            slot_idx += 1;
+            prog_ord += 1;
             ic += 6 + icsz;
         }
     }
@@ -823,7 +841,17 @@ fn is_drum_program_name(name: &str) -> bool {
         || up.contains("AGOG")
         || up.contains("CONGA")
         || up.contains("GONGA")
+        || up.contains("BONGO")
+        || up.contains("BOMGO")
         || up.contains("REPIK")
+        || up.contains("SURD")
+        || up.contains("PANDEIR")
+        || up.contains("GIRO")
+        || up.contains("BACURINH")
+        || up.contains("CLAVE")
+        || up.contains("JAM BLOCK")
+        || up.contains("RUNFO")
+        || up.contains("CARILH")
         || up.contains("BATER")
         || up.contains("DRUM")
         || up.contains("KIT")
@@ -1035,6 +1063,19 @@ pub fn build_kontakt_package(
         ));
     }
 
+    // Compute gentle kit-level mix normalization so packs mastered low in Kontakt (e.g. 0.12..0.24)
+    // sound full while preserving relative piece-to-piece balance and keeping muted tracks silent.
+    let max_active_prog_vol = decoded_progs
+        .iter()
+        .map(|(p, _, _)| p.volume)
+        .filter(|&v| v >= 0.015 && v.is_finite())
+        .fold(0.0_f32, f32::max);
+    let kit_norm = if max_active_prog_vol > 0.015 && max_active_prog_vol < 0.65 {
+        (0.75 / max_active_prog_vol).clamp(1.0, 2.4)
+    } else {
+        1.0
+    };
+
     let mut instruments: Vec<LoadedInstrument> = Vec::new();
     let mut inst_mix_vol: Vec<f32> = Vec::new();
     let mut channel_to_inst: HashMap<u8, usize> = HashMap::new();
@@ -1053,13 +1094,21 @@ pub fn build_kontakt_package(
     }
 
     // Build strictly separated drumkits per MIDI channel (Ch 9 = Rhythm 1, Ch 10 = Rhythm 2).
-    // If Ch 10 has no kick at key 36, pull in any standalone BUMBO program from another channel
-    // (e.g., Ch 6 in WB Forro) or clone key 35 -> 36 (e.g., Kit Sao Joao).
-    let extra_kick_zones: Vec<SampleZone> = drum_by_channel
+    // If Ch 10 is missing core kit pieces (kick 36, snare 38/40, hi-hat 42/46) that exist on
+    // a standalone drum channel (e.g. Ch 6 BUMBO in WB Forro or Ch 1 CIMBAL in Gusttavo Lima),
+    // borrow only those uncovered keys into Ch 10 without disturbing Ch 9/Ch 10 separation.
+    let extra_drum_zones: Vec<SampleZone> = drum_by_channel
         .iter()
         .filter(|(&ch, _)| ch != 9 && ch != 10)
         .flat_map(|(_, list)| list.iter())
-        .filter(|(name, _)| name.to_uppercase().contains("BUMBO"))
+        .filter(|(name, _)| {
+            let up = name.to_uppercase();
+            up.contains("BUMBO")
+                || up.contains("CHIMBAL")
+                || up.contains("CIMBAL")
+                || up.contains("CAIXA")
+                || up.contains("TON")
+        })
         .flat_map(|(_, zs)| zs.iter().cloned())
         .collect();
 
@@ -1072,12 +1121,22 @@ pub fn build_kontakt_package(
         let entries = &drum_by_channel[&ch];
         let mut combined_zones = Vec::new();
         for (_, zs) in entries {
-            combined_zones.extend(zs.iter().cloned());
+            for z in zs {
+                let mut zc = z.clone();
+                zc.gain = (zc.gain * kit_norm).clamp(0.0, 1.5);
+                combined_zones.push(zc);
+            }
         }
         if ch == 10 {
-            let has_k36 = combined_zones.iter().any(|z| z.key_low <= 36 && 36 <= z.key_high);
-            if !has_k36 && !extra_kick_zones.is_empty() {
-                combined_zones.extend(extra_kick_zones.iter().cloned());
+            for ez in &extra_drum_zones {
+                let already_covered = combined_zones
+                    .iter()
+                    .any(|z| z.key_low <= ez.root_key && ez.root_key <= z.key_high);
+                if !already_covered {
+                    let mut zc = ez.clone();
+                    zc.gain = (zc.gain * kit_norm).clamp(0.0, 1.5);
+                    combined_zones.push(zc);
+                }
             }
             let has_k36_now = combined_zones.iter().any(|z| z.key_low <= 36 && 36 <= z.key_high);
             if !has_k36_now {
@@ -1118,11 +1177,13 @@ pub fn build_kontakt_package(
         channel_to_inst.entry(ch).or_insert(idx);
     }
 
-    // Emit each melodic program cleanly as its own selectable instrument (never merge
-    // unrelated melodic instruments sharing a channel like MUTED GUITA + GUITARRA).
-    let mut melodic_ch_to_inst: HashMap<u8, usize> = HashMap::new();
+    // Emit each melodic program cleanly as its own selectable instrument. When multiple melodic
+    // programs share a MIDI channel (e.g. muted VIOLAO 02 + active VIOLÃO 01 on Ch 12), choose
+    // the active/loudest full-range program as the primary arranger instrument for that channel.
+    let mut melodic_ch_to_inst: HashMap<u8, (usize, f32, usize)> = HashMap::new();
     melodic_progs.sort_by_key(|(p, _)| (p.midi_channel, p.slot_index));
     for (prog, zones) in melodic_progs {
+        let zcount = zones.len();
         let idx = instruments.len();
         instruments.push(LoadedInstrument {
             index: idx,
@@ -1133,19 +1194,40 @@ pub fn build_kontakt_package(
             is_drumkit: false,
             zones,
         });
-        inst_mix_vol.push(prog.volume);
-        melodic_ch_to_inst.entry(prog.midi_channel).or_insert(idx);
+        let scaled_vol = if prog.volume < 0.012 {
+            0.0
+        } else {
+            (prog.volume * kit_norm).clamp(0.05, 1.35)
+        };
+        inst_mix_vol.push(scaled_vol);
+        let replace = match melodic_ch_to_inst.get(&prog.midi_channel) {
+            None => true,
+            Some(&(_, prev_vol, prev_z)) => {
+                // Prefer active (>= 0.012) and fuller-range (>= 8 zones) programs over muted/FX slots
+                let cur_score = (
+                    prog.volume >= 0.012,
+                    zcount >= 8,
+                    (prog.volume * 1000.0) as i32,
+                );
+                let prev_score = (prev_vol >= 0.012, prev_z >= 8, (prev_vol * 1000.0) as i32);
+                cur_score > prev_score
+            }
+        };
+        if replace {
+            melodic_ch_to_inst.insert(prog.midi_channel, (idx, prog.volume, zcount));
+        }
         if prog.midi_channel != 9 && prog.midi_channel != 10 {
             channel_to_inst.entry(prog.midi_channel).or_insert(idx);
         }
     }
 
-    // Detect whether this .nkm uses vArranger channel layout (Bass on ch 5, Chord1 on ch 6)
+    let get_melodic_ch = |ch: u8| -> Option<usize> { melodic_ch_to_inst.get(&ch).map(|&(i, _, _)| i) };
+
+    // Detect whether this .nkm uses vArranger channel layout (Bass on ch 5, Chord1 on ch 6/7)
     // vs direct Yamaha .STY channel layout (Bass on ch 11, Chord1 on ch 12).
-    let uses_varranger_layout = melodic_ch_to_inst.contains_key(&5)
-        && !melodic_ch_to_inst
-            .get(&11)
-            .map(|&idx| {
+    let uses_varranger_layout = get_melodic_ch(5).is_some()
+        && !get_melodic_ch(11)
+            .map(|idx| {
                 let up = instruments[idx].name.to_uppercase();
                 up.contains("BASS") || up.contains("BAIXO")
             })
@@ -1163,20 +1245,20 @@ pub fn build_kontakt_package(
         if uses_varranger_layout {
             let mapped = match dest_ch {
                 10 => &[5_u8, 11][..],     // Bass
-                11 => &[6_u8, 12][..],     // Chord 1
-                12 => &[7_u8, 13][..],     // Chord 2
+                11 => &[6_u8, 7, 12][..],  // Chord 1
+                12 => &[7_u8, 8, 13][..],  // Chord 2
                 13 => &[12_u8, 8, 14][..], // Pad
                 14 => &[8_u8, 14, 7][..],  // Phrase 1
                 15 => &[15_u8, 7, 6][..],  // Phrase 2
                 _ => &[direct_ch][..],
             };
             for &c in mapped {
-                if let Some(&idx) = melodic_ch_to_inst.get(&c) {
+                if let Some(idx) = get_melodic_ch(c) {
                     return idx;
                 }
             }
         }
-        if let Some(&idx) = melodic_ch_to_inst.get(&direct_ch) {
+        if let Some(idx) = get_melodic_ch(direct_ch) {
             return idx;
         }
         // Fallback by slot
@@ -1188,7 +1270,7 @@ pub fn build_kontakt_package(
             _ => &[7, 13, 14, 6, 12, 1],
         };
         for &c in fallback_chs {
-            if let Some(&idx) = melodic_ch_to_inst.get(&c) {
+            if let Some(idx) = get_melodic_ch(c) {
                 return idx;
             }
         }
@@ -1215,8 +1297,8 @@ pub fn build_kontakt_package(
                 up.contains("ACORD") || up.contains("SANFONA") || up.contains("SCANDALLI") || up.contains("BANDONEON")
             }
         })
-        .or_else(|| melodic_ch_to_inst.get(&13).copied())
-        .or_else(|| melodic_ch_to_inst.get(&1).copied())
+        .or_else(|| get_melodic_ch(13))
+        .or_else(|| get_melodic_ch(1))
         .or_else(|| instruments.iter().position(|i| !i.is_drumkit))
         .unwrap_or(0);
 
@@ -1568,5 +1650,65 @@ mod tests {
         assert!(engine.rhythm_playing, "switching rhythm pack while playing should auto-play");
         assert_eq!(engine.detected_chord_root, 7);
         assert_eq!(engine.detected_chord_label, "Gm");
+    }
+
+    #[test]
+    fn all_discovered_kontakt_packs_play_continuously_without_stopping_or_silence() {
+        let listed = list_kontakt_packages();
+        if listed.is_empty() {
+            return;
+        }
+        let mut problems: Vec<String> = Vec::new();
+        for entry in &listed {
+            let p = Path::new(&entry.file_path);
+            let pkg = match build_kontakt_package(p, &[]) {
+                Ok(pkg) => pkg,
+                Err(e) => {
+                    problems.push(format!("LOAD_FAIL {}: {}", entry.file_name, e));
+                    continue;
+                }
+            };
+            if pkg.styles.is_empty() {
+                problems.push(format!("NO_STYLES {}", entry.file_name));
+                continue;
+            }
+            let mut engine = crate::music_studio::MusicStudioArrangerEngine::new(48000.0);
+            engine.load_package(Arc::new(pkg));
+            engine.set_chord(0, "Dom7");
+            engine.set_transport(true, None, None);
+            let mut l = vec![0.0_f32; 4096];
+            let mut r = vec![0.0_f32; 4096];
+            let mut peak = 0.0_f32;
+            // Simulate ~5.1 seconds (60 blocks of 4096 @ 48kHz) — must NEVER stop by itself!
+            for _ in 0..60 {
+                engine.process_block(&mut l, &mut r);
+                for (&a, &b) in l.iter().zip(r.iter()) {
+                    if !a.is_finite() || !b.is_finite() {
+                        problems.push(format!("NAN {}", entry.file_name));
+                        break;
+                    }
+                    peak = peak.max(a.abs()).max(b.abs());
+                }
+            }
+            if !engine.rhythm_playing {
+                problems.push(format!(
+                    "STOPPED_ITSELF {} (sec='{}')",
+                    entry.file_name, engine.active_section
+                ));
+            }
+            if peak < 0.005 {
+                problems.push(format!(
+                    "SILENT {} (peak={:.5}, sec='{}')",
+                    entry.file_name, peak, engine.active_section
+                ));
+            }
+        }
+        assert!(
+            problems.is_empty(),
+            "Found {} problem(s) across {} Kontakt packs:\n{}",
+            problems.len(),
+            listed.len(),
+            problems.join("\n")
+        );
     }
 }

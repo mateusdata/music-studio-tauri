@@ -91,7 +91,16 @@ impl CasmRule {
         if self.chord_mute != 0 {
             let bit = spec.yamaha_bit.min(39);
             if (self.chord_mute & (1_u64 << bit)) == 0 {
-                return false;
+                // Some SFF styles split Chord1 into Major (bits 0..7) and Minor (bits 8..18)
+                // while leaving Dom7..Dom13 bits (19..29) unset on both tracks. Allow the
+                // Major-only track to sound on Dom7-family chords instead of going silent.
+                let is_dom7_family = (19..=29).contains(&bit);
+                let has_any_dom7_bit = (self.chord_mute & (0x07FF_u64 << 19)) != 0;
+                let is_major_only_track =
+                    (self.chord_mute & 1) != 0 && (self.chord_mute & (1 << 8)) == 0;
+                if !(is_dom7_family && !has_any_dom7_bit && is_major_only_track) {
+                    return false;
+                }
             }
         }
         let root_mask = self.note_mute & 0x0FFF;
@@ -424,8 +433,15 @@ fn infer_gm_program_from_hint_and_dest(upper: &str, dest_ch: u8) -> u16 {
 }
 
 fn fold_note_into_range(raw_transposed: i16, r: &CasmRangeRule) -> u8 {
-    let lo = r.note_low.min(r.note_high).max(21) as i16;
-    let hi = r.note_high.max(r.note_low).min(108) as i16;
+    let raw_lo = r.note_low.min(r.note_high) as i16;
+    let raw_hi = r.note_high.max(r.note_low) as i16;
+    let (lo, hi) = if raw_hi < 21 {
+        (21_i16, 108_i16)
+    } else {
+        let lo = raw_lo.max(21).min(108);
+        let hi = raw_hi.min(108).max(lo);
+        (lo, hi)
+    };
     let mut pitch = raw_transposed;
     while pitch < lo && pitch + 12 <= hi {
         pitch += 12;
@@ -480,6 +496,24 @@ fn map_chord_interval(
     };
 
     if iv == 0 {
+        // When a non-bass Chord/Pad pattern is authored as a plain 3-note triad (Major=0 or Minor=8)
+        // with no 7th in the source pattern, voice 7th/9th/dim7 chords by shifting root notes in
+        // chord tracks to the chord's 7th (matching Music Studio / Yamaha Chord NTT voicing),
+        // while Bass keeps the solid root.
+        let is_plain_triad_source = matches!(src_chord_type, 0 | 8);
+        let target_is_seventh = matches!(
+            spec.yamaha_bit,
+            2 | 5 | 11 | 12 | 13 | 14 | 15 | 18 | 19 | 20 | 22 | 23 | 24
+        );
+        if is_plain_triad_source
+            && target_is_seventh
+            && !is_bass_mode
+            && ntt != NttRule::Bass
+            && ntt != NttRule::Bypass
+            && safe_7th > 0
+        {
+            return safe_7th - 12;
+        }
         return 0;
     }
 
